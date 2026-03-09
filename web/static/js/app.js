@@ -1040,7 +1040,7 @@ function renderDailyKline(data) {
             lineStyle: { color: priceColor, type: 'dashed', width: 1 },
             label: {
                 show: true,
-                position: 'insideEndTop',
+                position: 'insideStartTop',
                 formatter: latestClose.toFixed(2),
                 color: '#fff',
                 backgroundColor: priceColor,
@@ -1320,7 +1320,7 @@ function renderWeeklyKline(data) {
             lineStyle: { color: wPriceColor, type: 'dashed', width: 1 },
             label: {
                 show: true,
-                position: 'insideEndTop',
+                position: 'insideStartTop',
                 formatter: wLatestClose.toFixed(2),
                 color: '#fff',
                 backgroundColor: wPriceColor,
