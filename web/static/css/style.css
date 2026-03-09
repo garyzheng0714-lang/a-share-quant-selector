@@ -760,35 +760,47 @@ body {
     flex-wrap: wrap;
     min-width: 0;
 }
-.kline-nav-btn {
-    width: 28px;
-    height: 28px;
+.kline-nav-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    padding: 8px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+}
+.kline-nav-fab {
+    width: 44px;
+    height: 44px;
     display: flex;
     align-items: center;
     justify-content: center;
     background: var(--elevated);
     border: 1px solid var(--border-em);
-    border-radius: var(--r-sm);
+    border-radius: 50%;
     cursor: pointer;
     color: var(--ink-secondary);
     transition: all var(--duration) var(--ease);
-    flex-shrink: 0;
     padding: 0;
+    -webkit-tap-highlight-color: transparent;
 }
-.kline-nav-btn:hover {
+.kline-nav-fab:hover {
     background: var(--accent-dim);
     color: var(--accent);
     border-color: var(--accent);
 }
-.kline-nav-btn:active {
-    transform: scale(0.92);
+.kline-nav-fab:active {
+    transform: scale(0.9);
+    background: var(--accent-dim);
+    color: var(--accent);
 }
 .kline-nav-info {
-    font-size: 11px;
+    font-size: 13px;
     font-family: var(--font-mono);
     color: var(--ink-muted);
-    margin-right: 4px;
-    flex-shrink: 0;
+    min-width: 48px;
+    text-align: center;
 }
 .kline-stock-code {
     font-size: 16px;
@@ -1464,8 +1476,10 @@ body {
     .kline-stock-name { font-size: 12px; }
     .kline-stock-price .price-val { font-size: 14px; }
     .kline-stock-price .price-change { font-size: 11px; }
-    .kline-nav-btn { width: 26px; height: 26px; }
-    .kline-nav-info { font-size: 10px; }
+    .kline-nav-bar {
+        padding: 6px 16px calc(env(safe-area-inset-bottom, 0px) + 6px);
+    }
+    .kline-nav-fab { width: 48px; height: 48px; }
     .kline-body { max-height: calc(100vh - 50px); }
     .kline-overlay {
         font-size: 10px;

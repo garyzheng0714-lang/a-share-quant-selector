@@ -781,21 +781,16 @@ function navigateStock(dir) {
 }
 
 function _updateNavButtons() {
-    const prevBtn = document.getElementById('nav-prev-btn');
-    const nextBtn = document.getElementById('nav-next-btn');
+    const navBar = document.getElementById('kline-nav-bar');
     const navInfo = document.getElementById('nav-info');
-    if (!prevBtn || !nextBtn) return;
+    if (!navBar) return;
 
     if (stockNavList.length <= 1) {
-        prevBtn.style.display = 'none';
-        nextBtn.style.display = 'none';
-        if (navInfo) navInfo.style.display = 'none';
+        navBar.style.display = 'none';
     } else {
-        prevBtn.style.display = '';
-        nextBtn.style.display = '';
+        navBar.style.display = '';
         if (navInfo) {
-            navInfo.style.display = '';
-            navInfo.textContent = `${stockNavIndex + 1}/${stockNavList.length}`;
+            navInfo.textContent = `${stockNavIndex + 1} / ${stockNavList.length}`;
         }
     }
 }
@@ -1604,6 +1599,8 @@ function switchWeeklyLineMode(mode) {
 function closeStockModal() {
     document.getElementById('stock-modal').classList.remove('active');
     _showWeeklyToggle(false);
+    const navBar = document.getElementById('kline-nav-bar');
+    if (navBar) navBar.style.display = 'none';
     if (klineChart) {
         klineChart.dispose();
         klineChart = null;
