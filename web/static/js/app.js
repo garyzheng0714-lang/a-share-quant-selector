@@ -1040,7 +1040,7 @@ function renderDailyKline(data) {
             lineStyle: { color: priceColor, type: 'dashed', width: 1 },
             label: {
                 show: true,
-                position: 'insideStartTop',
+                position: 'insideEndTop',
                 formatter: latestClose.toFixed(2),
                 color: '#fff',
                 backgroundColor: priceColor,
@@ -1058,7 +1058,7 @@ function renderDailyKline(data) {
             lineStyle: { color: '#facc15', type: 'dashed', width: 1, opacity: 0.6 },
             label: {
                 show: true,
-                position: 'insideStartBottom',
+                position: 'insideStartTop',
                 formatter: latestDk.toFixed(2),
                 color: '#000',
                 backgroundColor: '#facc15',
@@ -1320,7 +1320,7 @@ function renderWeeklyKline(data) {
             lineStyle: { color: wPriceColor, type: 'dashed', width: 1 },
             label: {
                 show: true,
-                position: 'insideStartTop',
+                position: 'insideEndTop',
                 formatter: wLatestClose.toFixed(2),
                 color: '#fff',
                 backgroundColor: wPriceColor,
@@ -1338,7 +1338,7 @@ function renderWeeklyKline(data) {
             lineStyle: { color: '#facc15', type: 'dashed', width: 1, opacity: 0.6 },
             label: {
                 show: true,
-                position: 'insideStartBottom',
+                position: 'insideStartTop',
                 formatter: wLatestDk.toFixed(2),
                 color: '#000',
                 backgroundColor: '#facc15',
