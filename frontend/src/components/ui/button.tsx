@@ -1,15 +1,24 @@
 "use client";
 
-import { motion, type HTMLMotionProps } from "framer-motion";
-import { forwardRef } from "react";
+import { motion } from "framer-motion";
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 
 type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 type ButtonSize = "sm" | "md" | "lg";
 
-interface ButtonProps extends Omit<HTMLMotionProps<"button">, "ref"> {
+type MotionConflicts =
+  | "onAnimationStart"
+  | "onAnimationEnd"
+  | "onDragStart"
+  | "onDragEnd"
+  | "onDrag";
+
+interface ButtonProps
+  extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, MotionConflicts> {
   variant?: ButtonVariant;
   size?: ButtonSize;
   loading?: boolean;
+  children?: ReactNode;
 }
 
 const variantStyles: Record<ButtonVariant, string> = {
