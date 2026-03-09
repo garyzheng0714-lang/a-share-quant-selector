@@ -1,0 +1,21 @@
+services:
+  quant:
+    build: .
+    container_name: a-share-quant
+    restart: unless-stopped
+    ports:
+      - "8080:5000"
+    volumes:
+      - quant-data:/app/data
+      - ./config:/app/config
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/stats')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  quant-data:

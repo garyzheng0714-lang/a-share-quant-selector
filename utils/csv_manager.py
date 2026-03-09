@@ -21,18 +21,22 @@ class CSVManager:
         subdir.mkdir(exist_ok=True)
         return subdir / f"{stock_code}.csv"
     
-    def read_stock(self, stock_code):
-        """读取股票数据"""
+    def read_stock(self, stock_code, nrows=None):
+        """读取股票数据.
+
+        Args:
+            stock_code: 股票代码
+            nrows: 限制读取行数（None 表示全部读取）
+        """
         path = self.get_stock_path(stock_code)
         if not path.exists():
             return pd.DataFrame()
-        
-        # 检查文件是否为空
+
         if path.stat().st_size == 0:
             return pd.DataFrame()
-        
+
         try:
-            df = pd.read_csv(path, parse_dates=['date'])
+            df = pd.read_csv(path, parse_dates=['date'], nrows=nrows)
             return df
         except Exception as e:
             print(f"  读取 {stock_code} 数据失败: {e}")
