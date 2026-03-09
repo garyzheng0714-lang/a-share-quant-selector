@@ -3,7 +3,8 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  base: command === "build" ? "/new/" : "/",
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
@@ -22,4 +23,4 @@ export default defineConfig({
   build: {
     outDir: "dist",
   },
-});
+}));
