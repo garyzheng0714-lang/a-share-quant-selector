@@ -750,7 +750,7 @@ function viewStockDetail(code, navSource) {
     document.getElementById('modal-stock-code').textContent = code;
     document.getElementById('modal-stock-name').textContent = '--';
     document.getElementById('modal-stock-price').innerHTML = '';
-    document.getElementById('kline-info-bar').innerHTML = '';
+    _clearOverlays();
     document.getElementById('stock-modal').classList.add('active');
 
     loadKline(code, 'daily');
@@ -774,7 +774,7 @@ function navigateStock(dir) {
     document.getElementById('modal-stock-code').textContent = code;
     document.getElementById('modal-stock-name').textContent = '--';
     document.getElementById('modal-stock-price').innerHTML = '';
-    document.getElementById('kline-info-bar').innerHTML = '';
+    _clearOverlays();
 
     loadKline(code, 'daily');
     _updateNavButtons();
@@ -878,51 +878,114 @@ function _updateHeaderPrice(data, period) {
         `<span class="price-change ${cls}">${sign}${change.toFixed(2)} (${sign}${changePct}%)</span>`;
 }
 
-function _updateInfoBar(data, idx, period) {
-    const bar = document.getElementById('kline-info-bar');
-    if (!bar || !data || idx < 0 || idx >= data.length) return;
+function _clearOverlays() {
+    ['kline-ol-main', 'kline-ol-vol', 'kline-ol-kdj'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+    });
+}
+
+function _positionOverlays(gridConfig) {
+    const wrap = document.getElementById('kline-chart-wrap');
+    if (!wrap) return;
+    const chartH = wrap.offsetHeight;
+    const isMobile = window.innerWidth <= 480;
+    const left = (isMobile ? 42 : 62) + 'px';
+
+    const olMain = document.getElementById('kline-ol-main');
+    const olVol = document.getElementById('kline-ol-vol');
+    const olKdj = document.getElementById('kline-ol-kdj');
+
+    if (olMain) {
+        olMain.style.top = '2px';
+        olMain.style.left = left;
+        olMain.style.display = '';
+    }
+    if (olVol) {
+        const volTop = gridConfig.volTop || '60%';
+        olVol.style.top = volTop;
+        olVol.style.left = left;
+        olVol.style.display = '';
+    }
+    if (olKdj) {
+        if (gridConfig.kdjTop) {
+            olKdj.style.top = gridConfig.kdjTop;
+            olKdj.style.left = left;
+            olKdj.style.display = '';
+        } else {
+            olKdj.style.display = 'none';
+        }
+    }
+}
+
+function _v(val) {
+    return val != null ? val.toFixed(2) : '-';
+}
+
+function _cls(val, ref) {
+    if (val == null || ref == null) return 'ol-neutral';
+    return val >= ref ? 'ol-up' : 'ol-down';
+}
+
+function _updateOverlays(data, idx, period) {
+    if (!data || idx < 0 || idx >= data.length) return;
     const d = data[idx];
     const prev = idx > 0 ? data[idx - 1] : null;
 
-    const close = d[2], open = d[1];
+    const open = d[1], close = d[2], low = d[3], high = d[4], vol = d[5];
     const prevClose = prev ? prev[2] : open;
     const change = close - prevClose;
     const changePct = prevClose ? ((change / prevClose) * 100).toFixed(2) : '0.00';
     const isUp = change >= 0;
-    const cls = isUp ? 'ib-up' : 'ib-down';
+    const cls = isUp ? 'ol-up' : 'ol-down';
     const sign = isUp ? '+' : '';
-    const amp = d[4] !== 0 ? (((d[4] - d[3]) / prevClose) * 100).toFixed(2) : '0.00';
+
+    const olMain = document.getElementById('kline-ol-main');
+    const olVol = document.getElementById('kline-ol-vol');
+    const olKdj = document.getElementById('kline-ol-kdj');
 
     let lineHtml = '';
     if (period === 'daily') {
         lineHtml =
-            `<span><span class="ib-label">趋势</span> <span class="ib-val" style="color:#fff">${d[9] != null ? d[9].toFixed(2) : '-'}</span></span>` +
-            `<span><span class="ib-label">多空</span> <span class="ib-val" style="color:#facc15">${d[10] != null ? d[10].toFixed(2) : '-'}</span></span>`;
+            ` <span class="ol-val" style="color:#fff">趋势 ${_v(d[9])}</span>` +
+            ` <span class="ol-val" style="color:#facc15">多空 ${_v(d[10])}</span>`;
     } else {
         if (weeklyLineMode === 'trend') {
             lineHtml =
-                `<span><span class="ib-label">趋势</span> <span class="ib-val" style="color:#fff">${d[10] != null ? d[10].toFixed(2) : '-'}</span></span>` +
-                `<span><span class="ib-label">多空</span> <span class="ib-val" style="color:#facc15">${d[11] != null ? d[11].toFixed(2) : '-'}</span></span>`;
+                ` <span class="ol-val" style="color:#fff">趋势 ${_v(d[10])}</span>` +
+                ` <span class="ol-val" style="color:#facc15">多空 ${_v(d[11])}</span>`;
         } else {
             lineHtml =
-                `<span><span class="ib-label">M5</span> <span class="ib-val" style="color:#f59e0b">${d[6] != null ? d[6].toFixed(2) : '-'}</span></span>` +
-                `<span><span class="ib-label">M10</span> <span class="ib-val" style="color:#3b82f6">${d[7] != null ? d[7].toFixed(2) : '-'}</span></span>` +
-                `<span><span class="ib-label">M20</span> <span class="ib-val" style="color:#a855f7">${d[8] != null ? d[8].toFixed(2) : '-'}</span></span>` +
-                `<span><span class="ib-label">M60</span> <span class="ib-val" style="color:#22c55e">${d[9] != null ? d[9].toFixed(2) : '-'}</span></span>`;
+                ` <span class="ol-val" style="color:#f59e0b">MA5 ${_v(d[6])}</span>` +
+                ` <span class="ol-val" style="color:#3b82f6">MA10 ${_v(d[7])}</span>` +
+                ` <span class="ol-val" style="color:#a855f7">MA20 ${_v(d[8])}</span>` +
+                ` <span class="ol-val" style="color:#22c55e">MA60 ${_v(d[9])}</span>`;
         }
     }
 
-    bar.innerHTML =
-        `<span><span class="ib-label">日期</span> <span class="ib-val">${d[0]}</span></span>` +
-        `<span><span class="ib-label">开</span> <span class="ib-val ${open >= prevClose ? 'ib-up' : 'ib-down'}">${open.toFixed(2)}</span></span>` +
-        `<span><span class="ib-label">高</span> <span class="ib-val ${d[4] >= prevClose ? 'ib-up' : 'ib-down'}">${d[4].toFixed(2)}</span></span>` +
-        `<span><span class="ib-label">低</span> <span class="ib-val ${d[3] >= prevClose ? 'ib-up' : 'ib-down'}">${d[3].toFixed(2)}</span></span>` +
-        `<span><span class="ib-label">收</span> <span class="ib-val ${cls}">${close.toFixed(2)}</span></span>` +
-        `<span><span class="ib-label">涨跌</span> <span class="ib-val ${cls}">${sign}${change.toFixed(2)}</span></span>` +
-        `<span><span class="ib-label">幅</span> <span class="ib-val ${cls}">${sign}${changePct}%</span></span>` +
-        `<span><span class="ib-label">振</span> <span class="ib-val">${amp}%</span></span>` +
-        `<span><span class="ib-label">量</span> <span class="ib-val">${formatVolume(d[5])}</span></span>` +
-        lineHtml;
+    if (olMain) {
+        olMain.innerHTML =
+            `<span class="ol-neutral">${d[0]}</span>` +
+            ` <span class="ol-label">开</span><span class="${_cls(open, prevClose)}">${_v(open)}</span>` +
+            ` <span class="ol-label">高</span><span class="${_cls(high, prevClose)}">${_v(high)}</span>` +
+            ` <span class="ol-label">低</span><span class="${_cls(low, prevClose)}">${_v(low)}</span>` +
+            ` <span class="ol-label">收</span><span class="${cls}">${_v(close)}</span>` +
+            ` <span class="${cls}">${sign}${changePct}%</span>` +
+            lineHtml;
+    }
+
+    if (olVol) {
+        olVol.innerHTML =
+            `<span class="ol-label">VOL</span> <span class="${cls}">${formatVolume(vol)}</span>`;
+    }
+
+    if (olKdj && period === 'daily') {
+        olKdj.innerHTML =
+            `<span class="ol-label">KDJ</span>` +
+            ` <span style="color:#3b82f6">K ${_v(d[6])}</span>` +
+            ` <span style="color:#f59e0b">D ${_v(d[7])}</span>` +
+            ` <span style="color:#ef4444">J ${_v(d[8])}</span>`;
+    }
 }
 
 function _bindCrosshairEvent(period) {
@@ -932,7 +995,7 @@ function _bindCrosshairEvent(period) {
         if (!axesInfo || axesInfo.length === 0) return;
         const idx = axesInfo[0].value;
         if (idx != null && idx >= 0 && idx < currentKlineData.length) {
-            _updateInfoBar(currentKlineData, idx, period);
+            _updateOverlays(currentKlineData, idx, period);
         }
     });
 }
@@ -1217,6 +1280,8 @@ function renderDailyKline(data) {
 
     klineChart.hideLoading();
     klineChart.setOption(option);
+    _positionOverlays({ volTop: '60%', kdjTop: '76%' });
+    _updateOverlays(data, data.length - 1, 'daily');
     _bindCrosshairEvent('daily');
 }
 
@@ -1502,6 +1567,8 @@ function renderWeeklyKline(data) {
 
     klineChart.hideLoading();
     klineChart.setOption(option, true);
+    _positionOverlays({ volTop: '78%', kdjTop: null });
+    _updateOverlays(data, data.length - 1, 'weekly');
     _bindCrosshairEvent('weekly');
 
     _showWeeklyToggle(true);

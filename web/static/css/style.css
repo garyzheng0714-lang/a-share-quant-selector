@@ -832,30 +832,27 @@ body {
     max-height: calc(90vh - 52px);
 }
 
-.kline-info-bar {
-    padding: 4px 16px;
-    font-size: 12px;
-    font-family: var(--font-mono);
-    color: var(--ink-muted);
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 16px;
-    line-height: 1.6;
-    background: var(--surface);
-    border-bottom: 1px solid rgba(148,163,184,0.06);
-    min-height: 24px;
-    flex-shrink: 0;
+.kline-overlay {
+    position: absolute;
+    z-index: 10;
+    pointer-events: none;
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: calc(100% - 80px);
 }
-.kline-info-bar .ib-label {
-    color: var(--ink-muted);
-    font-family: var(--font-sans);
+.kline-overlay .ol-label {
+    color: rgba(148,163,184,0.5);
 }
-.kline-info-bar .ib-val {
+.kline-overlay .ol-val {
     font-weight: 600;
-    color: var(--ink-secondary);
 }
-.kline-info-bar .ib-up { color: var(--bull); }
-.kline-info-bar .ib-down { color: var(--bear); }
+.kline-overlay .ol-up { color: var(--bull); }
+.kline-overlay .ol-down { color: var(--bear); }
+.kline-overlay .ol-neutral { color: var(--ink-secondary); }
 .close-btn {
     width: 28px;
     height: 28px;
@@ -1470,10 +1467,8 @@ body {
     .kline-nav-btn { width: 26px; height: 26px; }
     .kline-nav-info { font-size: 10px; }
     .kline-body { max-height: calc(100vh - 50px); }
-    .kline-info-bar {
-        padding: 3px 10px;
+    .kline-overlay {
         font-size: 10px;
-        gap: 4px 10px;
     }
     .kline-tab {
         padding: 4px 10px;
