@@ -12,6 +12,8 @@ let currentStockCode = null;
 let currentKlinePeriod = 'daily';
 let selectionResultsData = null;
 let rankingResultsData = null;
+let weeklyLineMode = 'trend';
+let weeklyKlineDataCache = null;
 
 const CATEGORY_LABELS = {
     bowl_center: '回落碗中',
@@ -827,6 +829,8 @@ function formatVolume(vol) {
 }
 
 function renderDailyKline(data) {
+    _showWeeklyToggle(false);
+
     if (!data || data.length === 0) {
         klineChart.hideLoading();
         return;
@@ -838,6 +842,7 @@ function renderDailyKline(data) {
 
     const dates = data.map(d => d[0]);
     const ohlc = data.map(d => [d[1], d[2], d[3], d[4]]);
+    const closePrice = data.map(d => d[2]);
     const volumes = data.map(d => d[5]);
     const kValues = data.map(d => d[6]);
     const dValues = data.map(d => d[7]);
@@ -847,13 +852,15 @@ function renderDailyKline(data) {
 
     const volumeColors = data.map(d => d[2] >= d[1] ? '#ef4444' : '#22c55e');
 
+    const closeName = isMobile ? '收盘' : '收盘价';
+
     const option = {
         ...darkThemeBase,
         animation: false,
         legend: {
             data: isMobile
-                ? ['K线', '趋势', '多空', '量', 'K', 'D', 'J']
-                : ['K线', '短期趋势线', '多空线', '成交量', 'K', 'D', 'J'],
+                ? ['K线', '收盘', '趋势', '多空', '量', 'K', 'D', 'J']
+                : ['K线', '收盘价', '短期趋势线', '多空线', '成交量', 'K', 'D', 'J'],
             top: 4,
             textStyle: { color: '#94a3b8', fontSize: isMobile ? 9 : 11 },
             itemWidth: isMobile ? 10 : 14,
@@ -982,6 +989,18 @@ function renderDailyKline(data) {
                 },
             },
             {
+                name: closeName,
+                type: 'line',
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                data: closePrice,
+                lineStyle: { width: 1, color: '#60a5fa', type: 'dashed' },
+                itemStyle: { color: '#60a5fa' },
+                symbol: 'none',
+                smooth: false,
+                connectNulls: false,
+            },
+            {
                 name: isMobile ? '趋势' : '短期趋势线',
                 type: 'line',
                 xAxisIndex: 0,
@@ -1061,9 +1080,12 @@ function renderWeeklyKline(data) {
         return;
     }
 
+    weeklyKlineDataCache = data;
+
     const isMobile = window.innerWidth <= 480;
     const gL = isMobile ? 40 : 60;
     const gR = isMobile ? 10 : 60;
+    const isTrend = weeklyLineMode === 'trend';
 
     const dates = data.map(d => d[0]);
     const ohlc = data.map(d => [d[1], d[2], d[3], d[4]]);
@@ -1077,14 +1099,21 @@ function renderWeeklyKline(data) {
 
     const volumeColors = data.map(d => d[2] >= d[1] ? '#ef4444' : '#22c55e');
 
+    const trendName = isMobile ? '趋势' : '短期趋势线';
+    const dkName = isMobile ? '多空' : '多空线';
+    const volName = isMobile ? '量' : '成交量';
+
+    const legendData = isTrend
+        ? ['K线', trendName, dkName, volName]
+        : ['K线', 'MA5', 'MA10', 'MA20', 'MA60', volName];
+
     const option = {
         ...darkThemeBase,
         animation: false,
         legend: {
-            data: isMobile
-                ? ['K线', '趋势', '多空', '量']
-                : ['K线', '短期趋势线', '多空线', 'MA5', 'MA10', 'MA20', 'MA60', '成交量'],
+            data: legendData,
             top: 4,
+            left: isMobile ? 60 : 80,
             textStyle: { color: '#94a3b8', fontSize: isMobile ? 9 : 11 },
             itemWidth: isMobile ? 10 : 14,
             itemHeight: isMobile ? 6 : 8,
@@ -1192,84 +1221,83 @@ function renderWeeklyKline(data) {
                     borderColor0: '#22c55e',
                 },
             },
+            ...(isTrend ? [
+                {
+                    name: trendName,
+                    type: 'line',
+                    xAxisIndex: 0,
+                    yAxisIndex: 0,
+                    data: trendLine,
+                    lineStyle: { width: 1.5, color: '#ffffff' },
+                    itemStyle: { color: '#ffffff' },
+                    symbol: 'none',
+                    smooth: true,
+                    connectNulls: false,
+                },
+                {
+                    name: dkName,
+                    type: 'line',
+                    xAxisIndex: 0,
+                    yAxisIndex: 0,
+                    data: dkLine,
+                    lineStyle: { width: 1.5, color: '#facc15' },
+                    itemStyle: { color: '#facc15' },
+                    symbol: 'none',
+                    smooth: true,
+                    connectNulls: false,
+                },
+            ] : [
+                {
+                    name: 'MA5',
+                    type: 'line',
+                    xAxisIndex: 0,
+                    yAxisIndex: 0,
+                    data: ma5,
+                    lineStyle: { width: 1.5, color: '#f59e0b' },
+                    itemStyle: { color: '#f59e0b' },
+                    symbol: 'none',
+                    smooth: true,
+                    connectNulls: false,
+                },
+                {
+                    name: 'MA10',
+                    type: 'line',
+                    xAxisIndex: 0,
+                    yAxisIndex: 0,
+                    data: ma10,
+                    lineStyle: { width: 1.5, color: '#3b82f6' },
+                    itemStyle: { color: '#3b82f6' },
+                    symbol: 'none',
+                    smooth: true,
+                    connectNulls: false,
+                },
+                {
+                    name: 'MA20',
+                    type: 'line',
+                    xAxisIndex: 0,
+                    yAxisIndex: 0,
+                    data: ma20,
+                    lineStyle: { width: 1.5, color: '#a855f7' },
+                    itemStyle: { color: '#a855f7' },
+                    symbol: 'none',
+                    smooth: true,
+                    connectNulls: false,
+                },
+                {
+                    name: 'MA60',
+                    type: 'line',
+                    xAxisIndex: 0,
+                    yAxisIndex: 0,
+                    data: ma60,
+                    lineStyle: { width: 1.5, color: '#22c55e' },
+                    itemStyle: { color: '#22c55e' },
+                    symbol: 'none',
+                    smooth: true,
+                    connectNulls: false,
+                },
+            ]),
             {
-                name: isMobile ? '趋势' : '短期趋势线',
-                type: 'line',
-                xAxisIndex: 0,
-                yAxisIndex: 0,
-                data: trendLine,
-                lineStyle: { width: 1.5, color: '#ffffff' },
-                itemStyle: { color: '#ffffff' },
-                symbol: 'none',
-                smooth: true,
-                connectNulls: false,
-            },
-            {
-                name: isMobile ? '多空' : '多空线',
-                type: 'line',
-                xAxisIndex: 0,
-                yAxisIndex: 0,
-                data: dkLine,
-                lineStyle: { width: 1.5, color: '#facc15' },
-                itemStyle: { color: '#facc15' },
-                symbol: 'none',
-                smooth: true,
-                connectNulls: false,
-            },
-            {
-                name: 'MA5',
-                type: 'line',
-                xAxisIndex: 0,
-                yAxisIndex: 0,
-                data: ma5,
-                lineStyle: { width: 1, color: '#f59e0b', opacity: 0.5 },
-                itemStyle: { color: '#f59e0b' },
-                symbol: 'none',
-                smooth: true,
-                connectNulls: false,
-                show: !isMobile,
-            },
-            {
-                name: 'MA10',
-                type: 'line',
-                xAxisIndex: 0,
-                yAxisIndex: 0,
-                data: ma10,
-                lineStyle: { width: 1, color: '#3b82f6', opacity: 0.5 },
-                itemStyle: { color: '#3b82f6' },
-                symbol: 'none',
-                smooth: true,
-                connectNulls: false,
-                show: !isMobile,
-            },
-            {
-                name: 'MA20',
-                type: 'line',
-                xAxisIndex: 0,
-                yAxisIndex: 0,
-                data: ma20,
-                lineStyle: { width: 1, color: '#a855f7', opacity: 0.5 },
-                itemStyle: { color: '#a855f7' },
-                symbol: 'none',
-                smooth: true,
-                connectNulls: false,
-                show: !isMobile,
-            },
-            {
-                name: 'MA60',
-                type: 'line',
-                xAxisIndex: 0,
-                yAxisIndex: 0,
-                data: ma60,
-                lineStyle: { width: 1, color: '#22c55e', opacity: 0.5 },
-                itemStyle: { color: '#22c55e' },
-                symbol: 'none',
-                smooth: true,
-                connectNulls: false,
-                show: !isMobile,
-            },
-            {
-                name: isMobile ? '量' : '成交量',
+                name: volName,
                 type: 'bar',
                 xAxisIndex: 1,
                 yAxisIndex: 1,
@@ -1282,7 +1310,36 @@ function renderWeeklyKline(data) {
     };
 
     klineChart.hideLoading();
-    klineChart.setOption(option);
+    klineChart.setOption(option, true);
+
+    _showWeeklyToggle(true);
+}
+
+function _showWeeklyToggle(show) {
+    const el = document.getElementById('weekly-line-toggle');
+    if (!el) return;
+    if (!show) {
+        el.style.display = 'none';
+        return;
+    }
+    el.style.display = 'flex';
+    const isTrend = weeklyLineMode === 'trend';
+    el.innerHTML =
+        `<button class="wl-btn${isTrend ? ' active' : ''}" onclick="switchWeeklyLineMode('trend')">` +
+        `<span style="color:#fff;font-weight:700">|</span><span style="color:#facc15;font-weight:700">|</span> ` +
+        (window.innerWidth <= 480 ? '黄白' : '黄白线') +
+        `</button>` +
+        `<button class="wl-btn${!isTrend ? ' active' : ''}" onclick="switchWeeklyLineMode('ma')">` +
+        (window.innerWidth <= 480 ? '均线' : '均线') +
+        `</button>`;
+}
+
+function switchWeeklyLineMode(mode) {
+    if (mode === weeklyLineMode) return;
+    weeklyLineMode = mode;
+    if (weeklyKlineDataCache && klineChart) {
+        renderWeeklyKline(weeklyKlineDataCache);
+    }
 }
 
 function closeStockModal() {

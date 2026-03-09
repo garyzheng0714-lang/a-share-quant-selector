@@ -246,7 +246,10 @@
                 <button class="close-btn" onclick="closeStockModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <div id="kline-chart" style="width:100%;height:480px;"></div>
+                <div id="kline-chart-wrap" style="position:relative;width:100%;">
+                    <div id="kline-chart" style="width:100%;height:480px;"></div>
+                    <div id="weekly-line-toggle" style="display:none;"></div>
+                </div>
                 <div class="stock-info" id="stock-info"></div>
             </div>
             <script>
