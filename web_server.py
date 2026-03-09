@@ -667,8 +667,21 @@ def api_get_stock_kline(code):
                 ])
         else:
             kdj_df = KDJ(df_slice, n=9, m1=3, m2=3)
+
+            close_s = df_slice["close"].astype(float)
+            ema10 = close_s.ewm(span=10, adjust=False).mean()
+            trend_line = ema10.ewm(span=10, adjust=False).mean()
+
+            ma14 = close_s.rolling(window=14).mean()
+            ma28 = close_s.rolling(window=28).mean()
+            ma57 = close_s.rolling(window=57).mean()
+            ma114 = close_s.rolling(window=114).mean()
+            dk_line = (ma14 + ma28 + ma57 + ma114) / 4
+
             data = []
             for i, (_, row) in enumerate(df_slice.iterrows()):
+                tl = trend_line.iloc[i]
+                dk = dk_line.iloc[i]
                 data.append([
                     row["date"].strftime("%Y-%m-%d")
                     if hasattr(row["date"], "strftime")
@@ -681,6 +694,8 @@ def api_get_stock_kline(code):
                     round(float(kdj_df.iloc[i]["K"]), 2),
                     round(float(kdj_df.iloc[i]["D"]), 2),
                     round(float(kdj_df.iloc[i]["J"]), 2),
+                    round(float(tl), 2) if pd.notna(tl) else None,
+                    round(float(dk), 2) if pd.notna(dk) else None,
                 ])
 
         return jsonify({

@@ -832,6 +832,8 @@ function renderDailyKline(data) {
     const kValues = data.map(d => d[6]);
     const dValues = data.map(d => d[7]);
     const jValues = data.map(d => d[8]);
+    const trendLine = data.map(d => d[9]);
+    const dkLine = data.map(d => d[10]);
 
     const volumeColors = data.map(d => d[2] >= d[1] ? '#ef4444' : '#22c55e');
 
@@ -839,7 +841,7 @@ function renderDailyKline(data) {
         ...darkThemeBase,
         animation: false,
         legend: {
-            data: ['K线', '成交量', 'K', 'D', 'J'],
+            data: ['K线', '短期趋势线', '多空线', '成交量', 'K', 'D', 'J'],
             top: 4,
             textStyle: { color: '#94a3b8', fontSize: 11 },
             itemWidth: 14,
@@ -961,6 +963,30 @@ function renderDailyKline(data) {
                     borderColor: '#ef4444',
                     borderColor0: '#22c55e',
                 },
+            },
+            {
+                name: '短期趋势线',
+                type: 'line',
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                data: trendLine,
+                lineStyle: { width: 1.5, color: '#ffffff' },
+                itemStyle: { color: '#ffffff' },
+                symbol: 'none',
+                smooth: true,
+                connectNulls: false,
+            },
+            {
+                name: '多空线',
+                type: 'line',
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                data: dkLine,
+                lineStyle: { width: 1.5, color: '#facc15' },
+                itemStyle: { color: '#facc15' },
+                symbol: 'none',
+                smooth: true,
+                connectNulls: false,
             },
             {
                 name: '成交量',
