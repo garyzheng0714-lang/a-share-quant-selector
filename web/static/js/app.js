@@ -91,7 +91,7 @@ function switchPage(page) {
     document.querySelectorAll('.page').forEach(p => {
         p.classList.toggle('active', p.id === page + '-page');
     });
-    if (page === 'dashboard') loadStats();
+    if (page === 'dashboard') { loadStats(); loadDashboardRanking(); }
     else if (page === 'views') loadViews();
     else if (page === 'stocks') loadStocks();
     else if (page === 'history') loadHistoryViewSelect();
@@ -522,9 +522,12 @@ function buildCategoryFilterHtml(active, total, cc, context) {
         { key: 'near_duokong', label: '靠近多空线', count: cc.near_duokong || 0 },
         { key: 'near_short_trend', label: '靠近趋势线', count: cc.near_short_trend || 0 },
     ];
-    const handler = context === 'selection'
-        ? 'renderFilteredSelectionResults'
-        : 'renderFilteredRankingList';
+    const handlerMap = {
+        selection: 'renderFilteredSelectionResults',
+        ranking: 'renderFilteredRankingList',
+        dashboardRanking: 'renderFilteredDashboardRanking',
+    };
+    const handler = handlerMap[context] || 'renderFilteredRankingList';
     return `<div class="category-filter">${
         tabs.map(t =>
             `<button class="category-tab${active === t.key ? ' active' : ''}" onclick="${handler}('${t.key}')">${t.label}(${t.count})</button>`
@@ -1543,6 +1546,34 @@ function closeStockModal() {
     stockNavIndex = -1;
 }
 
+// ===== Dashboard Ranking =====
+async function loadDashboardRanking() {
+    const container = document.getElementById('dashboard-ranking-list');
+    if (!container) return;
+    container.innerHTML = '<p class="loading">加载中...</p>';
+
+    try {
+        const r = await fetch('/api/ranking');
+        const d = await r.json();
+        if (d.success && d.data && d.data.length > 0) {
+            rankingResultsData = d.data;
+            renderFilteredDashboardRanking('all');
+        } else {
+            container.innerHTML = '<p class="placeholder">暂无排名数据</p>';
+        }
+    } catch (e) {
+        container.innerHTML = '<p class="text-danger">加载失败</p>';
+    }
+}
+
+function renderFilteredDashboardRanking(filter) {
+    const data = rankingResultsData;
+    if (!data) return;
+    const container = document.getElementById('dashboard-ranking-list');
+    if (!container) return;
+    _renderRankingInto(container, data, filter, 'dashboardRanking');
+}
+
 // ===== Ranking =====
 async function loadRanking() {
     const container = document.getElementById('ranking-list');
@@ -1569,9 +1600,12 @@ function renderRankingList(data) {
 function renderFilteredRankingList(filter) {
     const data = rankingResultsData;
     if (!data) return;
-
     const container = document.getElementById('ranking-list');
+    if (!container) return;
+    _renderRankingInto(container, data, filter, 'ranking');
+}
 
+function _renderRankingInto(container, data, filter, context) {
     const cc = {};
     for (const s of data) {
         const cat = s.category || '';
@@ -1580,7 +1614,7 @@ function renderFilteredRankingList(filter) {
 
     const filtered = filter === 'all' ? data : data.filter(s => s.category === filter);
 
-    let html = buildCategoryFilterHtml(filter, data.length, cc, 'ranking');
+    let html = buildCategoryFilterHtml(filter, data.length, cc, context);
 
     if (filtered.length === 0) {
         html += '<p class="placeholder">暂无排名数据</p>';
