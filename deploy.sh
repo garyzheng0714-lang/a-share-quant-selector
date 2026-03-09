@@ -28,6 +28,8 @@ rsync -avz --delete \
     --exclude 'data/*.json' \
     --exclude 'data/*.db' \
     --exclude '.env' \
+    --exclude 'frontend/node_modules' \
+    --exclude 'frontend/dist' \
     "$PROJECT_DIR/" "$SERVER:$REMOTE_DIR/"
 
 # 3. 安装 Docker (如果未安装)
@@ -45,7 +47,8 @@ ssh "$SERVER" "cd $REMOTE_DIR && docker compose down 2>/dev/null; docker compose
 
 echo ""
 echo "=== 部署完成 ==="
-echo "访问地址: http://112.124.103.65:8080"
+echo "原版前端: http://112.124.103.65:8080"
+echo "新版前端: http://112.124.103.65:8080/new/"
 echo ""
 echo "常用命令:"
 echo "  ssh $SERVER 'cd $REMOTE_DIR && docker compose logs -f'   # 查看日志"
