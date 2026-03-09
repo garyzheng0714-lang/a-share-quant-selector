@@ -1058,7 +1058,7 @@ function renderDailyKline(data) {
             lineStyle: { color: '#facc15', type: 'dashed', width: 1, opacity: 0.6 },
             label: {
                 show: true,
-                position: 'insideStartTop',
+                position: 'insideStartBottom',
                 formatter: latestDk.toFixed(2),
                 color: '#000',
                 backgroundColor: '#facc15',
@@ -1338,7 +1338,7 @@ function renderWeeklyKline(data) {
             lineStyle: { color: '#facc15', type: 'dashed', width: 1, opacity: 0.6 },
             label: {
                 show: true,
-                position: 'insideStartTop',
+                position: 'insideStartBottom',
                 formatter: wLatestDk.toFixed(2),
                 color: '#000',
                 backgroundColor: '#facc15',
