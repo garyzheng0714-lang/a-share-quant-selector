@@ -249,6 +249,21 @@
                 <div id="kline-chart" style="width:100%;height:480px;"></div>
                 <div class="stock-info" id="stock-info"></div>
             </div>
+            <script>
+                (function() {
+                    function resizeKline() {
+                        var el = document.getElementById('kline-chart');
+                        if (!el) return;
+                        if (window.innerWidth <= 480) {
+                            el.style.height = (window.innerHeight - 100) + 'px';
+                        } else {
+                            el.style.height = '480px';
+                        }
+                    }
+                    window.addEventListener('resize', resizeKline);
+                    resizeKline();
+                })();
+            </script>
         </div>
     </div>
 

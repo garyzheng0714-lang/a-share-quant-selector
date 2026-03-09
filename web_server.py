@@ -651,6 +651,16 @@ def api_get_stock_kline(code):
             weekly["MA20"] = weekly["close"].rolling(window=20).mean()
             weekly["MA60"] = weekly["close"].rolling(window=60).mean()
 
+            w_close = weekly["close"].astype(float)
+            w_ema10 = w_close.ewm(span=10, adjust=False).mean()
+            weekly["trend_line"] = w_ema10.ewm(span=10, adjust=False).mean()
+
+            w_ma14 = w_close.rolling(window=14).mean()
+            w_ma28 = w_close.rolling(window=28).mean()
+            w_ma57 = w_close.rolling(window=57).mean()
+            w_ma114 = w_close.rolling(window=114).mean()
+            weekly["dk_line"] = (w_ma14 + w_ma28 + w_ma57 + w_ma114) / 4
+
             data = []
             for date_idx, row in weekly.iterrows():
                 data.append([
@@ -664,6 +674,8 @@ def api_get_stock_kline(code):
                     round(float(row["MA10"]), 2) if pd.notna(row["MA10"]) else None,
                     round(float(row["MA20"]), 2) if pd.notna(row["MA20"]) else None,
                     round(float(row["MA60"]), 2) if pd.notna(row["MA60"]) else None,
+                    round(float(row["trend_line"]), 2) if pd.notna(row["trend_line"]) else None,
+                    round(float(row["dk_line"]), 2) if pd.notna(row["dk_line"]) else None,
                 ])
         else:
             kdj_df = KDJ(df_slice, n=9, m1=3, m2=3)

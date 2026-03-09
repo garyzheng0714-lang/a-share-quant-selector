@@ -745,6 +745,12 @@ function switchKlinePeriod(period) {
 async function loadKline(code, period) {
     const chartDom = document.getElementById('kline-chart');
 
+    if (window.innerWidth <= 480) {
+        chartDom.style.height = (window.innerHeight - 100) + 'px';
+    } else {
+        chartDom.style.height = '480px';
+    }
+
     if (klineChart) {
         klineChart.dispose();
     }
@@ -826,6 +832,10 @@ function renderDailyKline(data) {
         return;
     }
 
+    const isMobile = window.innerWidth <= 480;
+    const gL = isMobile ? 40 : 60;
+    const gR = isMobile ? 10 : 60;
+
     const dates = data.map(d => d[0]);
     const ohlc = data.map(d => [d[1], d[2], d[3], d[4]]);
     const volumes = data.map(d => d[5]);
@@ -841,16 +851,19 @@ function renderDailyKline(data) {
         ...darkThemeBase,
         animation: false,
         legend: {
-            data: ['K线', '短期趋势线', '多空线', '成交量', 'K', 'D', 'J'],
+            data: isMobile
+                ? ['K线', '趋势', '多空', '量', 'K', 'D', 'J']
+                : ['K线', '短期趋势线', '多空线', '成交量', 'K', 'D', 'J'],
             top: 4,
-            textStyle: { color: '#94a3b8', fontSize: 11 },
-            itemWidth: 14,
-            itemHeight: 8,
+            textStyle: { color: '#94a3b8', fontSize: isMobile ? 9 : 11 },
+            itemWidth: isMobile ? 10 : 14,
+            itemHeight: isMobile ? 6 : 8,
+            itemGap: isMobile ? 6 : 10,
         },
         grid: [
-            { left: 60, right: 60, top: 40, height: '45%' },
-            { left: 60, right: 60, top: '58%', height: '12%' },
-            { left: 60, right: 60, top: '75%', height: '18%' },
+            { left: gL, right: gR, top: isMobile ? 30 : 40, height: '45%' },
+            { left: gL, right: gR, top: '58%', height: '12%' },
+            { left: gL, right: gR, top: '75%', height: '18%' },
         ],
         xAxis: [
             {
@@ -928,23 +941,27 @@ function renderDailyKline(data) {
                 type: 'slider',
                 xAxisIndex: [0, 1, 2],
                 bottom: 4,
-                height: 20,
+                height: isMobile ? 28 : 20,
                 borderColor: 'rgba(148,163,184,0.15)',
                 fillerColor: 'rgba(245,158,11,0.08)',
                 handleStyle: { color: '#f59e0b', borderColor: '#f59e0b' },
+                handleSize: isMobile ? '120%' : '100%',
                 textStyle: { color: '#64748b', fontSize: 10 },
-                start: Math.max(0, 100 - (120 / dates.length) * 100),
+                start: Math.max(0, 100 - ((isMobile ? 60 : 120) / dates.length) * 100),
                 end: 100,
             },
             {
                 type: 'inside',
                 xAxisIndex: [0, 1, 2],
+                zoomOnMouseWheel: true,
+                moveOnMouseMove: true,
             },
         ],
         tooltip: {
             ...darkThemeBase.tooltip,
             trigger: 'axis',
             axisPointer: { type: 'cross' },
+            confine: true,
         },
         axisPointer: {
             link: [{ xAxisIndex: 'all' }],
@@ -965,7 +982,7 @@ function renderDailyKline(data) {
                 },
             },
             {
-                name: '短期趋势线',
+                name: isMobile ? '趋势' : '短期趋势线',
                 type: 'line',
                 xAxisIndex: 0,
                 yAxisIndex: 0,
@@ -977,7 +994,7 @@ function renderDailyKline(data) {
                 connectNulls: false,
             },
             {
-                name: '多空线',
+                name: isMobile ? '多空' : '多空线',
                 type: 'line',
                 xAxisIndex: 0,
                 yAxisIndex: 0,
@@ -989,7 +1006,7 @@ function renderDailyKline(data) {
                 connectNulls: false,
             },
             {
-                name: '成交量',
+                name: isMobile ? '量' : '成交量',
                 type: 'bar',
                 xAxisIndex: 1,
                 yAxisIndex: 1,
@@ -1044,6 +1061,10 @@ function renderWeeklyKline(data) {
         return;
     }
 
+    const isMobile = window.innerWidth <= 480;
+    const gL = isMobile ? 40 : 60;
+    const gR = isMobile ? 10 : 60;
+
     const dates = data.map(d => d[0]);
     const ohlc = data.map(d => [d[1], d[2], d[3], d[4]]);
     const volumes = data.map(d => d[5]);
@@ -1051,6 +1072,8 @@ function renderWeeklyKline(data) {
     const ma10 = data.map(d => d[7]);
     const ma20 = data.map(d => d[8]);
     const ma60 = data.map(d => d[9]);
+    const trendLine = data.map(d => d[10]);
+    const dkLine = data.map(d => d[11]);
 
     const volumeColors = data.map(d => d[2] >= d[1] ? '#ef4444' : '#22c55e');
 
@@ -1058,15 +1081,18 @@ function renderWeeklyKline(data) {
         ...darkThemeBase,
         animation: false,
         legend: {
-            data: ['K线', 'MA5', 'MA10', 'MA20', 'MA60', '成交量'],
+            data: isMobile
+                ? ['K线', '趋势', '多空', '量']
+                : ['K线', '短期趋势线', '多空线', 'MA5', 'MA10', 'MA20', 'MA60', '成交量'],
             top: 4,
-            textStyle: { color: '#94a3b8', fontSize: 11 },
-            itemWidth: 14,
-            itemHeight: 8,
+            textStyle: { color: '#94a3b8', fontSize: isMobile ? 9 : 11 },
+            itemWidth: isMobile ? 10 : 14,
+            itemHeight: isMobile ? 6 : 8,
+            itemGap: isMobile ? 6 : 10,
         },
         grid: [
-            { left: 60, right: 60, top: 40, height: '58%' },
-            { left: 60, right: 60, top: '72%', height: '18%' },
+            { left: gL, right: gR, top: isMobile ? 30 : 40, height: '58%' },
+            { left: gL, right: gR, top: '72%', height: '18%' },
         ],
         xAxis: [
             {
@@ -1126,23 +1152,27 @@ function renderWeeklyKline(data) {
                 type: 'slider',
                 xAxisIndex: [0, 1],
                 bottom: 4,
-                height: 20,
+                height: isMobile ? 28 : 20,
                 borderColor: 'rgba(148,163,184,0.15)',
                 fillerColor: 'rgba(245,158,11,0.08)',
                 handleStyle: { color: '#f59e0b', borderColor: '#f59e0b' },
+                handleSize: isMobile ? '120%' : '100%',
                 textStyle: { color: '#64748b', fontSize: 10 },
-                start: Math.max(0, 100 - (60 / dates.length) * 100),
+                start: Math.max(0, 100 - ((isMobile ? 30 : 60) / dates.length) * 100),
                 end: 100,
             },
             {
                 type: 'inside',
                 xAxisIndex: [0, 1],
+                zoomOnMouseWheel: true,
+                moveOnMouseMove: true,
             },
         ],
         tooltip: {
             ...darkThemeBase.tooltip,
             trigger: 'axis',
             axisPointer: { type: 'cross' },
+            confine: true,
         },
         axisPointer: {
             link: [{ xAxisIndex: 'all' }],
@@ -1163,16 +1193,41 @@ function renderWeeklyKline(data) {
                 },
             },
             {
+                name: isMobile ? '趋势' : '短期趋势线',
+                type: 'line',
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                data: trendLine,
+                lineStyle: { width: 1.5, color: '#ffffff' },
+                itemStyle: { color: '#ffffff' },
+                symbol: 'none',
+                smooth: true,
+                connectNulls: false,
+            },
+            {
+                name: isMobile ? '多空' : '多空线',
+                type: 'line',
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                data: dkLine,
+                lineStyle: { width: 1.5, color: '#facc15' },
+                itemStyle: { color: '#facc15' },
+                symbol: 'none',
+                smooth: true,
+                connectNulls: false,
+            },
+            {
                 name: 'MA5',
                 type: 'line',
                 xAxisIndex: 0,
                 yAxisIndex: 0,
                 data: ma5,
-                lineStyle: { width: 1.5, color: '#f59e0b' },
+                lineStyle: { width: 1, color: '#f59e0b', opacity: 0.5 },
                 itemStyle: { color: '#f59e0b' },
                 symbol: 'none',
                 smooth: true,
                 connectNulls: false,
+                show: !isMobile,
             },
             {
                 name: 'MA10',
@@ -1180,11 +1235,12 @@ function renderWeeklyKline(data) {
                 xAxisIndex: 0,
                 yAxisIndex: 0,
                 data: ma10,
-                lineStyle: { width: 1.5, color: '#3b82f6' },
+                lineStyle: { width: 1, color: '#3b82f6', opacity: 0.5 },
                 itemStyle: { color: '#3b82f6' },
                 symbol: 'none',
                 smooth: true,
                 connectNulls: false,
+                show: !isMobile,
             },
             {
                 name: 'MA20',
@@ -1192,11 +1248,12 @@ function renderWeeklyKline(data) {
                 xAxisIndex: 0,
                 yAxisIndex: 0,
                 data: ma20,
-                lineStyle: { width: 1.5, color: '#a855f7' },
+                lineStyle: { width: 1, color: '#a855f7', opacity: 0.5 },
                 itemStyle: { color: '#a855f7' },
                 symbol: 'none',
                 smooth: true,
                 connectNulls: false,
+                show: !isMobile,
             },
             {
                 name: 'MA60',
@@ -1204,14 +1261,15 @@ function renderWeeklyKline(data) {
                 xAxisIndex: 0,
                 yAxisIndex: 0,
                 data: ma60,
-                lineStyle: { width: 1.5, color: '#22c55e' },
+                lineStyle: { width: 1, color: '#22c55e', opacity: 0.5 },
                 itemStyle: { color: '#22c55e' },
                 symbol: 'none',
                 smooth: true,
                 connectNulls: false,
+                show: !isMobile,
             },
             {
-                name: '成交量',
+                name: isMobile ? '量' : '成交量',
                 type: 'bar',
                 xAxisIndex: 1,
                 yAxisIndex: 1,

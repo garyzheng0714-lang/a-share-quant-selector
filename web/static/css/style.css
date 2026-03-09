@@ -1249,4 +1249,112 @@ body {
 @media (max-width: 480px) {
     .stats-grid { grid-template-columns: 1fr; }
     .result-summary { flex-direction: column; }
+
+    /* --- Mobile: hide sidebar, full-width layout --- */
+    .sidebar {
+        position: fixed;
+        bottom: 0;
+        top: auto;
+        left: 0;
+        right: 0;
+        width: 100%;
+        height: 52px;
+        flex-direction: row;
+        border-right: none;
+        border-top: 1px solid var(--border-em);
+        z-index: 200;
+    }
+    .logo { display: none; }
+    .sidebar-footer { display: none; }
+    .nav-menu {
+        display: flex;
+        flex-direction: row;
+        justify-content: space-around;
+        align-items: center;
+        padding: 0 4px;
+        flex: 1;
+        gap: 0;
+    }
+    .nav-item {
+        flex: 1;
+        justify-content: center;
+        padding: 8px 4px;
+        margin-bottom: 0;
+        border-radius: 0;
+    }
+    .nav-item.active::before { display: none; }
+    .nav-text { display: none; }
+
+    .main-content {
+        margin-left: 0;
+        padding-bottom: 56px;
+    }
+    .content { padding: 12px; }
+    .header {
+        padding: 0 12px;
+        height: 44px;
+    }
+    .header h2 { font-size: 14px; }
+
+    .stat-card { padding: 14px; gap: 10px; }
+    .stat-info h3 { font-size: 18px; }
+    .stat-icon { width: 30px; height: 30px; font-size: 14px; }
+
+    .card { padding: 14px; border-radius: 8px; }
+    .card h3 { font-size: 13px; }
+
+    /* --- Mobile: fullscreen K-line modal --- */
+    .modal-content.modal-lg {
+        width: 100%;
+        max-width: 100%;
+        height: 100%;
+        max-height: 100%;
+        border-radius: 0;
+        border: none;
+    }
+    .modal-header {
+        padding: 10px 14px;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .modal-header > div {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .modal-header h3 { font-size: 14px; }
+    .modal-body { padding: 8px; }
+    .kline-tabs {
+        margin-top: 0;
+    }
+    .kline-tab {
+        padding: 4px 10px;
+        font-size: 11px;
+    }
+
+    /* --- Mobile: ranking cards --- */
+    .ranking-item {
+        padding: 10px 12px;
+        gap: 10px;
+    }
+    .rank-number {
+        width: 28px;
+        height: 28px;
+        font-size: 13px;
+        border-radius: 6px;
+    }
+    .signal-code { font-size: 12px; }
+    .signal-name { font-size: 12px; }
+    .signal-metrics { gap: 10px; font-size: 10px; }
+
+    /* --- Mobile: toast --- */
+    .toast-container { left: 12px; right: 12px; top: auto; bottom: 60px; }
+    .toast { max-width: 100%; font-size: 12px; }
+
+    /* --- Mobile: data table --- */
+    .data-table th, .data-table td { padding: 8px 6px; font-size: 12px; }
+
+    /* --- Mobile: buttons --- */
+    .btn { padding: 6px 10px; font-size: 12px; }
+    .quick-actions { flex-direction: column; }
+    .quick-actions .btn { width: 100%; justify-content: center; }
 }
