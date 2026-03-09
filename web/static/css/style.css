@@ -755,10 +755,40 @@ body {
 }
 .kline-header-left {
     display: flex;
-    align-items: baseline;
-    gap: 10px;
+    align-items: center;
+    gap: 6px;
     flex-wrap: wrap;
     min-width: 0;
+}
+.kline-nav-btn {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--elevated);
+    border: 1px solid var(--border-em);
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    color: var(--ink-secondary);
+    transition: all var(--duration) var(--ease);
+    flex-shrink: 0;
+    padding: 0;
+}
+.kline-nav-btn:hover {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-color: var(--accent);
+}
+.kline-nav-btn:active {
+    transform: scale(0.92);
+}
+.kline-nav-info {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--ink-muted);
+    margin-right: 4px;
+    flex-shrink: 0;
 }
 .kline-stock-code {
     font-size: 16px;
@@ -1437,6 +1467,8 @@ body {
     .kline-stock-name { font-size: 12px; }
     .kline-stock-price .price-val { font-size: 14px; }
     .kline-stock-price .price-change { font-size: 11px; }
+    .kline-nav-btn { width: 26px; height: 26px; }
+    .kline-nav-info { font-size: 10px; }
     .kline-body { max-height: calc(100vh - 50px); }
     .kline-info-bar {
         padding: 3px 10px;

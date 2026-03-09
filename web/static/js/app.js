@@ -16,6 +16,9 @@ let weeklyLineMode = 'trend';
 let weeklyKlineDataCache = null;
 let currentStockName = '';
 let currentKlineData = null;
+let stockNavList = [];
+let stockNavIndex = -1;
+let currentHistoryCodes = [];
 
 const CATEGORY_LABELS = {
     bowl_center: '回落碗中',
@@ -562,7 +565,7 @@ function buildSignalCardHtml(s) {
     }
 
     return `
-        <div class="signal-card ${catClass}" onclick="viewStockDetail('${s.code}')" style="cursor:pointer">
+        <div class="signal-card ${catClass}" onclick="viewStockDetail('${s.code}', 'selection')" style="cursor:pointer">
             <div class="signal-main">
                 <div class="signal-left">
                     <div class="signal-header-row">
@@ -720,7 +723,19 @@ function renderStocks(stocks) {
 }
 
 // ===== Stock Detail (ECharts K-line) =====
-function viewStockDetail(code) {
+function viewStockDetail(code, navSource) {
+    if (navSource === 'ranking') {
+        stockNavList = rankingResultsData ? rankingResultsData.map(s => s.code) : [];
+    } else if (navSource === 'selection') {
+        const stocks = selectionResultsData ? selectionResultsData.stocks || [] : [];
+        stockNavList = stocks.map(s => s.code);
+    } else if (navSource === 'history') {
+        stockNavList = currentHistoryCodes;
+    } else if (!navSource) {
+        stockNavList = [];
+    }
+    stockNavIndex = stockNavList.indexOf(code);
+
     currentStockCode = code;
     currentKlinePeriod = 'daily';
     currentStockName = '';
@@ -736,6 +751,50 @@ function viewStockDetail(code) {
     document.getElementById('stock-modal').classList.add('active');
 
     loadKline(code, 'daily');
+    _updateNavButtons();
+}
+
+function navigateStock(dir) {
+    if (stockNavList.length <= 1) return;
+    stockNavIndex += dir;
+    if (stockNavIndex < 0) stockNavIndex = stockNavList.length - 1;
+    if (stockNavIndex >= stockNavList.length) stockNavIndex = 0;
+
+    const code = stockNavList[stockNavIndex];
+    currentStockCode = code;
+    currentKlinePeriod = 'daily';
+
+    document.querySelectorAll('#kline-tabs .kline-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.period === 'daily');
+    });
+
+    document.getElementById('modal-stock-code').textContent = code;
+    document.getElementById('modal-stock-name').textContent = '--';
+    document.getElementById('modal-stock-price').innerHTML = '';
+    document.getElementById('kline-info-bar').innerHTML = '';
+
+    loadKline(code, 'daily');
+    _updateNavButtons();
+}
+
+function _updateNavButtons() {
+    const prevBtn = document.getElementById('nav-prev-btn');
+    const nextBtn = document.getElementById('nav-next-btn');
+    const navInfo = document.getElementById('nav-info');
+    if (!prevBtn || !nextBtn) return;
+
+    if (stockNavList.length <= 1) {
+        prevBtn.style.display = 'none';
+        nextBtn.style.display = 'none';
+        if (navInfo) navInfo.style.display = 'none';
+    } else {
+        prevBtn.style.display = '';
+        nextBtn.style.display = '';
+        if (navInfo) {
+            navInfo.style.display = '';
+            navInfo.textContent = `${stockNavIndex + 1}/${stockNavList.length}`;
+        }
+    }
 }
 
 function switchKlinePeriod(period) {
@@ -1009,7 +1068,14 @@ function renderDailyKline(data) {
                 moveOnMouseMove: true,
             },
         ],
-        tooltip: { show: false },
+        tooltip: {
+            trigger: 'axis',
+            showContent: false,
+            axisPointer: {
+                type: 'cross',
+                crossStyle: { color: 'rgba(148,163,184,0.3)' },
+            },
+        },
         axisPointer: {
             link: [{ xAxisIndex: 'all' }],
             label: { backgroundColor: '#1c2539', fontSize: 10 },
@@ -1230,7 +1296,14 @@ function renderWeeklyKline(data) {
                 moveOnMouseMove: true,
             },
         ],
-        tooltip: { show: false },
+        tooltip: {
+            trigger: 'axis',
+            showContent: false,
+            axisPointer: {
+                type: 'cross',
+                crossStyle: { color: 'rgba(148,163,184,0.3)' },
+            },
+        },
         axisPointer: {
             link: [{ xAxisIndex: 'all' }],
             label: { backgroundColor: '#1c2539', fontSize: 10 },
@@ -1379,6 +1452,8 @@ function closeStockModal() {
         klineChart = null;
     }
     currentKlineData = null;
+    stockNavList = [];
+    stockNavIndex = -1;
 }
 
 // ===== Ranking =====
@@ -1466,7 +1541,7 @@ function renderFilteredRankingList(filter) {
         }
 
         return `
-            <div class="ranking-item" onclick="viewStockDetail('${code}')">
+            <div class="ranking-item" onclick="viewStockDetail('${code}', 'ranking')">
                 <div class="rank-number">${index + 1}</div>
                 <div class="ranking-main">
                     <div class="signal-left">
@@ -1540,6 +1615,7 @@ async function showHistoryDetail(viewId, runDate) {
         if (d.success) {
             const container = document.getElementById('history-list');
             const stocks = d.data.stocks || [];
+            currentHistoryCodes = stocks.map(s => s.code);
             let html = `<div style="margin-bottom:12px;display:flex;align-items:center;gap:12px;">
                 <button class="btn btn-sm btn-secondary" onclick="loadHistory()">返回列表</button>
                 <span style="font-weight:600;font-family:var(--font-mono);font-size:13px;">${runDate}</span>
@@ -1557,7 +1633,7 @@ async function showHistoryDetail(viewId, runDate) {
                     s.category === 'bowl_center' ? '回落碗中' :
                     s.category === 'near_duokong' ? '靠近多空线' : '靠近趋势线';
                 return `
-                    <div class="signal-card ${catClass}" onclick="viewStockDetail('${s.code}')" style="cursor:pointer">
+                    <div class="signal-card ${catClass}" onclick="viewStockDetail('${s.code}', 'history')" style="cursor:pointer">
                         <div class="signal-left">
                             <span class="signal-code">${s.code}</span>
                             <span class="signal-name">${escapeHtml(s.name)}</span>
@@ -1590,6 +1666,23 @@ window.addEventListener('resize', () => {
 document.addEventListener('click', (e) => {
     if (e.target.id === 'stock-modal') closeStockModal();
     if (e.target.id === 'create-view-modal') closeCreateViewModal();
+});
+
+// ===== Keyboard Navigation =====
+document.addEventListener('keydown', (e) => {
+    const modal = document.getElementById('stock-modal');
+    if (!modal || !modal.classList.contains('active')) return;
+
+    if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        navigateStock(-1);
+    } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        navigateStock(1);
+    } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeStockModal();
+    }
 });
 
 // ===== Utilities =====
