@@ -42,10 +42,10 @@ const darkThemeBase = {
 // ===== Init =====
 document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
-    loadStats();
     loadViews();
     checkSchedulerStatus();
     createToastContainer();
+    loadDashboardRanking();
 });
 
 function createToastContainer() {
@@ -81,7 +81,7 @@ function switchPage(page) {
         item.classList.toggle('active', item.dataset.page === page);
     });
     const titles = {
-        dashboard: '系统概览',
+        dashboard: '每日选股',
         views: '选股视图',
         stocks: '股票列表',
         history: '历史结果',
@@ -91,7 +91,7 @@ function switchPage(page) {
     document.querySelectorAll('.page').forEach(p => {
         p.classList.toggle('active', p.id === page + '-page');
     });
-    if (page === 'dashboard') { loadStats(); loadDashboardRanking(); }
+    if (page === 'dashboard') { loadDashboardRanking(); }
     else if (page === 'views') loadViews();
     else if (page === 'stocks') loadStocks();
     else if (page === 'history') loadHistoryViewSelect();
