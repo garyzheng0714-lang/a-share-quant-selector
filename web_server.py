@@ -630,7 +630,7 @@ def api_get_stock_kline(code):
         if df.empty:
             return jsonify({"success": False, "error": "股票不存在"})
 
-        default_days = 200 if period == "daily" else 500
+        default_days = 200 if period == "daily" else 2000
         days = int(request.args.get("days", default_days))
 
         # CSV is stored newest-first; take top N rows then reverse to chronological

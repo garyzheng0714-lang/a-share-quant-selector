@@ -955,7 +955,6 @@ function renderDailyKline(data) {
 
     const dates = data.map(d => d[0]);
     const ohlc = data.map(d => [d[1], d[2], d[3], d[4]]);
-    const closePrice = data.map(d => d[2]);
     const volumes = data.map(d => d[5]);
     const kValues = data.map(d => d[6]);
     const dValues = data.map(d => d[7]);
@@ -965,7 +964,45 @@ function renderDailyKline(data) {
 
     const volumeColors = data.map(d => d[2] >= d[1] ? '#ef4444' : '#22c55e');
 
-    const closeName = isMobile ? '收盘' : '收盘价';
+    const latestClose = data[data.length - 1][2];
+    const prevClose = data.length > 1 ? data[data.length - 2][2] : latestClose;
+    const priceColor = latestClose >= prevClose ? '#ef4444' : '#22c55e';
+
+    let latestDk = null;
+    for (let i = data.length - 1; i >= 0; i--) {
+        if (data[i][10] != null) { latestDk = data[i][10]; break; }
+    }
+
+    const priceMarkLines = [
+        {
+            yAxis: latestClose,
+            lineStyle: { color: priceColor, type: 'dashed', width: 1 },
+            label: {
+                position: 'end',
+                formatter: latestClose.toFixed(2),
+                color: '#fff',
+                backgroundColor: priceColor,
+                padding: [2, 6],
+                borderRadius: 2,
+                fontSize: 10,
+            },
+        },
+    ];
+    if (latestDk != null) {
+        priceMarkLines.push({
+            yAxis: latestDk,
+            lineStyle: { color: '#facc15', type: 'dashed', width: 1, opacity: 0.6 },
+            label: {
+                position: 'start',
+                formatter: latestDk.toFixed(2),
+                color: '#000',
+                backgroundColor: '#facc15',
+                padding: [2, 6],
+                borderRadius: 2,
+                fontSize: 10,
+            },
+        });
+    }
 
     const option = {
         ...darkThemeBase,
@@ -1093,18 +1130,11 @@ function renderDailyKline(data) {
                     borderColor: '#ef4444',
                     borderColor0: '#22c55e',
                 },
-            },
-            {
-                name: closeName,
-                type: 'line',
-                xAxisIndex: 0,
-                yAxisIndex: 0,
-                data: closePrice,
-                lineStyle: { width: 1, color: '#60a5fa', type: 'dashed' },
-                itemStyle: { color: '#60a5fa' },
-                symbol: 'none',
-                smooth: false,
-                connectNulls: false,
+                markLine: {
+                    symbol: 'none',
+                    silent: true,
+                    data: priceMarkLines,
+                },
             },
             {
                 name: isMobile ? '趋势' : '短期趋势线',
@@ -1205,6 +1235,46 @@ function renderWeeklyKline(data) {
     const dkLine = data.map(d => d[11]);
 
     const volumeColors = data.map(d => d[2] >= d[1] ? '#ef4444' : '#22c55e');
+
+    const wLatestClose = data[data.length - 1][2];
+    const wPrevClose = data.length > 1 ? data[data.length - 2][2] : wLatestClose;
+    const wPriceColor = wLatestClose >= wPrevClose ? '#ef4444' : '#22c55e';
+
+    let wLatestDk = null;
+    for (let i = data.length - 1; i >= 0; i--) {
+        if (data[i][11] != null) { wLatestDk = data[i][11]; break; }
+    }
+
+    const wPriceMarkLines = [
+        {
+            yAxis: wLatestClose,
+            lineStyle: { color: wPriceColor, type: 'dashed', width: 1 },
+            label: {
+                position: 'end',
+                formatter: wLatestClose.toFixed(2),
+                color: '#fff',
+                backgroundColor: wPriceColor,
+                padding: [2, 6],
+                borderRadius: 2,
+                fontSize: 10,
+            },
+        },
+    ];
+    if (wLatestDk != null) {
+        wPriceMarkLines.push({
+            yAxis: wLatestDk,
+            lineStyle: { color: '#facc15', type: 'dashed', width: 1, opacity: 0.6 },
+            label: {
+                position: 'start',
+                formatter: wLatestDk.toFixed(2),
+                color: '#000',
+                backgroundColor: '#facc15',
+                padding: [2, 6],
+                borderRadius: 2,
+                fontSize: 10,
+            },
+        });
+    }
 
     const trendName = isMobile ? '趋势' : '短期趋势线';
     const dkName = isMobile ? '多空' : '多空线';
@@ -1320,6 +1390,11 @@ function renderWeeklyKline(data) {
                     color0: '#22c55e',
                     borderColor: '#ef4444',
                     borderColor0: '#22c55e',
+                },
+                markLine: {
+                    symbol: 'none',
+                    silent: true,
+                    data: wPriceMarkLines,
                 },
             },
             ...(isTrend ? [
