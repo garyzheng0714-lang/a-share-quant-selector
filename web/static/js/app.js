@@ -14,6 +14,8 @@ let selectionResultsData = null;
 let rankingResultsData = null;
 let weeklyLineMode = 'trend';
 let weeklyKlineDataCache = null;
+let currentStockName = '';
+let currentKlineData = null;
 
 const CATEGORY_LABELS = {
     bowl_center: '回落碗中',
@@ -721,13 +723,16 @@ function renderStocks(stocks) {
 function viewStockDetail(code) {
     currentStockCode = code;
     currentKlinePeriod = 'daily';
+    currentStockName = '';
 
     document.querySelectorAll('#kline-tabs .kline-tab').forEach(tab => {
         tab.classList.toggle('active', tab.dataset.period === 'daily');
     });
 
-    document.getElementById('modal-title').textContent = code;
-    document.getElementById('stock-info').innerHTML = '';
+    document.getElementById('modal-stock-code').textContent = code;
+    document.getElementById('modal-stock-name').textContent = '--';
+    document.getElementById('modal-stock-price').innerHTML = '';
+    document.getElementById('kline-info-bar').innerHTML = '';
     document.getElementById('stock-modal').classList.add('active');
 
     loadKline(code, 'daily');
@@ -748,9 +753,9 @@ async function loadKline(code, period) {
     const chartDom = document.getElementById('kline-chart');
 
     if (window.innerWidth <= 480) {
-        chartDom.style.height = (window.innerHeight - 100) + 'px';
+        chartDom.style.height = (window.innerHeight - 90) + 'px';
     } else {
-        chartDom.style.height = '480px';
+        chartDom.style.height = '560px';
     }
 
     if (klineChart) {
@@ -758,22 +763,30 @@ async function loadKline(code, period) {
     }
     klineChart = echarts.init(chartDom);
     klineChart.showLoading({
-        text: '加载中...',
+        text: '',
         color: '#f59e0b',
         maskColor: 'rgba(19, 26, 43, 0.8)',
         textColor: '#94a3b8',
+        spinnerRadius: 16,
+        lineWidth: 2,
     });
 
     try {
         const r = await fetch(`/api/stock/${code}/kline?period=${period}`);
         const d = await r.json();
         if (d.success) {
+            currentStockName = d.name || '';
+            currentKlineData = d.data;
+
+            document.getElementById('modal-stock-name').textContent = currentStockName;
+            _updateHeaderPrice(d.data, period);
+
             if (period === 'daily') {
                 renderDailyKline(d.data);
             } else {
                 renderWeeklyKline(d.data);
             }
-            renderStockInfo(d.data, period);
+            _updateInfoBar(d.data, d.data.length - 1, period);
         } else {
             klineChart.hideLoading();
             toast('K线数据加载失败: ' + d.error, 'error');
@@ -784,41 +797,82 @@ async function loadKline(code, period) {
     }
 }
 
-function renderStockInfo(data, period) {
-    if (!data || data.length === 0) return;
-    const latest = data[data.length - 1];
-    const infoEl = document.getElementById('stock-info');
+function _updateHeaderPrice(data, period) {
+    const priceEl = document.getElementById('modal-stock-price');
+    if (!data || data.length < 2) { priceEl.innerHTML = ''; return; }
 
+    const latest = data[data.length - 1];
+    const prev = data[data.length - 2];
+    const close = latest[2];
+    const prevClose = prev[2];
+    const change = close - prevClose;
+    const changePct = ((change / prevClose) * 100).toFixed(2);
+    const isUp = change >= 0;
+    const cls = isUp ? 'ib-up' : 'ib-down';
+    const sign = isUp ? '+' : '';
+
+    priceEl.innerHTML =
+        `<span class="price-val ${cls}">${close.toFixed(2)}</span>` +
+        `<span class="price-change ${cls}">${sign}${change.toFixed(2)} (${sign}${changePct}%)</span>`;
+}
+
+function _updateInfoBar(data, idx, period) {
+    const bar = document.getElementById('kline-info-bar');
+    if (!bar || !data || idx < 0 || idx >= data.length) return;
+    const d = data[idx];
+    const prev = idx > 0 ? data[idx - 1] : null;
+
+    const close = d[2], open = d[1];
+    const prevClose = prev ? prev[2] : open;
+    const change = close - prevClose;
+    const changePct = prevClose ? ((change / prevClose) * 100).toFixed(2) : '0.00';
+    const isUp = change >= 0;
+    const cls = isUp ? 'ib-up' : 'ib-down';
+    const sign = isUp ? '+' : '';
+    const amp = d[4] !== 0 ? (((d[4] - d[3]) / prevClose) * 100).toFixed(2) : '0.00';
+
+    let lineHtml = '';
     if (period === 'daily') {
-        infoEl.innerHTML = `
-            <div class="signal-right" style="justify-content:flex-start;gap:24px;margin-top:14px;font-size:12px;flex-wrap:wrap;">
-                <div>日期 <strong>${latest[0]}</strong></div>
-                <div>开盘 <strong>&yen;${latest[1]}</strong></div>
-                <div>收盘 <strong>&yen;${latest[2]}</strong></div>
-                <div>最低 <strong>&yen;${latest[3]}</strong></div>
-                <div>最高 <strong>&yen;${latest[4]}</strong></div>
-                <div>成交量 <strong>${formatVolume(latest[5])}</strong></div>
-                <div>K <strong style="color:#3b82f6">${latest[6] != null ? latest[6].toFixed(1) : '-'}</strong></div>
-                <div>D <strong style="color:#f59e0b">${latest[7] != null ? latest[7].toFixed(1) : '-'}</strong></div>
-                <div>J <strong style="color:#ef4444">${latest[8] != null ? latest[8].toFixed(1) : '-'}</strong></div>
-            </div>
-        `;
+        lineHtml =
+            `<span><span class="ib-label">趋势</span> <span class="ib-val" style="color:#fff">${d[9] != null ? d[9].toFixed(2) : '-'}</span></span>` +
+            `<span><span class="ib-label">多空</span> <span class="ib-val" style="color:#facc15">${d[10] != null ? d[10].toFixed(2) : '-'}</span></span>`;
     } else {
-        infoEl.innerHTML = `
-            <div class="signal-right" style="justify-content:flex-start;gap:24px;margin-top:14px;font-size:12px;flex-wrap:wrap;">
-                <div>日期 <strong>${latest[0]}</strong></div>
-                <div>开盘 <strong>&yen;${latest[1]}</strong></div>
-                <div>收盘 <strong>&yen;${latest[2]}</strong></div>
-                <div>最低 <strong>&yen;${latest[3]}</strong></div>
-                <div>最高 <strong>&yen;${latest[4]}</strong></div>
-                <div>成交量 <strong>${formatVolume(latest[5])}</strong></div>
-                <div>MA5 <strong style="color:#f59e0b">${latest[6] != null ? latest[6].toFixed(2) : '-'}</strong></div>
-                <div>MA10 <strong style="color:#3b82f6">${latest[7] != null ? latest[7].toFixed(2) : '-'}</strong></div>
-                <div>MA20 <strong style="color:#a855f7">${latest[8] != null ? latest[8].toFixed(2) : '-'}</strong></div>
-                <div>MA60 <strong style="color:#22c55e">${latest[9] != null ? latest[9].toFixed(2) : '-'}</strong></div>
-            </div>
-        `;
+        if (weeklyLineMode === 'trend') {
+            lineHtml =
+                `<span><span class="ib-label">趋势</span> <span class="ib-val" style="color:#fff">${d[10] != null ? d[10].toFixed(2) : '-'}</span></span>` +
+                `<span><span class="ib-label">多空</span> <span class="ib-val" style="color:#facc15">${d[11] != null ? d[11].toFixed(2) : '-'}</span></span>`;
+        } else {
+            lineHtml =
+                `<span><span class="ib-label">M5</span> <span class="ib-val" style="color:#f59e0b">${d[6] != null ? d[6].toFixed(2) : '-'}</span></span>` +
+                `<span><span class="ib-label">M10</span> <span class="ib-val" style="color:#3b82f6">${d[7] != null ? d[7].toFixed(2) : '-'}</span></span>` +
+                `<span><span class="ib-label">M20</span> <span class="ib-val" style="color:#a855f7">${d[8] != null ? d[8].toFixed(2) : '-'}</span></span>` +
+                `<span><span class="ib-label">M60</span> <span class="ib-val" style="color:#22c55e">${d[9] != null ? d[9].toFixed(2) : '-'}</span></span>`;
+        }
     }
+
+    bar.innerHTML =
+        `<span><span class="ib-label">日期</span> <span class="ib-val">${d[0]}</span></span>` +
+        `<span><span class="ib-label">开</span> <span class="ib-val ${open >= prevClose ? 'ib-up' : 'ib-down'}">${open.toFixed(2)}</span></span>` +
+        `<span><span class="ib-label">高</span> <span class="ib-val ${d[4] >= prevClose ? 'ib-up' : 'ib-down'}">${d[4].toFixed(2)}</span></span>` +
+        `<span><span class="ib-label">低</span> <span class="ib-val ${d[3] >= prevClose ? 'ib-up' : 'ib-down'}">${d[3].toFixed(2)}</span></span>` +
+        `<span><span class="ib-label">收</span> <span class="ib-val ${cls}">${close.toFixed(2)}</span></span>` +
+        `<span><span class="ib-label">涨跌</span> <span class="ib-val ${cls}">${sign}${change.toFixed(2)}</span></span>` +
+        `<span><span class="ib-label">幅</span> <span class="ib-val ${cls}">${sign}${changePct}%</span></span>` +
+        `<span><span class="ib-label">振</span> <span class="ib-val">${amp}%</span></span>` +
+        `<span><span class="ib-label">量</span> <span class="ib-val">${formatVolume(d[5])}</span></span>` +
+        lineHtml;
+}
+
+function _bindCrosshairEvent(period) {
+    if (!klineChart || !currentKlineData) return;
+    klineChart.on('updateAxisPointer', function(event) {
+        const axesInfo = event.axesInfo;
+        if (!axesInfo || axesInfo.length === 0) return;
+        const idx = axesInfo[0].value;
+        if (idx != null && idx >= 0 && idx < currentKlineData.length) {
+            _updateInfoBar(currentKlineData, idx, period);
+        }
+    });
 }
 
 function formatVolume(vol) {
@@ -857,20 +911,11 @@ function renderDailyKline(data) {
     const option = {
         ...darkThemeBase,
         animation: false,
-        legend: {
-            data: isMobile
-                ? ['K线', '收盘', '趋势', '多空', '量', 'K', 'D', 'J']
-                : ['K线', '收盘价', '短期趋势线', '多空线', '成交量', 'K', 'D', 'J'],
-            top: 4,
-            textStyle: { color: '#94a3b8', fontSize: isMobile ? 9 : 11 },
-            itemWidth: isMobile ? 10 : 14,
-            itemHeight: isMobile ? 6 : 8,
-            itemGap: isMobile ? 6 : 10,
-        },
+        legend: { show: false },
         grid: [
-            { left: gL, right: gR, top: isMobile ? 30 : 40, height: '45%' },
-            { left: gL, right: gR, top: '58%', height: '12%' },
-            { left: gL, right: gR, top: '75%', height: '18%' },
+            { left: gL, right: gR, top: 8, height: '50%' },
+            { left: gL, right: gR, top: '60%', height: '12%' },
+            { left: gL, right: gR, top: '76%', height: '18%' },
         ],
         xAxis: [
             {
@@ -964,15 +1009,10 @@ function renderDailyKline(data) {
                 moveOnMouseMove: true,
             },
         ],
-        tooltip: {
-            ...darkThemeBase.tooltip,
-            trigger: 'axis',
-            axisPointer: { type: 'cross' },
-            confine: true,
-        },
+        tooltip: { show: false },
         axisPointer: {
             link: [{ xAxisIndex: 'all' }],
-            label: { backgroundColor: '#1c2539' },
+            label: { backgroundColor: '#1c2539', fontSize: 10 },
         },
         series: [
             {
@@ -1072,6 +1112,7 @@ function renderDailyKline(data) {
 
     klineChart.hideLoading();
     klineChart.setOption(option);
+    _bindCrosshairEvent('daily');
 }
 
 function renderWeeklyKline(data) {
@@ -1110,18 +1151,10 @@ function renderWeeklyKline(data) {
     const option = {
         ...darkThemeBase,
         animation: false,
-        legend: {
-            data: legendData,
-            top: 4,
-            left: isMobile ? 60 : 80,
-            textStyle: { color: '#94a3b8', fontSize: isMobile ? 9 : 11 },
-            itemWidth: isMobile ? 10 : 14,
-            itemHeight: isMobile ? 6 : 8,
-            itemGap: isMobile ? 6 : 10,
-        },
+        legend: { show: false },
         grid: [
-            { left: gL, right: gR, top: isMobile ? 30 : 40, height: '58%' },
-            { left: gL, right: gR, top: '72%', height: '18%' },
+            { left: gL, right: gR, top: 8, height: '65%' },
+            { left: gL, right: gR, top: '78%', height: '16%' },
         ],
         xAxis: [
             {
@@ -1197,15 +1230,10 @@ function renderWeeklyKline(data) {
                 moveOnMouseMove: true,
             },
         ],
-        tooltip: {
-            ...darkThemeBase.tooltip,
-            trigger: 'axis',
-            axisPointer: { type: 'cross' },
-            confine: true,
-        },
+        tooltip: { show: false },
         axisPointer: {
             link: [{ xAxisIndex: 'all' }],
-            label: { backgroundColor: '#1c2539' },
+            label: { backgroundColor: '#1c2539', fontSize: 10 },
         },
         series: [
             {
@@ -1311,6 +1339,7 @@ function renderWeeklyKline(data) {
 
     klineChart.hideLoading();
     klineChart.setOption(option, true);
+    _bindCrosshairEvent('weekly');
 
     _showWeeklyToggle(true);
 }
@@ -1344,10 +1373,12 @@ function switchWeeklyLineMode(mode) {
 
 function closeStockModal() {
     document.getElementById('stock-modal').classList.remove('active');
+    _showWeeklyToggle(false);
     if (klineChart) {
         klineChart.dispose();
         klineChart = null;
     }
+    currentKlineData = null;
 }
 
 // ===== Ranking =====

@@ -723,7 +723,7 @@ body {
     animation: modal-in 0.25s var(--ease);
 }
 .modal-sm { max-width: 400px; }
-.modal-lg { max-width: 1000px; }
+.modal-lg { max-width: 1100px; }
 .modal-header {
     padding: 16px 20px;
     border-bottom: 1px solid var(--border);
@@ -742,6 +742,90 @@ body {
     overflow-y: auto;
     max-height: calc(90vh - 60px);
 }
+
+/* ===== K-line Modal (TongDaXin Style) ===== */
+.kline-header {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+.kline-header-left {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+.kline-stock-code {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--ink);
+    font-family: var(--font-mono);
+    letter-spacing: 0.5px;
+}
+.kline-stock-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink-secondary);
+}
+.kline-stock-price {
+    font-size: 13px;
+    font-family: var(--font-mono);
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+.kline-stock-price .price-val {
+    font-size: 16px;
+    font-weight: 700;
+}
+.kline-stock-price .price-change {
+    font-size: 12px;
+    font-weight: 600;
+}
+.kline-header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.kline-body {
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(90vh - 52px);
+}
+
+.kline-info-bar {
+    padding: 4px 16px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    color: var(--ink-muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    line-height: 1.6;
+    background: var(--surface);
+    border-bottom: 1px solid rgba(148,163,184,0.06);
+    min-height: 24px;
+    flex-shrink: 0;
+}
+.kline-info-bar .ib-label {
+    color: var(--ink-muted);
+    font-family: var(--font-sans);
+}
+.kline-info-bar .ib-val {
+    font-weight: 600;
+    color: var(--ink-secondary);
+}
+.kline-info-bar .ib-up { color: var(--bull); }
+.kline-info-bar .ib-down { color: var(--bear); }
 .close-btn {
     width: 28px;
     height: 28px;
@@ -1241,12 +1325,8 @@ body {
     to { opacity: 0; transform: translateX(20px); }
 }
 
-/* ===== Stock Info in Modal ===== */
-.stock-info {
-    margin-top: 16px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border);
-}
+/* ===== Stock Info in Modal (legacy, hidden) ===== */
+.stock-info { display: none; }
 
 /* ===== Responsive ===== */
 @media (max-width: 1024px) {
@@ -1348,19 +1428,20 @@ body {
         border-radius: 0;
         border: none;
     }
-    .modal-header {
-        padding: 10px 14px;
-        flex-wrap: wrap;
+    .kline-header {
+        padding: 8px 12px;
         gap: 8px;
-    }
-    .modal-header > div {
         flex-wrap: wrap;
-        gap: 8px;
     }
-    .modal-header h3 { font-size: 14px; }
-    .modal-body { padding: 8px; }
-    .kline-tabs {
-        margin-top: 0;
+    .kline-stock-code { font-size: 14px; }
+    .kline-stock-name { font-size: 12px; }
+    .kline-stock-price .price-val { font-size: 14px; }
+    .kline-stock-price .price-change { font-size: 11px; }
+    .kline-body { max-height: calc(100vh - 50px); }
+    .kline-info-bar {
+        padding: 3px 10px;
+        font-size: 10px;
+        gap: 4px 10px;
     }
     .kline-tab {
         padding: 4px 10px;

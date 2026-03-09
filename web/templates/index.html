@@ -235,38 +235,27 @@
     <!-- Stock Detail Modal -->
     <div id="stock-modal" class="modal">
         <div class="modal-content modal-lg">
-            <div class="modal-header">
-                <div style="display:flex;align-items:center;gap:16px;">
-                    <h3 id="modal-title">股票详情</h3>
+            <div class="kline-header">
+                <div class="kline-header-left">
+                    <span class="kline-stock-code" id="modal-stock-code">000001</span>
+                    <span class="kline-stock-name" id="modal-stock-name">--</span>
+                    <span class="kline-stock-price" id="modal-stock-price"></span>
+                </div>
+                <div class="kline-header-right">
                     <div class="kline-tabs" id="kline-tabs">
                         <button class="kline-tab active" data-period="daily" onclick="switchKlinePeriod('daily')">日K</button>
                         <button class="kline-tab" data-period="weekly" onclick="switchKlinePeriod('weekly')">周K</button>
                     </div>
+                    <button class="close-btn" onclick="closeStockModal()">&times;</button>
                 </div>
-                <button class="close-btn" onclick="closeStockModal()">&times;</button>
             </div>
-            <div class="modal-body">
+            <div class="kline-body">
+                <div id="kline-info-bar" class="kline-info-bar"></div>
                 <div id="kline-chart-wrap" style="position:relative;width:100%;">
-                    <div id="kline-chart" style="width:100%;height:480px;"></div>
+                    <div id="kline-chart" style="width:100%;height:560px;"></div>
                     <div id="weekly-line-toggle" style="display:none;"></div>
                 </div>
-                <div class="stock-info" id="stock-info"></div>
             </div>
-            <script>
-                (function() {
-                    function resizeKline() {
-                        var el = document.getElementById('kline-chart');
-                        if (!el) return;
-                        if (window.innerWidth <= 480) {
-                            el.style.height = (window.innerHeight - 100) + 'px';
-                        } else {
-                            el.style.height = '480px';
-                        }
-                    }
-                    window.addEventListener('resize', resizeKline);
-                    resizeKline();
-                })();
-            </script>
         </div>
     </div>
 
