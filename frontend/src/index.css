@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canvas: #faf6f0;
+  --color-surface: #f5f0e8;
+  --color-elevated: #ede8df;
+  --color-inset: #e8e2d8;
+
+  --color-ink: #2d2b28;
+  --color-ink-secondary: #6b6560;
+  --color-ink-muted: #9c9590;
+  --color-ink-inverse: #faf6f0;
+
+  --color-accent: #c0785a;
+  --color-accent-hover: #a8654a;
+  --color-accent-dim: oklch(0.65 0.1 55 / 0.12);
+
+  --color-bull: #c0392b;
+  --color-bear: #27896e;
+  --color-bull-dim: oklch(0.55 0.15 25 / 0.08);
+  --color-bear-dim: oklch(0.6 0.1 165 / 0.08);
+
+  --color-border: oklch(0.3 0 0 / 0.08);
+  --color-border-hover: oklch(0.3 0 0 / 0.15);
+  --color-border-focus: #c0785a;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", Menlo, "Cascadia Code", Consolas, monospace;
+
+  --shadow-card: 0 1px 3px oklch(0.3 0 0 / 0.04), 0 1px 2px oklch(0.3 0 0 / 0.06);
+  --shadow-card-hover: 0 4px 12px oklch(0.3 0 0 / 0.08), 0 2px 4px oklch(0.3 0 0 / 0.04);
+  --shadow-float: 0 8px 24px oklch(0.3 0 0 / 0.1), 0 4px 8px oklch(0.3 0 0 / 0.05);
+}
+
+@layer base {
+  body {
+    @apply bg-canvas text-ink antialiased font-sans;
+  }
+
+  ::selection {
+    background-color: oklch(0.65 0.1 55 / 0.2);
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent/40 ring-offset-2 ring-offset-canvas;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-ink/10 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-ink/20;
+  }
+}
+
+@layer components {
+  .glass {
+    backdrop-filter: blur(16px);
+    background-color: oklch(0.97 0.01 80 / 0.8);
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, transparent 0%, oklch(0.65 0.1 55 / 0.06) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
