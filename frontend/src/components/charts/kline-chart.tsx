@@ -6,6 +6,7 @@ import {
   TooltipComponent,
   DataZoomComponent,
   DatasetComponent,
+  MarkLineComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 
@@ -17,6 +18,7 @@ echarts.use([
   TooltipComponent,
   DataZoomComponent,
   DatasetComponent,
+  MarkLineComponent,
   CanvasRenderer,
 ]);
 
@@ -55,14 +57,16 @@ type EChartsOption = echarts.ComposeOption<
   | import("echarts/components").TooltipComponentOption
   | import("echarts/components").DataZoomComponentOption
   | import("echarts/components").DatasetComponentOption
+  | import("echarts/components").MarkLineComponentOption
 >;
 
 const BULL_COLOR = "#ef4444";
 const BEAR_COLOR = "#22c55e";
-const BG_COLOR = "#141414";
-const GRID_LINE = "rgba(148,163,184,0.06)";
-const AXIS_TEXT = "#94a3b8";
-const TOOLTIP_BG = "#1c2539";
+const BG_COLOR = "transparent";
+const GRID_LINE = "rgba(255,255,255,0.05)";
+const AXIS_TEXT = "#8b95a8";
+const TOOLTIP_BG = "rgba(14,17,24,0.85)";
+const PRICE_LINE_COLOR = "rgba(228,168,83,0.6)";
 
 const TREND_COLOR = "#ffffff";
 const DK_COLOR = "#facc15";
@@ -274,6 +278,12 @@ function buildOption(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const series: any[] = [];
 
+  const lastRow = raw[raw.length - 1];
+  const latestClose = lastRow ? (lastRow[2] as number) : 0;
+  const prevClose =
+    raw.length > 1 ? (raw[raw.length - 2][2] as number) : latestClose;
+  const isBullish = latestClose >= prevClose;
+
   series.push({
     type: "candlestick",
     name: "K\u7ebf",
@@ -287,6 +297,30 @@ function buildOption(
       borderColor0: BEAR_COLOR,
     },
     z: 1,
+    markLine: {
+      silent: true,
+      symbol: "none",
+      label: {
+        show: true,
+        position: "end",
+        formatter: latestClose.toFixed(2),
+        color: isBullish ? BULL_COLOR : BEAR_COLOR,
+        backgroundColor: "rgba(14,17,24,0.9)",
+        borderColor: isBullish ? BULL_COLOR : BEAR_COLOR,
+        borderWidth: 1,
+        borderRadius: 3,
+        padding: [3, 6],
+        fontSize: 10,
+        fontFamily: "SF Mono, Menlo, Consolas, monospace",
+      },
+      lineStyle: {
+        color: PRICE_LINE_COLOR,
+        type: "dashed",
+        width: 1,
+      },
+      data: [{ yAxis: latestClose }],
+      animation: false,
+    },
   });
 
   series.push({

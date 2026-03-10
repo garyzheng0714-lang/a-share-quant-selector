@@ -12,9 +12,14 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(
     return (
       <motion.div
         ref={ref}
-        whileHover={hoverable ? { y: -4, boxShadow: "var(--shadow-card-hover)" } : undefined}
+        whileHover={
+          hoverable
+            ? { y: -2, boxShadow: "var(--shadow-card-hover)" }
+            : undefined
+        }
         transition={{ duration: 0.2 }}
-        className={`bg-surface rounded-2xl shadow-card ${hoverable ? "cursor-pointer" : ""} ${className}`}
+        className={`glass-card rounded-2xl ${hoverable ? "cursor-pointer glass-card-hover" : ""} ${className}`}
+        style={hoverable ? undefined : { transition: "border-color 0.2s" }}
         {...props}
       >
         {children}

@@ -29,19 +29,21 @@ export function NavBar() {
   });
 
   const activeIndex = navItems.findIndex((item) =>
-    item.end ? location.pathname === item.to : location.pathname.startsWith(item.to),
+    item.end
+      ? location.pathname === item.to
+      : location.pathname.startsWith(item.to),
   );
 
   return (
     <motion.header
-      className="fixed top-0 left-0 right-0 z-50 glass border-b border-border"
+      className="fixed top-0 left-0 right-0 z-50 glass"
       animate={{ y: hidden ? -48 : 0 }}
       transition={{ type: "spring", damping: 30, stiffness: 300 }}
     >
       <nav className="max-w-7xl mx-auto h-12 px-3 sm:px-6 flex items-center gap-2 sm:gap-0 sm:justify-between overflow-x-auto scrollbar-none">
-        <span className="text-sm font-semibold text-ink shrink-0 tracking-tight sm:mr-6">
-          QS
-          <span className="hidden sm:inline">elect</span>
+        <span className="text-sm font-semibold shrink-0 tracking-tight sm:mr-6">
+          <span className="text-accent">QS</span>
+          <span className="hidden sm:inline text-ink">elect</span>
         </span>
         <div className="relative flex items-center shrink-0">
           {navItems.map((item, i) => (
@@ -51,7 +53,9 @@ export function NavBar() {
               end={item.end}
               className={({ isActive }) =>
                 `relative px-2.5 sm:px-3 py-1.5 text-sm whitespace-nowrap rounded-lg transition-colors duration-150 ${
-                  isActive ? "text-ink font-medium" : "text-ink-muted hover:text-ink-secondary"
+                  isActive
+                    ? "text-ink font-medium"
+                    : "text-ink-muted hover:text-ink-secondary"
                 }`
               }
             >
@@ -59,8 +63,13 @@ export function NavBar() {
               {i === activeIndex && (
                 <motion.div
                   layoutId="nav-indicator"
-                  className="absolute bottom-0 left-2 right-2 h-0.5 bg-accent rounded-full"
-                  transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                  className="absolute inset-0 rounded-lg -z-10"
+                  style={{ background: "rgba(255,255,255,0.06)" }}
+                  transition={{
+                    type: "spring",
+                    damping: 25,
+                    stiffness: 300,
+                  }}
                 />
               )}
             </NavLink>

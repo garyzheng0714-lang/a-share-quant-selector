@@ -7,7 +7,12 @@ interface ProgressBarProps {
   colorByValue?: boolean;
 }
 
-export function ProgressBar({ value, max = 100, className = "", colorByValue = false }: ProgressBarProps) {
+export function ProgressBar({
+  value,
+  max = 100,
+  className = "",
+  colorByValue = false,
+}: ProgressBarProps) {
   const pct = Math.min(100, (value / max) * 100);
   let barColor = "bg-accent";
   if (colorByValue) {
@@ -15,7 +20,10 @@ export function ProgressBar({ value, max = 100, className = "", colorByValue = f
     else if (pct < 60) barColor = "bg-ink-muted";
   }
   return (
-    <div className={`h-1.5 bg-inset rounded-full overflow-hidden ${className}`}>
+    <div
+      className={`h-1.5 rounded-full overflow-hidden ${className}`}
+      style={{ background: "rgba(255,255,255,0.06)" }}
+    >
       <motion.div
         className={`h-full rounded-full ${barColor}`}
         initial={{ width: 0 }}

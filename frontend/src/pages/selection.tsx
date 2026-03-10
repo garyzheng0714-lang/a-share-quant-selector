@@ -274,7 +274,7 @@ function ProgressRing({ pct }: { pct: number }) {
         cy="48"
         r={r}
         fill="none"
-        stroke="var(--color-inset)"
+        stroke="rgba(255,255,255,0.08)"
         strokeWidth="6"
       />
       <motion.circle

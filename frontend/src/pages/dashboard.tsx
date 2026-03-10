@@ -1,5 +1,11 @@
 import { PageTransition } from "@/components/layout/page-transition";
-import { Card, Skeleton, Badge, AnimatedNumber, CopyButton } from "@/components/ui";
+import {
+  Card,
+  Skeleton,
+  Badge,
+  AnimatedNumber,
+  CopyButton,
+} from "@/components/ui";
 import { useStats, useRanking } from "@/lib/hooks";
 import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT } from "@/lib/tokens";
 import { useAppStore } from "@/lib/store";
@@ -57,25 +63,18 @@ export function Component() {
             ))
           ) : (
             <>
-              <StatCard
-                label="总股票数"
-                value={stats?.total_stocks ?? 0}
-              />
-              <StatCard
-                label="选股视图"
-                value={stats?.total_views ?? 0}
-              />
+              <StatCard label="总股票数" value={stats?.total_stocks ?? 0} />
+              <StatCard label="选股视图" value={stats?.total_views ?? 0} />
               <StatCard
                 label="活跃视图"
                 value={stats?.active_views ?? 0}
+                accent
               />
             </>
           )}
         </div>
 
-        <h2 className="text-lg font-medium text-ink mb-4">
-          最新排名信号
-        </h2>
+        <h2 className="text-lg font-medium text-ink mb-4">最新排名信号</h2>
         <div className="space-y-2">
           {rankingLoading ? (
             Array.from({ length: 5 }).map((_, i) => (
@@ -119,12 +118,13 @@ export function Component() {
                         {stock.name}
                       </span>
                       <Badge variant={badgeVariant}>
-                        {CATEGORY_LABELS[stock.category] ??
-                          stock.category}
+                        {CATEGORY_LABELS[stock.category] ?? stock.category}
                       </Badge>
                     </div>
                   </div>
-                  <span className={`text-xs sm:text-sm font-mono shrink-0 ${changeColor}`}>
+                  <span
+                    className={`text-xs sm:text-sm font-mono shrink-0 ${changeColor}`}
+                  >
                     {stock.close?.toFixed(2)}
                   </span>
                   {stock.similarity_score != null && (
@@ -145,15 +145,26 @@ export function Component() {
 function StatCard({
   label,
   value,
+  accent,
 }: {
   label: string;
   value: number;
+  accent?: boolean;
 }) {
   return (
-    <Card className="p-3 sm:p-6">
+    <Card className="p-3 sm:p-6 relative overflow-hidden">
+      {accent && (
+        <div
+          className="absolute top-0 left-0 right-0 h-px"
+          style={{
+            background:
+              "linear-gradient(90deg, transparent, rgba(228,168,83,0.5), transparent)",
+          }}
+        />
+      )}
       <AnimatedNumber
         value={value}
-        className="text-xl sm:text-3xl font-mono font-semibold text-ink block"
+        className={`text-xl sm:text-3xl font-mono font-semibold block ${accent ? "text-accent" : "text-ink"}`}
       />
       <span className="text-xs sm:text-sm text-ink-secondary mt-0.5 sm:mt-1 block">
         {label}

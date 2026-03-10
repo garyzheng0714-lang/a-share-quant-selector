@@ -1,11 +1,11 @@
 type BadgeVariant = "bowl" | "duokong" | "short" | "active" | "inactive";
 
 const variantStyles: Record<BadgeVariant, string> = {
-  bowl: "bg-bull-dim text-bull",
-  duokong: "bg-accent-dim text-accent",
-  short: "bg-bear-dim text-bear",
-  active: "bg-bear-dim text-bear",
-  inactive: "bg-inset text-ink-muted",
+  bowl: "bg-bull-dim text-bull border border-bull/20",
+  duokong: "bg-accent-dim text-accent border border-accent/20",
+  short: "bg-bear-dim text-bear border border-bear/20",
+  active: "bg-bear-dim text-bear border border-bear/20",
+  inactive: "bg-elevated text-ink-muted border border-border",
 };
 
 interface BadgeProps {
@@ -16,7 +16,9 @@ interface BadgeProps {
 
 export function Badge({ variant, children, className = "" }: BadgeProps) {
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${variantStyles[variant]} ${className}`}>
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${variantStyles[variant]} ${className}`}
+    >
       {children}
     </span>
   );
