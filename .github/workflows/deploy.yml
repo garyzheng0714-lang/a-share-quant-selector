@@ -46,12 +46,15 @@ jobs:
             echo ">>> Building and restarting containers"
             docker compose up -d --build --remove-orphans
 
-            echo ">>> Waiting for health check..."
-            sleep 5
-            if docker compose ps | grep -q "healthy\|running"; then
-              echo ">>> Deploy successful!"
-            else
-              echo ">>> WARNING: Container may not be healthy"
-              docker compose logs --tail 20
-              exit 1
-            fi
+            echo ">>> Waiting for service to be ready..."
+            for i in $(seq 1 12); do
+              if curl -sf http://localhost:18321/api/stats > /dev/null 2>&1; then
+                echo ">>> Deploy successful! (ready after ~${i}0s)"
+                exit 0
+              fi
+              echo "  waiting... ($i/12)"
+              sleep 10
+            done
+            echo ">>> WARNING: Service not responding after 120s"
+            docker compose logs --tail 30
+            exit 1
