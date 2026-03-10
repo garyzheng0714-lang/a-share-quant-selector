@@ -114,7 +114,7 @@ function RankingCard({
         <div className="space-y-1.5 mb-3">
           {Object.entries(breakdown).map(([key, value]) => (
             <div key={key} className="flex items-center gap-2">
-              <span className="text-xs text-ink-muted w-8 shrink-0">
+              <span className="text-xs text-ink-muted w-10 shrink-0">
                 {BREAKDOWN_LABELS[key] ?? key}
               </span>
               <ProgressBar value={value} className="flex-1" />
@@ -144,7 +144,7 @@ function RankingCard({
 
 function RankingSkeleton() {
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3 sm:gap-4">
       {Array.from({ length: 6 }, (_, i) => (
         <Skeleton key={i} className="h-56 w-full" />
       ))}
@@ -188,20 +188,27 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-semibold text-ink">综合排名</h1>
-          {runDate && (
-            <span className="text-sm text-ink-muted">{runDate}</span>
-          )}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-8">
+        <div className="flex items-center justify-between mb-4 sm:mb-6">
+          <h1 className="text-xl sm:text-2xl font-semibold text-ink">综合排名</h1>
+          <div className="flex items-center gap-2">
+            {runDate && (
+              <span className="text-xs sm:text-sm text-ink-muted">{runDate}</span>
+            )}
+            {!isLoading && (
+              <span className="text-xs sm:text-sm text-ink-muted tabular-nums">
+                {filtered.length}只
+              </span>
+            )}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 mb-6">
+        <div className="flex items-center gap-1.5 sm:gap-2 mb-4 sm:mb-6 overflow-x-auto scrollbar-none pb-1">
           {FILTERS.map((f) => (
             <button
               key={f.key}
               onClick={() => setFilter(f.key)}
-              className={`px-4 py-2 text-sm rounded-xl transition-colors duration-150 ${
+              className={`px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm rounded-xl whitespace-nowrap shrink-0 transition-colors duration-150 ${
                 filter === f.key
                   ? "bg-accent text-ink-inverse"
                   : "bg-surface text-ink-secondary hover:bg-elevated"
@@ -210,11 +217,6 @@ export function Component() {
               {f.label}
             </button>
           ))}
-          {!isLoading && (
-            <span className="ml-auto text-sm text-ink-muted tabular-nums">
-              共 {filtered.length} 只
-            </span>
-          )}
         </div>
 
         {isLoading ? (
@@ -229,7 +231,7 @@ export function Component() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4"
+              className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3 sm:gap-4"
             >
               {filtered.map((stock, i) => (
                 <RankingCard

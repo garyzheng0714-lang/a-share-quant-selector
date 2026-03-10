@@ -64,29 +64,31 @@ export function Component() {
     <PageTransition>
       <div className="h-[calc(100vh-48px)] flex flex-col bg-[#141414]">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-3 border-b border-[#2a2a2a] bg-[#1c1c1c]">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-2 sm:py-3 border-b border-[#2a2a2a] bg-[#1c1c1c]">
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
             <button
               onClick={() => navigate(-1)}
-              className="text-sm text-[#94a3b8] hover:text-[#e2e8f0] transition-colors"
+              className="text-xs sm:text-sm text-[#94a3b8] hover:text-[#e2e8f0] transition-colors shrink-0"
             >
-              ← 返回
+              ←
             </button>
-            <div className="flex items-center gap-3">
-              <span className="text-base font-mono font-semibold text-[#e2e8f0]">
+            <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 flex-wrap">
+              <span className="text-sm sm:text-base font-mono font-semibold text-[#e2e8f0] shrink-0">
                 {code}
               </span>
-              <span className="text-base text-[#94a3b8]">{stockName}</span>
+              <span className="text-xs sm:text-base text-[#94a3b8] truncate">
+                {stockName}
+              </span>
               {!isLoading && (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <span
-                    className="text-lg font-mono font-semibold"
+                    className="text-sm sm:text-lg font-mono font-semibold"
                     style={{ color: isBull ? BULL : BEAR }}
                   >
                     {latestClose.toFixed(2)}
                   </span>
                   <span
-                    className="text-sm font-mono"
+                    className="text-xs sm:text-sm font-mono"
                     style={{ color: isBull ? BULL : BEAR }}
                   >
                     {isBull ? "+" : ""}
@@ -97,14 +99,13 @@ export function Component() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {/* Period tabs */}
-            <div className="flex items-center gap-1 bg-[#0f0f0f] rounded-lg p-0.5">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <div className="flex items-center gap-0.5 bg-[#0f0f0f] rounded-lg p-0.5">
               {(["daily", "weekly"] as Period[]).map((p) => (
                 <button
                   key={p}
                   onClick={() => setPeriod(p)}
-                  className={`relative px-3 py-1 text-sm rounded-md transition-colors ${
+                  className={`relative px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-md transition-colors ${
                     period === p
                       ? "text-white font-medium"
                       : "text-[#94a3b8] hover:text-[#cbd5e1]"
@@ -126,13 +127,12 @@ export function Component() {
               ))}
             </div>
 
-            {/* Weekly line mode toggle */}
             {period === "weekly" && (
               <button
                 onClick={() =>
                   setWeeklyLineMode((m) => (m === "trend" ? "ma" : "trend"))
                 }
-                className="px-3 py-1 text-sm rounded-md bg-[#2a2a2a] text-[#e2e8f0] hover:bg-[#333] transition-colors"
+                className="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-md bg-[#2a2a2a] text-[#e2e8f0] hover:bg-[#333] transition-colors"
               >
                 {weeklyLineMode === "trend" ? "黄白线" : "均线"}
               </button>
@@ -166,7 +166,7 @@ export function Component() {
                     initial={{ opacity: 0, y: -4 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
-                    className="absolute top-3 left-3 rounded-xl px-4 py-3 shadow-lg pointer-events-none"
+                    className="absolute top-2 left-2 sm:top-3 sm:left-3 rounded-lg sm:rounded-xl px-2 py-1.5 sm:px-4 sm:py-3 shadow-lg pointer-events-none max-w-[calc(100%-16px)]"
                     style={{
                       background: "rgba(28,37,57,0.9)",
                       backdropFilter: "blur(8px)",
@@ -174,25 +174,16 @@ export function Component() {
                     }}
                   >
                     {/* Line 1: OHLCV */}
-                    <div className="flex items-center gap-4 text-xs font-mono">
+                    <div className="flex flex-wrap items-center gap-x-2 sm:gap-x-4 gap-y-0.5 text-[10px] sm:text-xs font-mono">
                       <span className="text-[#94a3b8]">{overlay.date}</span>
                       <span className="text-[#94a3b8]">
-                        开{" "}
-                        <span className="text-[#e2e8f0]">
-                          {overlay.open.toFixed(2)}
-                        </span>
+                        开 <span className="text-[#e2e8f0]">{overlay.open.toFixed(2)}</span>
                       </span>
                       <span className="text-[#94a3b8]">
-                        高{" "}
-                        <span className="text-[#e2e8f0]">
-                          {overlay.high.toFixed(2)}
-                        </span>
+                        高 <span className="text-[#e2e8f0]">{overlay.high.toFixed(2)}</span>
                       </span>
                       <span className="text-[#94a3b8]">
-                        低{" "}
-                        <span className="text-[#e2e8f0]">
-                          {overlay.low.toFixed(2)}
-                        </span>
+                        低 <span className="text-[#e2e8f0]">{overlay.low.toFixed(2)}</span>
                       </span>
                       <span className="text-[#94a3b8]">
                         收{" "}
@@ -205,10 +196,7 @@ export function Component() {
                         {overlay.change.toFixed(2)}%
                       </span>
                       <span className="text-[#94a3b8]">
-                        量{" "}
-                        <span className="text-[#e2e8f0]">
-                          {formatVolume(overlay.volume)}
-                        </span>
+                        量 <span className="text-[#e2e8f0]">{formatVolume(overlay.volume)}</span>
                       </span>
                     </div>
 
@@ -216,61 +204,41 @@ export function Component() {
                     {period === "daily" ||
                     (period === "weekly" && weeklyLineMode === "trend") ? (
                       overlay.trendLine != null && (
-                        <div className="flex items-center gap-3 text-xs font-mono mt-1.5">
+                        <div className="flex items-center gap-2 sm:gap-3 text-[10px] sm:text-xs font-mono mt-1">
                           <span className="text-[#94a3b8]">
-                            趋势{" "}
-                            <span className="text-[#e2e8f0]">
-                              {overlay.trendLine.toFixed(2)}
-                            </span>
+                            趋势 <span className="text-[#e2e8f0]">{overlay.trendLine.toFixed(2)}</span>
                           </span>
                           {overlay.dkLine != null && (
                             <span className="text-[#94a3b8]">
-                              多空{" "}
-                              <span className="text-[#e2e8f0]">
-                                {overlay.dkLine.toFixed(2)}
-                              </span>
+                              多空 <span className="text-[#e2e8f0]">{overlay.dkLine.toFixed(2)}</span>
                             </span>
                           )}
                         </div>
                       )
                     ) : period === "weekly" && weeklyLineMode === "ma" ? (
-                      <div className="flex items-center gap-3 text-xs font-mono mt-1.5">
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-[10px] sm:text-xs font-mono mt-1">
                         {overlay.ma5 != null && (
-                          <span style={{ color: "#f59e0b" }}>
-                            MA5:{overlay.ma5.toFixed(2)}
-                          </span>
+                          <span style={{ color: "#f59e0b" }}>MA5:{overlay.ma5.toFixed(2)}</span>
                         )}
                         {overlay.ma10 != null && (
-                          <span style={{ color: "#3b82f6" }}>
-                            MA10:{overlay.ma10.toFixed(2)}
-                          </span>
+                          <span style={{ color: "#3b82f6" }}>MA10:{overlay.ma10.toFixed(2)}</span>
                         )}
                         {overlay.ma20 != null && (
-                          <span style={{ color: "#a855f7" }}>
-                            MA20:{overlay.ma20.toFixed(2)}
-                          </span>
+                          <span style={{ color: "#a855f7" }}>MA20:{overlay.ma20.toFixed(2)}</span>
                         )}
                         {overlay.ma60 != null && (
-                          <span style={{ color: "#22c55e" }}>
-                            MA60:{overlay.ma60.toFixed(2)}
-                          </span>
+                          <span style={{ color: "#22c55e" }}>MA60:{overlay.ma60.toFixed(2)}</span>
                         )}
                       </div>
                     ) : null}
 
                     {/* Line 3: KDJ (daily only) */}
                     {period === "daily" && overlay.kdjK != null && (
-                      <div className="flex items-center gap-3 text-xs font-mono mt-1.5">
+                      <div className="flex items-center gap-2 sm:gap-3 text-[10px] sm:text-xs font-mono mt-1">
                         <span className="text-[#94a3b8]">KDJ</span>
-                        <span style={{ color: "#3b82f6" }}>
-                          K:{overlay.kdjK.toFixed(1)}
-                        </span>
-                        <span style={{ color: "#f59e0b" }}>
-                          D:{overlay.kdjD?.toFixed(1)}
-                        </span>
-                        <span style={{ color: "#ef4444" }}>
-                          J:{overlay.kdjJ?.toFixed(1)}
-                        </span>
+                        <span style={{ color: "#3b82f6" }}>K:{overlay.kdjK.toFixed(1)}</span>
+                        <span style={{ color: "#f59e0b" }}>D:{overlay.kdjD?.toFixed(1)}</span>
+                        <span style={{ color: "#ef4444" }}>J:{overlay.kdjJ?.toFixed(1)}</span>
                       </div>
                     )}
                   </motion.div>
@@ -286,7 +254,7 @@ export function Component() {
 
         {/* Bottom navigation */}
         {hasNav && (
-          <div className="flex items-center justify-between px-6 py-3 border-t border-[#2a2a2a] bg-[#1c1c1c]">
+          <div className="flex items-center justify-between px-3 sm:px-6 py-2 sm:py-3 border-t border-[#2a2a2a] bg-[#1c1c1c]">
             <Button
               variant="ghost"
               size="sm"
@@ -294,7 +262,7 @@ export function Component() {
               disabled={stockNavIndex <= 0}
               className="text-[#94a3b8] hover:text-[#e2e8f0]"
             >
-              ← 上一只
+              ←
             </Button>
             <span className="text-xs text-[#94a3b8] font-mono">
               {stockNavIndex + 1} / {stockNavList.length}
@@ -306,7 +274,7 @@ export function Component() {
               disabled={stockNavIndex >= stockNavList.length - 1}
               className="text-[#94a3b8] hover:text-[#e2e8f0]"
             >
-              下一只 →
+              →
             </Button>
           </div>
         )}

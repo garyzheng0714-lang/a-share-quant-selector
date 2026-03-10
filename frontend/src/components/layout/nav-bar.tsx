@@ -38,34 +38,37 @@ export function NavBar() {
       animate={{ y: hidden ? -48 : 0 }}
       transition={{ type: "spring", damping: 30, stiffness: 300 }}
     >
-      <nav className="max-w-7xl mx-auto h-12 px-6 flex items-center justify-between">
-        <div className="flex items-center gap-1">
-          <span className="text-sm font-semibold text-ink mr-6 tracking-tight">Quant Selector</span>
-          <div className="relative flex items-center">
-            {navItems.map((item, i) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                className={({ isActive }) =>
-                  `relative px-3 py-1.5 text-sm rounded-lg transition-colors duration-150 ${
-                    isActive ? "text-ink font-medium" : "text-ink-muted hover:text-ink-secondary"
-                  }`
-                }
-              >
-                {item.label}
-                {i === activeIndex && (
-                  <motion.div
-                    layoutId="nav-indicator"
-                    className="absolute bottom-0 left-2 right-2 h-0.5 bg-accent rounded-full"
-                    transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                  />
-                )}
-              </NavLink>
-            ))}
-          </div>
+      <nav className="max-w-7xl mx-auto h-12 px-3 sm:px-6 flex items-center gap-2 sm:gap-0 sm:justify-between overflow-x-auto scrollbar-none">
+        <span className="text-sm font-semibold text-ink shrink-0 tracking-tight sm:mr-6">
+          QS
+          <span className="hidden sm:inline">elect</span>
+        </span>
+        <div className="relative flex items-center shrink-0">
+          {navItems.map((item, i) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) =>
+                `relative px-2.5 sm:px-3 py-1.5 text-sm whitespace-nowrap rounded-lg transition-colors duration-150 ${
+                  isActive ? "text-ink font-medium" : "text-ink-muted hover:text-ink-secondary"
+                }`
+              }
+            >
+              {item.label}
+              {i === activeIndex && (
+                <motion.div
+                  layoutId="nav-indicator"
+                  className="absolute bottom-0 left-2 right-2 h-0.5 bg-accent rounded-full"
+                  transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                />
+              )}
+            </NavLink>
+          ))}
         </div>
-        <SchedulerDot />
+        <div className="ml-auto shrink-0">
+          <SchedulerDot />
+        </div>
       </nav>
     </motion.header>
   );
@@ -73,9 +76,9 @@ export function NavBar() {
 
 function SchedulerDot() {
   return (
-    <div className="flex items-center gap-2 text-xs text-ink-muted">
+    <div className="flex items-center gap-1.5 text-xs text-ink-muted">
       <span className="w-1.5 h-1.5 rounded-full bg-bear animate-pulse" />
-      <span>就绪</span>
+      <span className="hidden sm:inline">就绪</span>
     </div>
   );
 }

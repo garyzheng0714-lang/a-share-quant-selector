@@ -40,17 +40,17 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        <div className="flex items-baseline justify-between mb-8">
-          <h1 className="text-2xl font-semibold text-ink">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-8">
+        <div className="flex items-baseline justify-between mb-4 sm:mb-8">
+          <h1 className="text-xl sm:text-2xl font-semibold text-ink">
             今日选股概览
           </h1>
-          <span className="text-sm text-ink-muted">
+          <span className="text-xs sm:text-sm text-ink-muted">
             {stats?.latest_date ?? ""}
           </span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-10">
+        <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6 sm:mb-10">
           {statsLoading ? (
             Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className="h-24 rounded-2xl" />
@@ -95,11 +95,11 @@ export function Component() {
                 <Card
                   key={stock.code}
                   hoverable
-                  className="flex items-center px-5 py-3 gap-4"
+                  className="flex items-center px-3 sm:px-5 py-2.5 sm:py-3 gap-2 sm:gap-4"
                   onClick={() => handleStockClick(stock.code, i)}
                 >
                   <span
-                    className={`text-sm font-mono w-6 text-center ${
+                    className={`text-xs sm:text-sm font-mono w-5 sm:w-6 text-center shrink-0 ${
                       i === 0
                         ? "text-accent font-bold"
                         : i < 3
@@ -110,11 +110,11 @@ export function Component() {
                     {i + 1}
                   </span>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-mono font-medium text-ink">
+                    <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                      <span className="text-xs sm:text-sm font-mono font-medium text-ink">
                         {stock.code}
                       </span>
-                      <span className="text-sm text-ink-secondary truncate">
+                      <span className="text-xs sm:text-sm text-ink-secondary truncate">
                         {stock.name}
                       </span>
                       <Badge variant={badgeVariant}>
@@ -123,11 +123,11 @@ export function Component() {
                       </Badge>
                     </div>
                   </div>
-                  <span className={`text-sm font-mono ${changeColor}`}>
+                  <span className={`text-xs sm:text-sm font-mono shrink-0 ${changeColor}`}>
                     {stock.close?.toFixed(2)}
                   </span>
                   {stock.similarity_score != null && (
-                    <span className="text-sm font-mono text-accent font-medium">
+                    <span className="text-xs sm:text-sm font-mono text-accent font-medium shrink-0">
                       {Math.round(stock.similarity_score)}%
                     </span>
                   )}
@@ -149,12 +149,12 @@ function StatCard({
   value: number;
 }) {
   return (
-    <Card className="p-6">
+    <Card className="p-3 sm:p-6">
       <AnimatedNumber
         value={value}
-        className="text-3xl font-mono font-semibold text-ink block"
+        className="text-xl sm:text-3xl font-mono font-semibold text-ink block"
       />
-      <span className="text-sm text-ink-secondary mt-1 block">
+      <span className="text-xs sm:text-sm text-ink-secondary mt-0.5 sm:mt-1 block">
         {label}
       </span>
     </Card>

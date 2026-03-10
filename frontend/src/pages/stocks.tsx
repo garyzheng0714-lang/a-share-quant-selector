@@ -42,21 +42,21 @@ function StockRow({ stock, onClick }: { stock: StockItem; onClick: () => void })
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       onClick={onClick}
-      className="group flex items-center h-14 px-4 border-l-2 border-transparent hover:bg-elevated hover:border-accent transition-colors duration-150 cursor-pointer rounded-lg"
+      className="group flex items-center h-12 sm:h-14 px-3 sm:px-4 border-l-2 border-transparent hover:bg-elevated hover:border-accent transition-colors duration-150 cursor-pointer rounded-lg"
     >
-      <span className="w-28 font-mono text-sm text-accent shrink-0">
+      <span className="w-20 sm:w-28 font-mono text-xs sm:text-sm text-accent shrink-0">
         {stock.code}
       </span>
-      <span className="w-32 text-sm text-ink font-medium truncate shrink-0">
+      <span className="flex-1 sm:w-32 sm:flex-none text-xs sm:text-sm text-ink font-medium truncate shrink-0">
         {stock.name}
       </span>
-      <span className="w-24 text-sm text-ink tabular-nums text-right shrink-0">
+      <span className="w-16 sm:w-24 text-xs sm:text-sm text-ink tabular-nums text-right shrink-0">
         {stock.latest_price.toFixed(2)}
       </span>
-      <span className="w-24 text-sm text-ink-secondary text-right shrink-0">
+      <span className="hidden sm:block w-24 text-sm text-ink-secondary text-right shrink-0">
         {formatMarketCap(stock.market_cap)}
       </span>
-      <span className="flex-1 text-sm text-ink-muted text-right">
+      <span className="hidden sm:block flex-1 text-sm text-ink-muted text-right">
         {stock.data_count} 条
       </span>
     </motion.div>
@@ -92,7 +92,7 @@ function ListSkeleton() {
 
 function GridSkeleton() {
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
+    <div className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3 sm:gap-4">
       {Array.from({ length: 8 }, (_, i) => (
         <Skeleton key={i} className="h-28 w-full" />
       ))}
@@ -121,18 +121,18 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-semibold text-ink">股票列表</h1>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-8">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between mb-4 sm:mb-6">
+          <h1 className="text-xl sm:text-2xl font-semibold text-ink">股票列表</h1>
           <div className="flex items-center gap-2">
-            <div className="w-56">
+            <div className="flex-1 sm:w-56">
               <Input
                 placeholder="搜索代码或名称..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
-            <div className="flex items-center bg-inset rounded-xl p-1">
+            <div className="flex items-center bg-inset rounded-xl p-1 shrink-0">
               <button
                 onClick={() => viewMode !== "list" && toggleViewMode()}
                 className={`p-2 rounded-lg transition-colors duration-150 ${
@@ -172,12 +172,12 @@ export function Component() {
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.2 }}
                 >
-                  <div className="flex items-center h-10 px-4 text-xs text-ink-muted font-medium border-b border-border mb-1">
-                    <span className="w-28">代码</span>
-                    <span className="w-32">名称</span>
-                    <span className="w-24 text-right">最新价</span>
-                    <span className="w-24 text-right">市值</span>
-                    <span className="flex-1 text-right">数据量</span>
+                  <div className="flex items-center h-10 px-3 sm:px-4 text-xs text-ink-muted font-medium border-b border-border mb-1">
+                    <span className="w-20 sm:w-28">代码</span>
+                    <span className="flex-1 sm:w-32 sm:flex-none">名称</span>
+                    <span className="w-16 sm:w-24 text-right">最新价</span>
+                    <span className="hidden sm:block w-24 text-right">市值</span>
+                    <span className="hidden sm:block flex-1 text-right">数据量</span>
                   </div>
                   <div className="space-y-0.5">
                     {filtered.map((stock) => (
@@ -196,7 +196,7 @@ export function Component() {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.2 }}
-                  className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4"
+                  className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3 sm:gap-4"
                 >
                   {filtered.map((stock) => (
                     <StockCard
