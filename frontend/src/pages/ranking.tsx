@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageTransition } from "@/components/layout/page-transition";
-import { Card, Skeleton, Badge, ProgressBar } from "@/components/ui";
+import { Card, Skeleton, Badge, ProgressBar, CopyButton } from "@/components/ui";
 import { useRanking } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
 import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT } from "@/lib/tokens";
@@ -63,7 +63,10 @@ function RankingCard({
             {rank}
           </span>
           <div>
-            <span className="font-mono text-sm text-accent">{stock.code}</span>
+            <span className="flex items-center gap-1">
+              <span className="font-mono text-sm text-accent">{stock.code}</span>
+              <CopyButton text={stock.code} />
+            </span>
             <p className="text-sm font-medium text-ink">{stock.name}</p>
           </div>
         </div>

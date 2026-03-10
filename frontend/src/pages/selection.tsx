@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { mutate } from "swr";
 import { PageTransition } from "@/components/layout/page-transition";
-import { Button, Card, Skeleton, Badge, ProgressBar } from "@/components/ui";
+import { Button, Card, Skeleton, Badge, ProgressBar, CopyButton } from "@/components/ui";
 import { useViews } from "@/lib/hooks";
 import { api } from "@/lib/api";
 import type { ViewData, SignalStock, SelectionResult } from "@/lib/api";
@@ -119,8 +119,9 @@ function SignalCard({ stock, index, onNavigate }: SignalCardProps) {
             <p className="text-sm font-semibold text-ink">
               {stock.name}
             </p>
-            <p className="text-xs text-ink-muted mt-0.5">
+            <p className="text-xs text-ink-muted mt-0.5 flex items-center gap-1">
               {stock.code}
+              <CopyButton text={stock.code} />
             </p>
           </div>
           <Badge variant={badgeVariant}>{categoryLabel}</Badge>

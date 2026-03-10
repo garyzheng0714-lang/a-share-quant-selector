@@ -6,3 +6,4 @@ export { Badge } from "./badge";
 export { Input } from "./input";
 export { ProgressBar } from "./progress-bar";
 export { AnimatedNumber } from "./animated-number";
+export { CopyButton } from "./copy-button";

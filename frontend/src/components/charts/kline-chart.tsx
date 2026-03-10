@@ -1,5 +1,24 @@
 import { useEffect, useRef, useCallback } from "react";
-import * as echarts from "echarts";
+import * as echarts from "echarts/core";
+import { CandlestickChart, BarChart, LineChart } from "echarts/charts";
+import {
+  GridComponent,
+  TooltipComponent,
+  DataZoomComponent,
+  DatasetComponent,
+} from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
+
+echarts.use([
+  CandlestickChart,
+  BarChart,
+  LineChart,
+  GridComponent,
+  TooltipComponent,
+  DataZoomComponent,
+  DatasetComponent,
+  CanvasRenderer,
+]);
 
 export interface KlineOverlay {
   date: string;
@@ -28,6 +47,16 @@ interface KlineChartProps {
   className?: string;
 }
 
+type EChartsOption = echarts.ComposeOption<
+  | import("echarts/charts").CandlestickSeriesOption
+  | import("echarts/charts").BarSeriesOption
+  | import("echarts/charts").LineSeriesOption
+  | import("echarts/components").GridComponentOption
+  | import("echarts/components").TooltipComponentOption
+  | import("echarts/components").DataZoomComponentOption
+  | import("echarts/components").DatasetComponentOption
+>;
+
 const BULL_COLOR = "#ef4444";
 const BEAR_COLOR = "#22c55e";
 const BG_COLOR = "#141414";
@@ -55,13 +84,26 @@ function formatVolumeAxis(v: number): string {
   return v.toFixed(0);
 }
 
+interface LineSeriesOpt {
+  type: "line";
+  name: string;
+  xAxisIndex: number;
+  yAxisIndex: number;
+  showSymbol: boolean;
+  smooth: boolean;
+  lineStyle: { width: number; color: string };
+  itemStyle: { color: string };
+  encode: { x: number; y: number };
+  z: number;
+}
+
 function lineSeries(
   name: string,
   dataIndex: number,
   color: string,
   xIdx: number,
   yIdx: number,
-): echarts.LineSeriesOption {
+): LineSeriesOpt {
   return {
     type: "line",
     name,
@@ -80,7 +122,7 @@ function buildOption(
   raw: (string | number)[][],
   period: "daily" | "weekly",
   weeklyLineMode: "trend" | "ma",
-): echarts.EChartsOption {
+): EChartsOption {
   const isDaily = period === "daily";
   const dates = raw.map((d) => d[0] as string);
   const dataLen = dates.length;
@@ -105,7 +147,7 @@ function buildOption(
     lineStyle: { color: GRID_LINE },
   };
 
-  const grids: echarts.GridComponentOption[] = isDaily
+  const grids = isDaily
     ? [
         { left: gridLeft, right: gridRight, top: 30, height: "50%" },
         { left: gridLeft, right: gridRight, top: "58%", height: "12%" },
@@ -116,10 +158,10 @@ function buildOption(
         { left: gridLeft, right: gridRight, top: "73%", height: "16%" },
       ];
 
-  const xAxes: echarts.XAXisComponentOption[] = isDaily
+  const xAxes = isDaily
     ? [
         {
-          type: "category",
+          type: "category" as const,
           data: dates,
           gridIndex: 0,
           axisLabel: { show: false },
@@ -129,7 +171,7 @@ function buildOption(
           axisPointer: { label: { show: false } },
         },
         {
-          type: "category",
+          type: "category" as const,
           data: dates,
           gridIndex: 1,
           axisLabel: { show: false },
@@ -139,7 +181,7 @@ function buildOption(
           axisPointer: { label: { show: false } },
         },
         {
-          type: "category",
+          type: "category" as const,
           data: dates,
           gridIndex: 2,
           axisLabel: commonAxisLabel,
@@ -151,7 +193,7 @@ function buildOption(
       ]
     : [
         {
-          type: "category",
+          type: "category" as const,
           data: dates,
           gridIndex: 0,
           axisLabel: { show: false },
@@ -161,7 +203,7 @@ function buildOption(
           axisPointer: { label: { show: false } },
         },
         {
-          type: "category",
+          type: "category" as const,
           data: dates,
           gridIndex: 1,
           axisLabel: commonAxisLabel,
@@ -172,10 +214,10 @@ function buildOption(
         },
       ];
 
-  const yAxes: echarts.YAXisComponentOption[] = isDaily
+  const yAxes = isDaily
     ? [
         {
-          type: "value",
+          type: "value" as const,
           gridIndex: 0,
           scale: true,
           splitLine: commonSplitLine,
@@ -184,7 +226,7 @@ function buildOption(
           axisTick: { show: false },
         },
         {
-          type: "value",
+          type: "value" as const,
           gridIndex: 1,
           scale: true,
           splitLine: { show: false },
@@ -196,7 +238,7 @@ function buildOption(
           axisTick: { show: false },
         },
         {
-          type: "value",
+          type: "value" as const,
           gridIndex: 2,
           scale: true,
           splitLine: { show: false },
@@ -207,7 +249,7 @@ function buildOption(
       ]
     : [
         {
-          type: "value",
+          type: "value" as const,
           gridIndex: 0,
           scale: true,
           splitLine: commonSplitLine,
@@ -216,7 +258,7 @@ function buildOption(
           axisTick: { show: false },
         },
         {
-          type: "value",
+          type: "value" as const,
           gridIndex: 1,
           scale: true,
           splitLine: { show: false },
@@ -229,7 +271,8 @@ function buildOption(
         },
       ];
 
-  const series: echarts.SeriesOption[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const series: any[] = [];
 
   series.push({
     type: "candlestick",
@@ -244,7 +287,7 @@ function buildOption(
       borderColor0: BEAR_COLOR,
     },
     z: 1,
-  } as echarts.CandlestickSeriesOption);
+  });
 
   series.push({
     type: "bar",
@@ -254,13 +297,13 @@ function buildOption(
     encode: { x: 0, y: 5 },
     barMaxWidth: 8,
     itemStyle: {
-      color: (params: echarts.DefaultLabelFormatterCallbackParams) => {
-        const d = raw[params.dataIndex as number];
+      color: (params: { dataIndex: number }) => {
+        const d = raw[params.dataIndex];
         return (d[2] as number) >= (d[1] as number) ? BULL_COLOR : BEAR_COLOR;
       },
     },
     z: 1,
-  } as echarts.BarSeriesOption);
+  });
 
   if (isDaily) {
     series.push(lineSeries("\u8d8b\u52bf\u7ebf", 9, TREND_COLOR, 0, 0));
@@ -281,7 +324,7 @@ function buildOption(
     }
   }
 
-  const option: echarts.EChartsOption = {
+  const option: EChartsOption = {
     backgroundColor: BG_COLOR,
     animation: false,
     dataset: { source: raw },
@@ -302,7 +345,7 @@ function buildOption(
     grid: grids,
     xAxis: xAxes,
     yAxis: yAxes,
-    series,
+    series: series as EChartsOption["series"],
     dataZoom: [
       {
         type: "slider",

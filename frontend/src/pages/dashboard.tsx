@@ -1,5 +1,5 @@
 import { PageTransition } from "@/components/layout/page-transition";
-import { Card, Skeleton, Badge, AnimatedNumber } from "@/components/ui";
+import { Card, Skeleton, Badge, AnimatedNumber, CopyButton } from "@/components/ui";
 import { useStats, useRanking } from "@/lib/hooks";
 import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT } from "@/lib/tokens";
 import { useAppStore } from "@/lib/store";
@@ -114,6 +114,7 @@ export function Component() {
                       <span className="text-xs sm:text-sm font-mono font-medium text-ink">
                         {stock.code}
                       </span>
+                      <CopyButton text={stock.code} />
                       <span className="text-xs sm:text-sm text-ink-secondary truncate">
                         {stock.name}
                       </span>
