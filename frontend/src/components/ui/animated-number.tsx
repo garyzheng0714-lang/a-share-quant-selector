@@ -15,7 +15,7 @@ export function AnimatedNumber({ value, format = (n) => Math.round(n).toString()
   useEffect(() => {
     const controls = animate(motionVal, value, {
       duration: duration.count,
-      ease: ease.default as unknown as number[],
+      ease: [...ease.default],
       onUpdate: (v) => {
         if (ref.current) ref.current.textContent = format(v);
       },
