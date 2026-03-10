@@ -29,6 +29,10 @@ export const chartColors = {
   ma60: "#22c55e",
   datazoomFill: "rgba(245,158,11,0.08)",
   datazoomHandle: "#f59e0b",
+  markLineBg: "rgba(14,17,24,0.9)",
+  datazoomBg: "rgba(255,255,255,0.03)",
+  dataBackgroundLine: "rgba(148,163,184,0.15)",
+  dataBackgroundArea: "rgba(148,163,184,0.05)",
 } as const;
 
 export const CATEGORY_LABELS: Record<string, string> = {

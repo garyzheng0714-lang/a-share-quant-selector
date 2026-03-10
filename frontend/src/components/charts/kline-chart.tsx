@@ -79,6 +79,10 @@ const {
   ma60: MA60_COLOR,
   datazoomFill: DATAZOOM_FILL,
   datazoomHandle: DATAZOOM_HANDLE,
+  markLineBg: MARKLINE_BG,
+  datazoomBg: DATAZOOM_BG,
+  dataBackgroundLine: DATA_BG_LINE,
+  dataBackgroundArea: DATA_BG_AREA,
 } = chartColors;
 const BG_COLOR = "transparent";
 const LINE_WIDTH = 1.5;
@@ -306,7 +310,7 @@ function buildOption(
         position: "end",
         formatter: latestClose.toFixed(2),
         color: isBullish ? BULL_COLOR : BEAR_COLOR,
-        backgroundColor: "rgba(14,17,24,0.9)",
+        backgroundColor: MARKLINE_BG,
         borderColor: isBullish ? BULL_COLOR : BEAR_COLOR,
         borderWidth: 1,
         borderRadius: 3,
@@ -390,7 +394,7 @@ function buildOption(
         start: startPercent,
         end: 100,
         borderColor: "transparent",
-        backgroundColor: "rgba(255,255,255,0.03)",
+        backgroundColor: DATAZOOM_BG,
         fillerColor: DATAZOOM_FILL,
         handleStyle: {
           color: DATAZOOM_HANDLE,
@@ -399,8 +403,8 @@ function buildOption(
         moveHandleStyle: { color: DATAZOOM_HANDLE },
         textStyle: { color: AXIS_TEXT, fontSize: 10 },
         dataBackground: {
-          lineStyle: { color: "rgba(148,163,184,0.15)" },
-          areaStyle: { color: "rgba(148,163,184,0.05)" },
+          lineStyle: { color: DATA_BG_LINE },
+          areaStyle: { color: DATA_BG_AREA },
         },
         selectedDataBackground: {
           lineStyle: { color: DATAZOOM_HANDLE },
