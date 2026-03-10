@@ -47,8 +47,7 @@ ssh "$SERVER" "cd $REMOTE_DIR && docker compose down 2>/dev/null; docker compose
 
 echo ""
 echo "=== 部署完成 ==="
-echo "原版前端: http://112.124.103.65:8080"
-echo "新版前端: http://112.124.103.65:8080/new/"
+echo "访问地址: http://112.124.103.65:18321"
 echo ""
 echo "常用命令:"
 echo "  ssh $SERVER 'cd $REMOTE_DIR && docker compose logs -f'   # 查看日志"
