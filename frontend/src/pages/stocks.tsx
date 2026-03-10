@@ -43,7 +43,7 @@ function StockRow({ stock, onClick }: { stock: StockItem; onClick: () => void })
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       onClick={onClick}
-      className="group grid grid-cols-[5rem_1fr_5rem] sm:grid-cols-[7rem_1fr_6rem_6rem_5rem] items-center h-11 sm:h-12 px-3 sm:px-4 border-l-2 border-transparent hover:bg-elevated hover:border-accent transition-colors duration-150 cursor-pointer rounded-lg"
+      className="group grid grid-cols-[5rem_1fr_5rem] sm:grid-cols-[7rem_2fr_1fr_1fr_1fr] items-center h-11 sm:h-12 px-3 sm:px-4 border-l-2 border-transparent hover:bg-elevated hover:border-accent transition-colors duration-150 cursor-pointer rounded-lg"
     >
       <span className="font-mono text-xs sm:text-sm text-accent">
         {stock.code}
@@ -173,7 +173,7 @@ export function Component() {
                   exit={{ opacity: 0 }}
                   transition={{ duration: duration.fast }}
                 >
-                  <div className="grid grid-cols-[5rem_1fr_5rem] sm:grid-cols-[7rem_1fr_6rem_6rem_5rem] items-center h-10 px-3 sm:px-4 text-xs text-ink-muted font-medium border-b border-border mb-1">
+                  <div className="grid grid-cols-[5rem_1fr_5rem] sm:grid-cols-[7rem_2fr_1fr_1fr_1fr] items-center h-10 px-3 sm:px-4 text-xs text-ink-muted font-medium border-b border-border mb-1">
                     <span>代码</span>
                     <span>名称</span>
                     <span className="text-right">最新价</span>
