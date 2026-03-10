@@ -6,6 +6,7 @@ import {
   AnimatedNumber,
   CopyButton,
 } from "@/components/ui";
+import { WorkflowGuideBanner, EmptyState } from "@/components/onboarding";
 import { useStats, useRanking } from "@/lib/hooks";
 import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT } from "@/lib/tokens";
 import { useAppStore } from "@/lib/store";
@@ -56,6 +57,8 @@ export function Component() {
           </span>
         </div>
 
+        <WorkflowGuideBanner />
+
         <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6 sm:mb-10">
           {statsLoading ? (
             Array.from({ length: 3 }).map((_, i) => (
@@ -81,9 +84,18 @@ export function Component() {
               <Skeleton key={i} className="h-14 rounded-xl" />
             ))
           ) : topStocks.length === 0 ? (
-            <Card className="p-8 text-center">
-              <p className="text-ink-muted">暂无排名数据</p>
-            </Card>
+            <EmptyState
+              icon={
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <path d="M3 3v18h18" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  <path d="M7 14l4-4 3 3 6-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              }
+              title="暂无排名信号"
+              description="创建选股视图并运行策略后，排名结果将显示在这里"
+              ctaLabel="去选股"
+              onCta={() => navigate("/selection")}
+            />
           ) : (
             topStocks.map((stock, i) => {
               const badgeVariant =
