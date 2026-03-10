@@ -1,48 +1,60 @@
 @import "tailwindcss";
 
 @theme {
-  --color-canvas: #faf6f0;
-  --color-surface: #f5f0e8;
-  --color-elevated: #ede8df;
-  --color-inset: #e8e2d8;
+  --color-canvas: #0b0e14;
+  --color-surface: rgba(255, 255, 255, 0.04);
+  --color-elevated: rgba(255, 255, 255, 0.08);
+  --color-inset: rgba(255, 255, 255, 0.03);
 
-  --color-ink: #2d2b28;
-  --color-ink-secondary: #6b6560;
-  --color-ink-muted: #9c9590;
-  --color-ink-inverse: #faf6f0;
+  --color-ink: #e8ecf4;
+  --color-ink-secondary: #8b95a8;
+  --color-ink-muted: #505a6e;
+  --color-ink-inverse: #0b0e14;
 
-  --color-accent: #c0785a;
-  --color-accent-hover: #a8654a;
-  --color-accent-dim: oklch(0.65 0.1 55 / 0.12);
+  --color-accent: #e4a853;
+  --color-accent-hover: #d49a48;
+  --color-accent-dim: oklch(0.7 0.12 75 / 0.12);
 
-  --color-bull: #c0392b;
-  --color-bear: #27896e;
-  --color-bull-dim: oklch(0.55 0.15 25 / 0.08);
-  --color-bear-dim: oklch(0.6 0.1 165 / 0.08);
+  --color-bull: #ef4444;
+  --color-bear: #22c55e;
+  --color-bull-dim: oklch(0.55 0.18 25 / 0.12);
+  --color-bear-dim: oklch(0.6 0.14 155 / 0.12);
 
-  --color-border: oklch(0.3 0 0 / 0.08);
-  --color-border-hover: oklch(0.3 0 0 / 0.15);
-  --color-border-focus: #c0785a;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-hover: rgba(255, 255, 255, 0.15);
+  --color-border-focus: #e4a853;
 
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --font-mono: "SF Mono", Menlo, "Cascadia Code", Consolas, monospace;
 
-  --shadow-card: 0 1px 3px oklch(0.3 0 0 / 0.04), 0 1px 2px oklch(0.3 0 0 / 0.06);
-  --shadow-card-hover: 0 4px 12px oklch(0.3 0 0 / 0.08), 0 2px 4px oklch(0.3 0 0 / 0.04);
-  --shadow-float: 0 8px 24px oklch(0.3 0 0 / 0.1), 0 4px 8px oklch(0.3 0 0 / 0.05);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-card-hover: 0 8px 24px rgba(0, 0, 0, 0.4),
+    0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-float: 0 12px 40px rgba(0, 0, 0, 0.5),
+    0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
 @layer base {
   body {
-    @apply bg-canvas text-ink antialiased font-sans;
+    @apply text-ink antialiased font-sans;
+    background: linear-gradient(
+      145deg,
+      #0b0e14 0%,
+      #0f1319 50%,
+      #0d1018 100%
+    );
+    background-attachment: fixed;
+    min-height: 100vh;
   }
 
   ::selection {
-    background-color: oklch(0.65 0.1 55 / 0.2);
+    background-color: rgba(228, 168, 83, 0.25);
   }
 
   :focus-visible {
-    @apply outline-none ring-2 ring-accent/40 ring-offset-2 ring-offset-canvas;
+    @apply outline-none ring-2 ring-accent/30 ring-offset-2;
+    --tw-ring-offset-color: #0b0e14;
   }
 
   ::-webkit-scrollbar {
@@ -53,27 +65,54 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-ink/10 rounded-full;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 100px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-ink/20;
+    background: rgba(255, 255, 255, 0.18);
   }
 }
 
 @layer components {
   .glass {
-    backdrop-filter: blur(16px);
-    background-color: oklch(0.97 0.01 80 / 0.8);
+    backdrop-filter: blur(20px) saturate(1.4);
+    background: rgba(14, 17, 24, 0.78);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .glass-card {
+    backdrop-filter: blur(12px) saturate(1.2);
+    background: linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.05) 0%,
+      rgba(255, 255, 255, 0.02) 100%
+    );
+    border: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  .glass-elevated {
+    backdrop-filter: blur(16px) saturate(1.3);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
   }
 }
 
 @keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 
 .shimmer {
-  background: linear-gradient(90deg, transparent 0%, oklch(0.65 0.1 55 / 0.06) 50%, transparent 100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.04) 50%,
+    transparent 100%
+  );
   background-size: 200% 100%;
   animation: shimmer 1.5s ease-in-out infinite;
 }

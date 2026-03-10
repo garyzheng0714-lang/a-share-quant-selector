@@ -15,10 +15,14 @@ export function ToastContainer() {
             animate={{ x: 0, opacity: 1, scale: 1 }}
             exit={{ x: 100, opacity: 0 }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
-            className="glass rounded-full px-4 py-2.5 shadow-float flex items-center gap-2.5 border border-border"
+            className="glass-elevated rounded-full px-4 py-2.5 shadow-float flex items-center gap-2.5"
           >
-            <span className={`w-2 h-2 rounded-full ${dotColors[toast.type]}`} />
-            <span className="text-sm text-ink whitespace-nowrap">{toast.message}</span>
+            <span
+              className={`w-2 h-2 rounded-full ${dotColors[toast.type]}`}
+            />
+            <span className="text-sm text-ink whitespace-nowrap">
+              {toast.message}
+            </span>
           </motion.div>
         ))}
       </AnimatePresence>
