@@ -106,45 +106,72 @@ export function Component() {
                 <Card
                   key={stock.code}
                   hoverable
-                  className="grid grid-cols-[1.5rem_1fr_auto] sm:grid-cols-[1.5rem_5rem_1.25rem_auto_1fr_4rem_3rem] items-center px-3 sm:px-5 py-2.5 sm:py-3 gap-x-2 sm:gap-x-3"
+                  className="px-3 sm:px-5 py-2.5 sm:py-3"
                   onClick={() => handleStockClick(stock.code, i)}
                 >
-                  <span
-                    className={`text-xs sm:text-sm font-mono text-center ${
-                      i === 0
-                        ? "text-accent font-bold"
-                        : i < 3
-                          ? "text-ink-secondary font-medium"
-                          : "text-ink-muted"
-                    }`}
-                  >
-                    {i + 1}
-                  </span>
-                  <span className="text-xs sm:text-sm font-mono font-medium text-ink">
-                    {stock.code}
-                  </span>
-                  <CopyButton text={stock.code} className="hidden sm:inline-flex" />
-                  <span className="text-xs sm:text-sm text-ink-secondary truncate hidden sm:block">
-                    {stock.name}
-                  </span>
-                  <Badge variant={badgeVariant} className="hidden sm:inline-flex justify-self-start">
-                    {CATEGORY_LABELS[stock.category] ?? stock.category}
-                  </Badge>
-                  <span
-                    className={`text-xs sm:text-sm font-mono text-right ${changeColor}`}
-                  >
-                    {stock.close?.toFixed(2)}
-                  </span>
-                  {stock.similarity_score != null && (
-                    <span className="text-xs sm:text-sm font-mono text-accent font-medium text-right hidden sm:block">
-                      {Math.round(stock.similarity_score)}%
+                  {/* Desktop: single-row grid */}
+                  <div className="hidden sm:grid grid-cols-[1.5rem_5rem_1.25rem_auto_1fr_4rem_3rem] items-center gap-x-3">
+                    <span
+                      className={`text-sm font-mono text-center ${
+                        i === 0
+                          ? "text-accent font-bold"
+                          : i < 3
+                            ? "text-ink-secondary font-medium"
+                            : "text-ink-muted"
+                      }`}
+                    >
+                      {i + 1}
                     </span>
-                  )}
-                  <div className="col-span-2 sm:hidden flex items-center gap-1.5 mt-0.5">
-                    <span className="text-xs text-ink-secondary truncate">{stock.name}</span>
-                    <Badge variant={badgeVariant}>
+                    <span className="text-sm font-mono font-medium text-ink">
+                      {stock.code}
+                    </span>
+                    <CopyButton text={stock.code} />
+                    <span className="text-sm text-ink-secondary truncate">
+                      {stock.name}
+                    </span>
+                    <Badge variant={badgeVariant} className="justify-self-start">
                       {CATEGORY_LABELS[stock.category] ?? stock.category}
                     </Badge>
+                    <span className={`text-sm font-mono text-right ${changeColor}`}>
+                      {stock.close?.toFixed(2)}
+                    </span>
+                    {stock.similarity_score != null && (
+                      <span className="text-sm font-mono text-accent font-medium text-right">
+                        {Math.round(stock.similarity_score)}%
+                      </span>
+                    )}
+                  </div>
+                  {/* Mobile: compact two-line layout */}
+                  <div className="sm:hidden flex items-center gap-2">
+                    <span
+                      className={`text-xs font-mono w-5 text-center shrink-0 ${
+                        i === 0
+                          ? "text-accent font-bold"
+                          : i < 3
+                            ? "text-ink-secondary font-medium"
+                            : "text-ink-muted"
+                      }`}
+                    >
+                      {i + 1}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-mono font-medium text-ink">
+                          {stock.code}
+                        </span>
+                        <span className={`text-xs font-mono ${changeColor}`}>
+                          {stock.close?.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-xs text-ink-secondary truncate">
+                          {stock.name}
+                        </span>
+                        <Badge variant={badgeVariant}>
+                          {CATEGORY_LABELS[stock.category] ?? stock.category}
+                        </Badge>
+                      </div>
+                    </div>
                   </div>
                 </Card>
               );

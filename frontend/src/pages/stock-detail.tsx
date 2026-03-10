@@ -60,17 +60,17 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="h-[calc(100vh-48px)] flex flex-col">
+      <div className="h-[calc(100vh-48px-4rem)] sm:h-[calc(100vh-48px)] flex flex-col">
         {/* Header */}
-        <div className="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-2 sm:py-3 border-b border-border glass-elevated">
-          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
-            <button
-              onClick={() => navigate(-1)}
-              className="text-xs sm:text-sm text-ink-secondary hover:text-ink transition-colors shrink-0"
-            >
-              ←
-            </button>
-            <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 flex-wrap">
+        <div className="px-3 sm:px-6 py-2 sm:py-3 border-b border-border glass-elevated">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+              <button
+                onClick={() => navigate(-1)}
+                className="text-sm text-ink-secondary hover:text-ink transition-colors shrink-0"
+              >
+                ←
+              </button>
               <span className="text-sm sm:text-base font-mono font-semibold text-ink shrink-0">
                 {code}
               </span>
@@ -80,18 +80,18 @@ export function Component() {
                   className="text-ink-secondary hover:text-ink"
                 />
               )}
-              <span className="text-xs sm:text-base text-ink-secondary truncate">
+              <span className="text-sm text-ink-secondary truncate hidden sm:block">
                 {stockName}
               </span>
               {!isLoading && (
-                <div className="flex items-center gap-1.5">
+                <div className="hidden sm:flex items-center gap-1.5">
                   <span
-                    className={`text-sm sm:text-lg font-mono font-semibold ${isBull ? "text-bull" : "text-bear"}`}
+                    className={`text-lg font-mono font-semibold ${isBull ? "text-bull" : "text-bear"}`}
                   >
                     {latestClose.toFixed(2)}
                   </span>
                   <span
-                    className={`text-xs sm:text-sm font-mono ${isBull ? "text-bull" : "text-bear"}`}
+                    className={`text-sm font-mono ${isBull ? "text-bull" : "text-bear"}`}
                   >
                     {isBull ? "+" : ""}
                     {changePercent.toFixed(2)}%
@@ -99,9 +99,7 @@ export function Component() {
                 </div>
               )}
             </div>
-          </div>
-
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <div className="flex items-center gap-0.5 bg-inset rounded-lg p-0.5">
               {(["daily", "weekly"] as Period[]).map((p) => (
                 <button
@@ -135,7 +133,29 @@ export function Component() {
                 {weeklyLineMode === "trend" ? "黄白线" : "均线"}
               </button>
             )}
+            </div>
           </div>
+          {/* Mobile: second row with name + price */}
+          {!isLoading && (
+            <div className="flex items-center justify-between mt-1.5 sm:hidden">
+              <span className="text-xs text-ink-secondary truncate">
+                {stockName}
+              </span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span
+                  className={`text-sm font-mono font-semibold ${isBull ? "text-bull" : "text-bear"}`}
+                >
+                  {latestClose.toFixed(2)}
+                </span>
+                <span
+                  className={`text-xs font-mono ${isBull ? "text-bull" : "text-bear"}`}
+                >
+                  {isBull ? "+" : ""}
+                  {changePercent.toFixed(2)}%
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Chart area */}

@@ -126,11 +126,11 @@ function DateRow({
         <span className="text-xs sm:text-sm text-ink-muted tabular-nums shrink-0">
           {result.total}只
         </span>
-        <div className="flex items-center gap-1 sm:gap-1.5 ml-auto overflow-hidden">
+        <div className="hidden sm:flex items-center gap-1.5 ml-auto">
           {categoryEntries.map(([cat, count]) => (
             <span
               key={cat}
-              className="text-[10px] sm:text-xs bg-inset text-ink-muted px-1.5 sm:px-2 py-0.5 rounded-md whitespace-nowrap"
+              className="text-xs bg-inset text-ink-muted px-2 py-0.5 rounded-md whitespace-nowrap"
             >
               {CATEGORY_LABELS[cat] ?? cat} {count}
             </span>
