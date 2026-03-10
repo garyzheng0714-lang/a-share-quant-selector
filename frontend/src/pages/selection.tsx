@@ -10,6 +10,7 @@ import type { ViewData, SignalStock, SelectionResult } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT } from "@/lib/tokens";
 import { useToastStore } from "@/lib/toast-store";
+import { EmptyState } from "@/components/onboarding";
 
 /* ------------------------------------------------------------------ */
 /*  Parameter definitions                                              */
@@ -614,11 +615,18 @@ export function Component() {
               ))}
             </div>
           ) : !views?.length ? (
-            <Card className="p-8 text-center">
-              <p className="text-sm text-ink-muted">
-                暂无视图，点击右上角新建
-              </p>
-            </Card>
+            <EmptyState
+              icon={
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M12 8v8M8 12h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              }
+              title="还没有选股视图"
+              description="创建你的第一个视图，设定策略参数并运行选股"
+              ctaLabel="新建视图"
+              onCta={() => setShowCreate(true)}
+            />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {views.map((view) => {

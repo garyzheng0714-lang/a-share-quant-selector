@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Card, Skeleton, Badge, ProgressBar, CopyButton } from "@/components/ui";
+import { EmptyState } from "@/components/onboarding";
 import { useRanking } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
 import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT } from "@/lib/tokens";
@@ -227,7 +228,17 @@ export function Component() {
         {isLoading ? (
           <RankingSkeleton />
         ) : filtered.length === 0 ? (
-          <div className="text-center py-16 text-ink-muted">暂无排名数据</div>
+          <EmptyState
+            icon={
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+              </svg>
+            }
+            title="暂无排名数据"
+            description="创建选股视图并运行策略后，综合排名将在这里展示"
+            ctaLabel="去选股"
+            onCta={() => navigate("/selection")}
+          />
         ) : (
           <AnimatePresence mode="wait">
             <motion.div

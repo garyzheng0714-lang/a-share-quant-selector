@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Card, Skeleton, Badge, CopyButton } from "@/components/ui";
+import { EmptyState } from "@/components/onboarding";
 import { useViews, useViewResults } from "@/lib/hooks";
 import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT } from "@/lib/tokens";
 import type { SelectionResult, SignalStock } from "@/lib/api";
@@ -234,9 +235,31 @@ export function Component() {
         {isLoading ? (
           <HistorySkeleton />
         ) : !results?.length ? (
-          <div className="text-center py-16 text-ink-muted">
-            {selectedViewId === null ? "请选择一个视图" : "暂无历史记录"}
-          </div>
+          selectedViewId === null ? (
+            <EmptyState
+              icon={
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M9 12l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              }
+              title="请选择一个视图"
+              description="从右上角下拉菜单选择视图，查看对应的历史选股记录"
+            />
+          ) : (
+            <EmptyState
+              icon={
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M12 7v5l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              }
+              title="暂无历史记录"
+              description="运行选股策略后，每次结果会自动保存在这里"
+              ctaLabel="去选股"
+              onCta={() => navigate("/selection")}
+            />
+          )
         ) : (
           <AnimatePresence mode="wait">
             <motion.div
