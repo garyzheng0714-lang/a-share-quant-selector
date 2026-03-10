@@ -1,18 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
-import {
-  createChart,
-  type IChartApi,
-  type ISeriesApi,
-  type CandlestickData,
-  type HistogramData,
-  type LineData,
-  type Time,
-  CrosshairMode,
-  LineStyle,
-  type MouseEventParams,
-} from "lightweight-charts";
+import * as echarts from "echarts";
 
-interface KlineOverlay {
+export interface KlineOverlay {
   date: string;
   open: number;
   high: number;
@@ -25,142 +14,405 @@ interface KlineOverlay {
   kdjJ?: number;
   trendLine?: number;
   dkLine?: number;
+  ma5?: number;
+  ma10?: number;
+  ma20?: number;
+  ma60?: number;
 }
 
 interface KlineChartProps {
   data: (string | number)[][];
   period: "daily" | "weekly";
+  weeklyLineMode?: "trend" | "ma";
   onCrosshairMove?: (data: KlineOverlay | null) => void;
   className?: string;
 }
 
-const BULL_COLOR = "#c0392b";
-const BEAR_COLOR = "#27896e";
-const CANVAS_BG = "#faf6f0";
-const GRID_COLOR = "rgba(45,43,40,0.04)";
-const TEXT_COLOR = "#9c9590";
-const ACCENT_COLOR = "#c0785a";
+const BULL_COLOR = "#ef4444";
+const BEAR_COLOR = "#22c55e";
+const BG_COLOR = "#141414";
+const GRID_LINE = "rgba(148,163,184,0.06)";
+const AXIS_TEXT = "#94a3b8";
+const TOOLTIP_BG = "#1c2539";
 
-function parseKlineData(raw: (string | number)[][], period: string) {
-  const candles: CandlestickData<Time>[] = [];
-  const volumes: HistogramData<Time>[] = [];
-  const kLines: LineData<Time>[] = [];
-  const dLines: LineData<Time>[] = [];
-  const jLines: LineData<Time>[] = [];
-  const trendLines: LineData<Time>[] = [];
-  const dkLines: LineData<Time>[] = [];
-  const ma5Lines: LineData<Time>[] = [];
-  const ma10Lines: LineData<Time>[] = [];
-  const ma20Lines: LineData<Time>[] = [];
-  const ma60Lines: LineData<Time>[] = [];
+const TREND_COLOR = "#ffffff";
+const DK_COLOR = "#facc15";
+const KDJ_K_COLOR = "#3b82f6";
+const KDJ_D_COLOR = "#f59e0b";
+const KDJ_J_COLOR = "#ef4444";
+const MA5_COLOR = "#f59e0b";
+const MA10_COLOR = "#3b82f6";
+const MA20_COLOR = "#a855f7";
+const MA60_COLOR = "#22c55e";
 
-  for (const d of raw) {
-    const time = (d[0] as string) as Time;
-    const open = d[1] as number;
-    const close = d[2] as number;
-    const low = d[3] as number;
-    const high = d[4] as number;
-    const volume = d[5] as number;
-    const isUp = close >= open;
+const LINE_WIDTH = 1.5;
+const DATAZOOM_FILL = "rgba(245,158,11,0.08)";
+const DATAZOOM_HANDLE = "#f59e0b";
 
-    candles.push({
-      time,
-      open,
-      high,
-      low,
-      close,
-    });
+function formatVolumeAxis(v: number): string {
+  if (Math.abs(v) >= 1e8) return (v / 1e8).toFixed(1) + "\u4ebf";
+  if (Math.abs(v) >= 1e4) return (v / 1e4).toFixed(0) + "\u4e07";
+  return v.toFixed(0);
+}
 
-    volumes.push({
-      time,
-      value: volume,
-      color: isUp ? `${BULL_COLOR}80` : `${BEAR_COLOR}80`,
-    });
-
-    if (period === "daily") {
-      if (d[6] != null) kLines.push({ time, value: d[6] as number });
-      if (d[7] != null) dLines.push({ time, value: d[7] as number });
-      if (d[8] != null) jLines.push({ time, value: d[8] as number });
-      if (d[9] != null) trendLines.push({ time, value: d[9] as number });
-      if (d[10] != null) dkLines.push({ time, value: d[10] as number });
-    } else {
-      if (d[6] != null) ma5Lines.push({ time, value: d[6] as number });
-      if (d[7] != null) ma10Lines.push({ time, value: d[7] as number });
-      if (d[8] != null) ma20Lines.push({ time, value: d[8] as number });
-      if (d[9] != null) ma60Lines.push({ time, value: d[9] as number });
-      if (d[10] != null) trendLines.push({ time, value: d[10] as number });
-      if (d[11] != null) dkLines.push({ time, value: d[11] as number });
-    }
-  }
-
+function lineSeries(
+  name: string,
+  dataIndex: number,
+  color: string,
+  xIdx: number,
+  yIdx: number,
+): echarts.LineSeriesOption {
   return {
-    candles,
-    volumes,
-    kLines,
-    dLines,
-    jLines,
-    trendLines,
-    dkLines,
-    ma5Lines,
-    ma10Lines,
-    ma20Lines,
-    ma60Lines,
+    type: "line",
+    name,
+    xAxisIndex: xIdx,
+    yAxisIndex: yIdx,
+    showSymbol: false,
+    smooth: true,
+    lineStyle: { width: LINE_WIDTH, color },
+    itemStyle: { color },
+    encode: { x: 0, y: dataIndex },
+    z: 2,
   };
 }
 
-export function KlineChart({ data, period, onCrosshairMove, className = "" }: KlineChartProps) {
+function buildOption(
+  raw: (string | number)[][],
+  period: "daily" | "weekly",
+  weeklyLineMode: "trend" | "ma",
+): echarts.EChartsOption {
+  const isDaily = period === "daily";
+  const dates = raw.map((d) => d[0] as string);
+  const dataLen = dates.length;
+  const defaultVisible = isDaily ? 120 : 60;
+  const startPercent = Math.max(
+    0,
+    ((dataLen - defaultVisible) / dataLen) * 100,
+  );
+
+  const commonAxisLabel = {
+    color: AXIS_TEXT,
+    fontSize: 11,
+  } as const;
+
+  const commonSplitLine = {
+    show: true as const,
+    lineStyle: { color: GRID_LINE },
+  };
+
+  const grids: echarts.GridComponentOption[] = isDaily
+    ? [
+        { left: 60, right: 60, top: 30, height: "50%" },
+        { left: 60, right: 60, top: "58%", height: "12%" },
+        { left: 60, right: 60, top: "73%", height: "18%" },
+      ]
+    : [
+        { left: 60, right: 60, top: 30, height: "65%" },
+        { left: 60, right: 60, top: "73%", height: "16%" },
+      ];
+
+  const xAxes: echarts.XAXisComponentOption[] = isDaily
+    ? [
+        {
+          type: "category",
+          data: dates,
+          gridIndex: 0,
+          axisLabel: { show: false },
+          axisTick: { show: false },
+          axisLine: { show: false },
+          splitLine: commonSplitLine,
+          axisPointer: { label: { show: false } },
+        },
+        {
+          type: "category",
+          data: dates,
+          gridIndex: 1,
+          axisLabel: { show: false },
+          axisTick: { show: false },
+          axisLine: { show: false },
+          splitLine: commonSplitLine,
+          axisPointer: { label: { show: false } },
+        },
+        {
+          type: "category",
+          data: dates,
+          gridIndex: 2,
+          axisLabel: commonAxisLabel,
+          axisTick: { show: false },
+          axisLine: { lineStyle: { color: GRID_LINE } },
+          splitLine: commonSplitLine,
+          axisPointer: { label: { show: true } },
+        },
+      ]
+    : [
+        {
+          type: "category",
+          data: dates,
+          gridIndex: 0,
+          axisLabel: { show: false },
+          axisTick: { show: false },
+          axisLine: { show: false },
+          splitLine: commonSplitLine,
+          axisPointer: { label: { show: false } },
+        },
+        {
+          type: "category",
+          data: dates,
+          gridIndex: 1,
+          axisLabel: commonAxisLabel,
+          axisTick: { show: false },
+          axisLine: { lineStyle: { color: GRID_LINE } },
+          splitLine: commonSplitLine,
+          axisPointer: { label: { show: true } },
+        },
+      ];
+
+  const yAxes: echarts.YAXisComponentOption[] = isDaily
+    ? [
+        {
+          type: "value",
+          gridIndex: 0,
+          scale: true,
+          splitLine: commonSplitLine,
+          axisLabel: commonAxisLabel,
+          axisLine: { show: false },
+          axisTick: { show: false },
+        },
+        {
+          type: "value",
+          gridIndex: 1,
+          scale: true,
+          splitLine: { show: false },
+          axisLabel: {
+            ...commonAxisLabel,
+            formatter: formatVolumeAxis,
+          },
+          axisLine: { show: false },
+          axisTick: { show: false },
+        },
+        {
+          type: "value",
+          gridIndex: 2,
+          scale: true,
+          splitLine: { show: false },
+          axisLabel: commonAxisLabel,
+          axisLine: { show: false },
+          axisTick: { show: false },
+        },
+      ]
+    : [
+        {
+          type: "value",
+          gridIndex: 0,
+          scale: true,
+          splitLine: commonSplitLine,
+          axisLabel: commonAxisLabel,
+          axisLine: { show: false },
+          axisTick: { show: false },
+        },
+        {
+          type: "value",
+          gridIndex: 1,
+          scale: true,
+          splitLine: { show: false },
+          axisLabel: {
+            ...commonAxisLabel,
+            formatter: formatVolumeAxis,
+          },
+          axisLine: { show: false },
+          axisTick: { show: false },
+        },
+      ];
+
+  const series: echarts.SeriesOption[] = [];
+
+  series.push({
+    type: "candlestick",
+    name: "K\u7ebf",
+    xAxisIndex: 0,
+    yAxisIndex: 0,
+    encode: { x: 0, y: [1, 2, 3, 4] },
+    itemStyle: {
+      color: BULL_COLOR,
+      color0: BEAR_COLOR,
+      borderColor: BULL_COLOR,
+      borderColor0: BEAR_COLOR,
+    },
+    z: 1,
+  } as echarts.CandlestickSeriesOption);
+
+  series.push({
+    type: "bar",
+    name: "\u6210\u4ea4\u91cf",
+    xAxisIndex: isDaily ? 1 : 1,
+    yAxisIndex: isDaily ? 1 : 1,
+    encode: { x: 0, y: 5 },
+    barMaxWidth: 8,
+    itemStyle: {
+      color: (params: echarts.DefaultLabelFormatterCallbackParams) => {
+        const d = raw[params.dataIndex as number];
+        return (d[2] as number) >= (d[1] as number) ? BULL_COLOR : BEAR_COLOR;
+      },
+    },
+    z: 1,
+  } as echarts.BarSeriesOption);
+
+  if (isDaily) {
+    series.push(lineSeries("\u8d8b\u52bf\u7ebf", 9, TREND_COLOR, 0, 0));
+    series.push(lineSeries("DK\u7ebf", 10, DK_COLOR, 0, 0));
+
+    series.push(lineSeries("K", 6, KDJ_K_COLOR, 2, 2));
+    series.push(lineSeries("D", 7, KDJ_D_COLOR, 2, 2));
+    series.push(lineSeries("J", 8, KDJ_J_COLOR, 2, 2));
+  } else {
+    if (weeklyLineMode === "trend") {
+      series.push(lineSeries("\u8d8b\u52bf\u7ebf", 10, TREND_COLOR, 0, 0));
+      series.push(lineSeries("DK\u7ebf", 11, DK_COLOR, 0, 0));
+    } else {
+      series.push(lineSeries("MA5", 6, MA5_COLOR, 0, 0));
+      series.push(lineSeries("MA10", 7, MA10_COLOR, 0, 0));
+      series.push(lineSeries("MA20", 8, MA20_COLOR, 0, 0));
+      series.push(lineSeries("MA60", 9, MA60_COLOR, 0, 0));
+    }
+  }
+
+  const option: echarts.EChartsOption = {
+    backgroundColor: BG_COLOR,
+    animation: false,
+    dataset: { source: raw },
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "cross" },
+      showContent: false,
+      backgroundColor: TOOLTIP_BG,
+    },
+    axisPointer: {
+      link: [{ xAxisIndex: "all" }],
+      lineStyle: { color: AXIS_TEXT, type: "dashed" },
+      label: {
+        backgroundColor: TOOLTIP_BG,
+        color: AXIS_TEXT,
+      },
+    },
+    grid: grids,
+    xAxis: xAxes,
+    yAxis: yAxes,
+    series,
+    dataZoom: [
+      {
+        type: "slider",
+        xAxisIndex: isDaily ? [0, 1, 2] : [0, 1],
+        bottom: 8,
+        height: 24,
+        start: startPercent,
+        end: 100,
+        borderColor: "transparent",
+        backgroundColor: "rgba(255,255,255,0.03)",
+        fillerColor: DATAZOOM_FILL,
+        handleStyle: {
+          color: DATAZOOM_HANDLE,
+          borderColor: DATAZOOM_HANDLE,
+        },
+        moveHandleStyle: { color: DATAZOOM_HANDLE },
+        textStyle: { color: AXIS_TEXT, fontSize: 10 },
+        dataBackground: {
+          lineStyle: { color: "rgba(148,163,184,0.15)" },
+          areaStyle: { color: "rgba(148,163,184,0.05)" },
+        },
+        selectedDataBackground: {
+          lineStyle: { color: DATAZOOM_HANDLE },
+          areaStyle: { color: DATAZOOM_FILL },
+        },
+      },
+      {
+        type: "inside",
+        xAxisIndex: isDaily ? [0, 1, 2] : [0, 1],
+        start: startPercent,
+        end: 100,
+        zoomOnMouseWheel: true,
+        moveOnMouseMove: true,
+      },
+    ],
+  };
+
+  return option;
+}
+
+function buildOverlay(
+  raw: (string | number)[][],
+  dataIndex: number,
+  period: "daily" | "weekly",
+): KlineOverlay | null {
+  if (dataIndex < 0 || dataIndex >= raw.length) return null;
+
+  const d = raw[dataIndex];
+  const prevClose =
+    dataIndex > 0 ? (raw[dataIndex - 1][2] as number) : (d[1] as number);
+  const close = d[2] as number;
+  const change = prevClose ? ((close - prevClose) / prevClose) * 100 : 0;
+
+  const overlay: KlineOverlay = {
+    date: d[0] as string,
+    open: d[1] as number,
+    high: d[4] as number,
+    low: d[3] as number,
+    close,
+    volume: d[5] as number,
+    change,
+  };
+
+  if (period === "daily") {
+    if (d[6] != null) overlay.kdjK = d[6] as number;
+    if (d[7] != null) overlay.kdjD = d[7] as number;
+    if (d[8] != null) overlay.kdjJ = d[8] as number;
+    if (d[9] != null) overlay.trendLine = d[9] as number;
+    if (d[10] != null) overlay.dkLine = d[10] as number;
+  } else {
+    if (d[6] != null) overlay.ma5 = d[6] as number;
+    if (d[7] != null) overlay.ma10 = d[7] as number;
+    if (d[8] != null) overlay.ma20 = d[8] as number;
+    if (d[9] != null) overlay.ma60 = d[9] as number;
+    if (d[10] != null) overlay.trendLine = d[10] as number;
+    if (d[11] != null) overlay.dkLine = d[11] as number;
+  }
+
+  return overlay;
+}
+
+export function KlineChart({
+  data,
+  period,
+  weeklyLineMode = "trend",
+  onCrosshairMove,
+  className = "",
+}: KlineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const chartRef = useRef<echarts.ECharts | null>(null);
+  const dataRef = useRef(data);
+  const periodRef = useRef(period);
 
-  const handleCrosshair = useCallback(
-    (param: MouseEventParams<Time>) => {
-      if (!onCrosshairMove || !candleSeriesRef.current) return;
+  dataRef.current = data;
+  periodRef.current = period;
 
-      if (!param.time || !param.seriesData) {
+  const handleAxisPointer = useCallback(
+    (params: { axesInfo?: { value?: number }[] }) => {
+      if (!onCrosshairMove) return;
+
+      const axesInfo = params.axesInfo;
+      if (!axesInfo?.length || axesInfo[0].value == null) {
         onCrosshairMove(null);
         return;
       }
 
-      const candleData = param.seriesData.get(candleSeriesRef.current) as
-        | CandlestickData<Time>
-        | undefined;
-      if (!candleData) {
-        onCrosshairMove(null);
-        return;
-      }
-
-      const idx = data.findIndex((d) => d[0] === param.time);
-      if (idx === -1) {
-        onCrosshairMove(null);
-        return;
-      }
-
-      const d = data[idx];
-      const prevClose = idx > 0 ? (data[idx - 1][2] as number) : (d[1] as number);
-      const change = prevClose ? (((d[2] as number) - prevClose) / prevClose) * 100 : 0;
-
-      const overlay: KlineOverlay = {
-        date: d[0] as string,
-        open: d[1] as number,
-        high: d[4] as number,
-        low: d[3] as number,
-        close: d[2] as number,
-        volume: d[5] as number,
-        change,
-      };
-
-      if (period === "daily") {
-        overlay.kdjK = d[6] as number | undefined;
-        overlay.kdjD = d[7] as number | undefined;
-        overlay.kdjJ = d[8] as number | undefined;
-        overlay.trendLine = d[9] as number | undefined;
-        overlay.dkLine = d[10] as number | undefined;
-      }
-
+      const dataIndex = axesInfo[0].value as number;
+      const overlay = buildOverlay(
+        dataRef.current,
+        dataIndex,
+        periodRef.current,
+      );
       onCrosshairMove(overlay);
     },
-    [data, period, onCrosshairMove],
+    [onCrosshairMove],
   );
 
   useEffect(() => {
@@ -169,121 +421,38 @@ export function KlineChart({ data, period, onCrosshairMove, className = "" }: Kl
     const container = containerRef.current;
 
     if (chartRef.current) {
-      chartRef.current.remove();
+      chartRef.current.dispose();
       chartRef.current = null;
     }
 
-    const chart = createChart(container, {
-      width: container.clientWidth,
-      height: container.clientHeight,
-      layout: {
-        background: { color: CANVAS_BG },
-        textColor: TEXT_COLOR,
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
-      },
-      grid: {
-        vertLines: { color: GRID_COLOR },
-        horzLines: { color: GRID_COLOR },
-      },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-        vertLine: { color: `${ACCENT_COLOR}40`, style: LineStyle.Dashed, width: 1 },
-        horzLine: { color: `${ACCENT_COLOR}40`, style: LineStyle.Dashed, width: 1 },
-      },
-      rightPriceScale: {
-        borderColor: GRID_COLOR,
-      },
-      timeScale: {
-        borderColor: GRID_COLOR,
-        timeVisible: false,
-      },
+    const chart = echarts.init(container, undefined, {
+      renderer: "canvas",
     });
-
     chartRef.current = chart;
 
-    const parsed = parseKlineData(data, period);
+    const option = buildOption(data, period, weeklyLineMode);
+    chart.setOption(option);
 
-    // Candlestick series
-    const candleSeries = chart.addCandlestickSeries({
-      upColor: BULL_COLOR,
-      downColor: BEAR_COLOR,
-      borderUpColor: BULL_COLOR,
-      borderDownColor: BEAR_COLOR,
-      wickUpColor: BULL_COLOR,
-      wickDownColor: BEAR_COLOR,
-    });
-    candleSeries.setData(parsed.candles);
-    candleSeriesRef.current = candleSeries;
+    chart.on(
+      "updateAxisPointer",
+      handleAxisPointer as (...args: unknown[]) => void,
+    );
 
-    // Trend line
-    if (parsed.trendLines.length > 0) {
-      const trendSeries = chart.addLineSeries({
-        color: "#3b82f6",
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        priceLineVisible: false,
-        lastValueVisible: false,
-      });
-      trendSeries.setData(parsed.trendLines);
-    }
-
-    // DK line
-    if (parsed.dkLines.length > 0) {
-      const dkSeries = chart.addLineSeries({
-        color: "#f59e0b",
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        priceLineVisible: false,
-        lastValueVisible: false,
-      });
-      dkSeries.setData(parsed.dkLines);
-    }
-
-    // Weekly MAs
-    if (period === "weekly") {
-      const maConfigs = [
-        { data: parsed.ma5Lines, color: "#3b82f6" },
-        { data: parsed.ma10Lines, color: "#f59e0b" },
-        { data: parsed.ma20Lines, color: "#c0785a" },
-        { data: parsed.ma60Lines, color: "#9c9590" },
-      ];
-      for (const ma of maConfigs) {
-        if (ma.data.length > 0) {
-          const s = chart.addLineSeries({
-            color: ma.color,
-            lineWidth: 1,
-            priceLineVisible: false,
-            lastValueVisible: false,
-          });
-          s.setData(ma.data);
-        }
-      }
-    }
-
-    // Subscribe to crosshair
-    chart.subscribeCrosshairMove(handleCrosshair);
-
-    // Fit content
-    chart.timeScale().fitContent();
-
-    // Resize observer
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        chart.applyOptions({ width, height });
-      }
+    const observer = new ResizeObserver(() => {
+      chart.resize();
     });
     observer.observe(container);
 
     return () => {
       observer.disconnect();
-      chart.unsubscribeCrosshairMove(handleCrosshair);
-      chart.remove();
+      chart.off(
+        "updateAxisPointer",
+        handleAxisPointer as (...args: unknown[]) => void,
+      );
+      chart.dispose();
       chartRef.current = null;
-      candleSeriesRef.current = null;
     };
-  }, [data, period, handleCrosshair]);
+  }, [data, period, weeklyLineMode, handleAxisPointer]);
 
   return <div ref={containerRef} className={`w-full ${className}`} />;
 }
