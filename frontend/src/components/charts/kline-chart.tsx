@@ -143,7 +143,7 @@ function buildOption(
 
   const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
   const gridLeft = isMobile ? 40 : 60;
-  const gridRight = isMobile ? 10 : 60;
+  const gridRight = isMobile ? 55 : 60;
   const labelFontSize = isMobile ? 10 : 11;
 
   const commonAxisLabel = {
