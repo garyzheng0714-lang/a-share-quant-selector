@@ -106,11 +106,11 @@ export function Component() {
                 <Card
                   key={stock.code}
                   hoverable
-                  className="flex items-center px-3 sm:px-5 py-2.5 sm:py-3 gap-2 sm:gap-4"
+                  className="grid grid-cols-[1.5rem_1fr_auto] sm:grid-cols-[1.5rem_5rem_1.25rem_auto_1fr_4rem_3rem] items-center px-3 sm:px-5 py-2.5 sm:py-3 gap-x-2 sm:gap-x-3"
                   onClick={() => handleStockClick(stock.code, i)}
                 >
                   <span
-                    className={`text-xs sm:text-sm font-mono w-5 sm:w-6 text-center shrink-0 ${
+                    className={`text-xs sm:text-sm font-mono text-center ${
                       i === 0
                         ? "text-accent font-bold"
                         : i < 3
@@ -120,30 +120,32 @@ export function Component() {
                   >
                     {i + 1}
                   </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                      <span className="text-xs sm:text-sm font-mono font-medium text-ink">
-                        {stock.code}
-                      </span>
-                      <CopyButton text={stock.code} />
-                      <span className="text-xs sm:text-sm text-ink-secondary truncate">
-                        {stock.name}
-                      </span>
-                      <Badge variant={badgeVariant}>
-                        {CATEGORY_LABELS[stock.category] ?? stock.category}
-                      </Badge>
-                    </div>
-                  </div>
+                  <span className="text-xs sm:text-sm font-mono font-medium text-ink">
+                    {stock.code}
+                  </span>
+                  <CopyButton text={stock.code} className="hidden sm:inline-flex" />
+                  <span className="text-xs sm:text-sm text-ink-secondary truncate hidden sm:block">
+                    {stock.name}
+                  </span>
+                  <Badge variant={badgeVariant} className="hidden sm:inline-flex justify-self-start">
+                    {CATEGORY_LABELS[stock.category] ?? stock.category}
+                  </Badge>
                   <span
-                    className={`text-xs sm:text-sm font-mono shrink-0 ${changeColor}`}
+                    className={`text-xs sm:text-sm font-mono text-right ${changeColor}`}
                   >
                     {stock.close?.toFixed(2)}
                   </span>
                   {stock.similarity_score != null && (
-                    <span className="text-xs sm:text-sm font-mono text-accent font-medium shrink-0">
+                    <span className="text-xs sm:text-sm font-mono text-accent font-medium text-right hidden sm:block">
                       {Math.round(stock.similarity_score)}%
                     </span>
                   )}
+                  <div className="col-span-2 sm:hidden flex items-center gap-1.5 mt-0.5">
+                    <span className="text-xs text-ink-secondary truncate">{stock.name}</span>
+                    <Badge variant={badgeVariant}>
+                      {CATEGORY_LABELS[stock.category] ?? stock.category}
+                    </Badge>
+                  </div>
                 </Card>
               );
             })

@@ -9,9 +9,9 @@ import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT, duration, ease } from "@/lib/t
 import type { SelectionResult, SignalStock } from "@/lib/api";
 
 function formatMarketCap(value: number): string {
-  if (value >= 1e8) return `${(value / 1e8).toFixed(1)}亿`;
-  if (value >= 1e4) return `${(value / 1e4).toFixed(1)}万`;
-  return value.toFixed(0);
+  if (value >= 1e8) return `${(value / 1e8).toFixed(0)}亿`;
+  if (value >= 1e4) return `${(value / 1e4).toFixed(0)}万`;
+  return `${value.toFixed(0)}亿`;
 }
 
 function ChevronIcon({ expanded }: { expanded: boolean }) {

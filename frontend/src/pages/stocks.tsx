@@ -9,9 +9,9 @@ import { useAppStore } from "@/lib/store";
 import type { StockItem } from "@/lib/api";
 
 function formatMarketCap(value: number): string {
-  if (value >= 1e8) return `${(value / 1e8).toFixed(1)}亿`;
-  if (value >= 1e4) return `${(value / 1e4).toFixed(1)}万`;
-  return value.toFixed(0);
+  if (value >= 1e8) return `${(value / 1e8).toFixed(0)}亿`;
+  if (value >= 1e4) return `${(value / 1e4).toFixed(0)}万`;
+  return `${value.toFixed(0)}亿`;
 }
 
 function ListIcon() {
@@ -43,22 +43,22 @@ function StockRow({ stock, onClick }: { stock: StockItem; onClick: () => void })
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       onClick={onClick}
-      className="group flex items-center h-12 sm:h-14 px-3 sm:px-4 border-l-2 border-transparent hover:bg-elevated hover:border-accent transition-colors duration-150 cursor-pointer rounded-lg"
+      className="group grid grid-cols-[5rem_1fr_5rem] sm:grid-cols-[7rem_1fr_6rem_6rem_5rem] items-center h-11 sm:h-12 px-3 sm:px-4 border-l-2 border-transparent hover:bg-elevated hover:border-accent transition-colors duration-150 cursor-pointer rounded-lg"
     >
-      <span className="w-20 sm:w-28 font-mono text-xs sm:text-sm text-accent shrink-0">
+      <span className="font-mono text-xs sm:text-sm text-accent">
         {stock.code}
       </span>
-      <span className="flex-1 sm:w-32 sm:flex-none text-xs sm:text-sm text-ink font-medium truncate shrink-0">
+      <span className="text-xs sm:text-sm text-ink font-medium truncate">
         {stock.name}
       </span>
-      <span className="w-16 sm:w-24 text-xs sm:text-sm text-ink tabular-nums text-right shrink-0">
+      <span className="text-xs sm:text-sm text-ink tabular-nums text-right">
         {stock.latest_price.toFixed(2)}
       </span>
-      <span className="hidden sm:block w-24 text-sm text-ink-secondary text-right shrink-0">
+      <span className="hidden sm:block text-sm text-ink-secondary text-right">
         {formatMarketCap(stock.market_cap)}
       </span>
-      <span className="hidden sm:block flex-1 text-sm text-ink-muted text-right">
-        {stock.data_count} 条
+      <span className="hidden sm:block text-sm text-ink-muted text-right">
+        {stock.data_count}
       </span>
     </motion.div>
   );
@@ -173,12 +173,12 @@ export function Component() {
                   exit={{ opacity: 0 }}
                   transition={{ duration: duration.fast }}
                 >
-                  <div className="flex items-center h-10 px-3 sm:px-4 text-xs text-ink-muted font-medium border-b border-border mb-1">
-                    <span className="w-20 sm:w-28">代码</span>
-                    <span className="flex-1 sm:w-32 sm:flex-none">名称</span>
-                    <span className="w-16 sm:w-24 text-right">最新价</span>
-                    <span className="hidden sm:block w-24 text-right">市值</span>
-                    <span className="hidden sm:block flex-1 text-right">数据量</span>
+                  <div className="grid grid-cols-[5rem_1fr_5rem] sm:grid-cols-[7rem_1fr_6rem_6rem_5rem] items-center h-10 px-3 sm:px-4 text-xs text-ink-muted font-medium border-b border-border mb-1">
+                    <span>代码</span>
+                    <span>名称</span>
+                    <span className="text-right">最新价</span>
+                    <span className="hidden sm:block text-right">市值</span>
+                    <span className="hidden sm:block text-right">数据量</span>
                   </div>
                   <div className="space-y-0.5">
                     {filtered.map((stock) => (
