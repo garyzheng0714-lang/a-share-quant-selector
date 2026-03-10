@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { PageTransition } from "@/components/layout/page-transition";
-import { Card, Skeleton, Badge } from "@/components/ui";
+import { Card, Skeleton, Badge, CopyButton } from "@/components/ui";
 import { useViews, useViewResults } from "@/lib/hooks";
 import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT } from "@/lib/tokens";
 import type { SelectionResult, SignalStock } from "@/lib/api";
@@ -46,6 +46,7 @@ function SignalCard({
       <div className="flex items-center justify-between mb-2">
         <div>
           <span className="font-mono text-sm text-accent">{stock.code}</span>
+          <CopyButton text={stock.code} />
           <span className="text-sm font-medium text-ink ml-2">
             {stock.name}
           </span>

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageTransition } from "@/components/layout/page-transition";
 import { KlineChart, type KlineOverlay } from "@/components/charts/kline-chart";
-import { Button } from "@/components/ui";
+import { Button, CopyButton } from "@/components/ui";
 import { useKline } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
 
@@ -76,6 +76,12 @@ export function Component() {
               <span className="text-sm sm:text-base font-mono font-semibold text-[#e2e8f0] shrink-0">
                 {code}
               </span>
+              {code && (
+                <CopyButton
+                  text={code}
+                  className="text-[#94a3b8] hover:text-[#e2e8f0]"
+                />
+              )}
               <span className="text-xs sm:text-base text-[#94a3b8] truncate">
                 {stockName}
               </span>
