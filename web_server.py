@@ -19,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 import yaml
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 
 
 def _to_python(val):
@@ -53,11 +53,7 @@ from views.view_manager import (
 
 logger = logging.getLogger(__name__)
 
-app = Flask(
-    __name__,
-    template_folder="web/templates",
-    static_folder="web/static",
-)
+app = Flask(__name__, static_folder=None)
 
 csv_manager = CSVManager("data")
 
@@ -308,33 +304,26 @@ def _run_selection_async(view_id: int, task_id: str) -> None:
         logger.error("异步选股失败: %s", e)
 
 
-# ==================== 页面路由 ====================
+# ==================== 页面路由 (React SPA) ====================
+
+_frontend_dist = Path(__file__).parent / "frontend" / "dist"
 
 
 @app.route("/")
-def index():
-    """主页."""
-    return render_template("index.html")
+def serve_frontend():
+    """Serve the React frontend."""
+    return send_from_directory(_frontend_dist, "index.html")
 
 
-# ==================== 新前端 (React) ====================
-
-_nextjs_dist = Path(__file__).parent / "frontend" / "dist"
-
-
-@app.route("/new/")
-def serve_new_frontend():
-    """Serve the new React frontend."""
-    return send_from_directory(_nextjs_dist, "index.html")
-
-
-@app.route("/new/<path:path>")
-def serve_new_frontend_assets(path):
-    """Serve new frontend static assets, with SPA fallback."""
-    file_path = _nextjs_dist / path
+@app.route("/<path:path>")
+def serve_frontend_assets(path):
+    """Serve frontend static assets, with SPA fallback."""
+    if path.startswith("api/"):
+        return jsonify({"success": False, "error": "Not found"}), 404
+    file_path = _frontend_dist / path
     if file_path.is_file():
-        return send_from_directory(_nextjs_dist, path)
-    return send_from_directory(_nextjs_dist, "index.html")
+        return send_from_directory(_frontend_dist, path)
+    return send_from_directory(_frontend_dist, "index.html")
 
 
 # ==================== 视图管理 API ====================
