@@ -63,8 +63,7 @@ export function NavBar() {
               {i === activeIndex && (
                 <motion.div
                   layoutId="nav-indicator"
-                  className="absolute inset-0 rounded-lg -z-10"
-                  style={{ background: "rgba(255,255,255,0.06)" }}
+                  className="absolute inset-0 rounded-lg -z-10 bg-elevated"
                   transition={{
                     type: "spring",
                     damping: 25,

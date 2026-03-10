@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
+import { duration } from "@/lib/tokens";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Card, Skeleton, Button, Input } from "@/components/ui";
 import { useStocks } from "@/lib/hooks";
@@ -170,7 +171,7 @@ export function Component() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  transition={{ duration: 0.2 }}
+                  transition={{ duration: duration.fast }}
                 >
                   <div className="flex items-center h-10 px-3 sm:px-4 text-xs text-ink-muted font-medium border-b border-border mb-1">
                     <span className="w-20 sm:w-28">代码</span>
@@ -195,7 +196,7 @@ export function Component() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  transition={{ duration: 0.2 }}
+                  transition={{ duration: duration.fast }}
                   className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3 sm:gap-4"
                 >
                   {filtered.map((stock) => (
