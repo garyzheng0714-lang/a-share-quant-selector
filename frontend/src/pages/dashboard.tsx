@@ -57,7 +57,9 @@ export function Component() {
           </span>
         </div>
 
-        <WorkflowGuideBanner />
+        <div className="hidden sm:block">
+          <WorkflowGuideBanner />
+        </div>
 
         <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6 sm:mb-10">
           {statsLoading ? (
@@ -155,7 +157,7 @@ export function Component() {
                       {i + 1}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
                         <span className="text-xs font-mono font-medium text-ink">
                           {stock.code}
                         </span>
