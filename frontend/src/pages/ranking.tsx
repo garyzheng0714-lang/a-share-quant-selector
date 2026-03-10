@@ -16,10 +16,10 @@ const FILTERS: { key: string; label: string }[] = [
 ];
 
 const BREAKDOWN_LABELS: Record<string, string> = {
-  trend: "趋势",
-  kdj: "KDJ",
-  volume: "量能",
-  shape: "形态",
+  kdj_state: "KDJ",
+  price_shape: "形态",
+  trend_structure: "趋势",
+  volume_pattern: "量能",
 };
 
 function formatMarketCap(value: number): string {
@@ -114,11 +114,13 @@ function RankingCard({
         <div className="space-y-1.5 mb-3">
           {Object.entries(breakdown).map(([key, value]) => (
             <div key={key} className="flex items-center gap-2">
-              <span className="text-xs text-ink-muted w-10 shrink-0">
+              <span className="text-xs text-ink-muted w-8 shrink-0 text-right">
                 {BREAKDOWN_LABELS[key] ?? key}
               </span>
-              <ProgressBar value={value} className="flex-1" />
-              <span className="text-xs text-ink-muted tabular-nums w-7 text-right">
+              <div className="flex-1 min-w-0">
+                <ProgressBar value={value} />
+              </div>
+              <span className="text-xs text-ink-muted tabular-nums w-7 shrink-0 text-right">
                 {value.toFixed(0)}
               </span>
             </div>
