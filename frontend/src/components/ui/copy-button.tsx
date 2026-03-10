@@ -24,7 +24,7 @@ export function CopyButton({ text, className = "" }: CopyButtonProps) {
       onClick={handleCopy}
       className={`inline-flex items-center justify-center shrink-0 rounded transition-colors ${
         copied
-          ? "text-green-500"
+          ? "text-bear"
           : "text-ink-muted hover:text-ink"
       } ${className}`}
       title="复制代码"

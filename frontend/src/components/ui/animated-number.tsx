@@ -1,5 +1,6 @@
 import { useMotionValue, animate } from "framer-motion";
 import { useEffect, useRef } from "react";
+import { duration, ease } from "@/lib/tokens";
 
 interface AnimatedNumberProps {
   value: number;
@@ -13,8 +14,8 @@ export function AnimatedNumber({ value, format = (n) => Math.round(n).toString()
 
   useEffect(() => {
     const controls = animate(motionVal, value, {
-      duration: 0.8,
-      ease: [0.25, 0.1, 0.25, 1],
+      duration: duration.count,
+      ease: ease.default as unknown as number[],
       onUpdate: (v) => {
         if (ref.current) ref.current.textContent = format(v);
       },

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from "react";
+import { chartColors } from "@/lib/tokens";
 import * as echarts from "echarts/core";
 import { CandlestickChart, BarChart, LineChart } from "echarts/charts";
 import {
@@ -60,27 +61,27 @@ type EChartsOption = echarts.ComposeOption<
   | import("echarts/components").MarkLineComponentOption
 >;
 
-const BULL_COLOR = "#ef4444";
-const BEAR_COLOR = "#22c55e";
+const {
+  bull: BULL_COLOR,
+  bear: BEAR_COLOR,
+  gridLine: GRID_LINE,
+  axisText: AXIS_TEXT,
+  tooltipBg: TOOLTIP_BG,
+  priceLine: PRICE_LINE_COLOR,
+  trend: TREND_COLOR,
+  dk: DK_COLOR,
+  kdjK: KDJ_K_COLOR,
+  kdjD: KDJ_D_COLOR,
+  kdjJ: KDJ_J_COLOR,
+  ma5: MA5_COLOR,
+  ma10: MA10_COLOR,
+  ma20: MA20_COLOR,
+  ma60: MA60_COLOR,
+  datazoomFill: DATAZOOM_FILL,
+  datazoomHandle: DATAZOOM_HANDLE,
+} = chartColors;
 const BG_COLOR = "transparent";
-const GRID_LINE = "rgba(255,255,255,0.05)";
-const AXIS_TEXT = "#8b95a8";
-const TOOLTIP_BG = "rgba(14,17,24,0.85)";
-const PRICE_LINE_COLOR = "rgba(228,168,83,0.6)";
-
-const TREND_COLOR = "#ffffff";
-const DK_COLOR = "#facc15";
-const KDJ_K_COLOR = "#3b82f6";
-const KDJ_D_COLOR = "#f59e0b";
-const KDJ_J_COLOR = "#ef4444";
-const MA5_COLOR = "#f59e0b";
-const MA10_COLOR = "#3b82f6";
-const MA20_COLOR = "#a855f7";
-const MA60_COLOR = "#22c55e";
-
 const LINE_WIDTH = 1.5;
-const DATAZOOM_FILL = "rgba(245,158,11,0.08)";
-const DATAZOOM_HANDLE = "#f59e0b";
 
 function formatVolumeAxis(v: number): string {
   if (Math.abs(v) >= 1e8) return (v / 1e8).toFixed(1) + "\u4ebf";
