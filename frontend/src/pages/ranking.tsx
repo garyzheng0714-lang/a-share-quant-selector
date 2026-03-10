@@ -24,9 +24,9 @@ const BREAKDOWN_LABELS: Record<string, string> = {
 };
 
 function formatMarketCap(value: number): string {
-  if (value >= 1e8) return `${(value / 1e8).toFixed(1)}亿`;
-  if (value >= 1e4) return `${(value / 1e4).toFixed(1)}万`;
-  return value.toFixed(0);
+  if (value >= 1e8) return `${(value / 1e8).toFixed(0)}亿`;
+  if (value >= 1e4) return `${(value / 1e4).toFixed(0)}万`;
+  return `${value.toFixed(0)}亿`;
 }
 
 function rankColor(rank: number): string {
@@ -54,8 +54,14 @@ function RankingCard({
   const score = stock.similarity_score ?? 0;
   const breakdown = stock.match_breakdown;
 
+  const isTop3 = rank <= 3;
+
   return (
-    <Card hoverable onClick={onClick} className="p-5">
+    <Card
+      hoverable
+      onClick={onClick}
+      className={`p-5 ${isTop3 ? "border-accent/25" : ""}`}
+    >
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-3">
           <span
@@ -122,7 +128,7 @@ function RankingCard({
                 {BREAKDOWN_LABELS[key] ?? key}
               </span>
               <div className="flex-1 min-w-0">
-                <ProgressBar value={value} />
+                <ProgressBar value={value} colorByValue />
               </div>
               <span className="text-xs text-ink-muted tabular-nums w-7 shrink-0 text-right">
                 {value.toFixed(0)}
@@ -216,8 +222,8 @@ export function Component() {
               onClick={() => setFilter(f.key)}
               className={`px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm rounded-xl whitespace-nowrap shrink-0 transition-colors duration-150 ${
                 filter === f.key
-                  ? "bg-accent text-ink-inverse"
-                  : "bg-surface text-ink-secondary hover:bg-elevated"
+                  ? "bg-accent text-ink-inverse font-medium"
+                  : "bg-surface text-ink-muted hover:bg-elevated hover:text-ink-secondary"
               }`}
             >
               {f.label}
