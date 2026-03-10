@@ -45,7 +45,7 @@ export function NavBar() {
           <span className="text-accent">QS</span>
           <span className="hidden sm:inline text-ink">elect</span>
         </span>
-        <div className="relative flex items-center shrink-0">
+        <div className="relative hidden sm:flex items-center shrink-0">
           {navItems.map((item, i) => (
             <NavLink
               key={item.to}
