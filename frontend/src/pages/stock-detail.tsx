@@ -58,6 +58,49 @@ export function Component() {
     : 0;
   const isBull = changePercent >= 0;
 
+  // Extract latest trend/DK line values from raw data
+  const latestRow = klineData?.data?.length
+    ? klineData.data[klineData.data.length - 1]
+    : null;
+
+  type TrendValues = { type: "trend"; trend: number; dk: number | null };
+  type MaValues = {
+    type: "ma";
+    ma5: number | null;
+    ma10: number | null;
+    ma20: number | null;
+    ma60: number | null;
+  };
+
+  const getLineValues = (): TrendValues | MaValues | null => {
+    const src = overlay ?? null;
+    if (src?.trendLine != null) {
+      return { type: "trend", trend: src.trendLine, dk: src.dkLine ?? null };
+    }
+    if (src?.ma5 != null) {
+      return { type: "ma", ma5: src.ma5, ma10: src.ma10 ?? null, ma20: src.ma20 ?? null, ma60: src.ma60 ?? null };
+    }
+    if (!latestRow) return null;
+    if (period === "daily") {
+      const t = latestRow[9] as number | null;
+      const d = latestRow[10] as number | null;
+      return t != null ? { type: "trend", trend: t, dk: d } : null;
+    }
+    if (weeklyLineMode === "trend") {
+      const t = latestRow[10] as number | null;
+      const d = latestRow[11] as number | null;
+      return t != null ? { type: "trend", trend: t, dk: d } : null;
+    }
+    return {
+      type: "ma",
+      ma5: latestRow[6] as number | null,
+      ma10: latestRow[7] as number | null,
+      ma20: latestRow[8] as number | null,
+      ma60: latestRow[9] as number | null,
+    };
+  };
+  const lineValues = getLineValues();
+
   return (
     <PageTransition>
       <div className="h-[calc(100vh-48px-4rem)] sm:h-[calc(100vh-48px)] flex flex-col">
@@ -169,6 +212,52 @@ export function Component() {
             </div>
           ) : klineData?.data?.length ? (
             <>
+              {/* Persistent indicator values */}
+              {lineValues && !isLoading && (
+                <div className="absolute top-1 left-11 sm:left-16 z-10 flex items-center gap-2 sm:gap-3 text-[10px] sm:text-xs font-mono pointer-events-none">
+                  {lineValues.type === "trend" ? (
+                    <>
+                      <span>
+                        <span className="text-ink-muted">趋势 </span>
+                        <span style={{ color: chartColors.trend }}>
+                          {lineValues.trend.toFixed(2)}
+                        </span>
+                      </span>
+                      {lineValues.dk != null && (
+                        <span>
+                          <span className="text-ink-muted">多空 </span>
+                          <span style={{ color: chartColors.dk }}>
+                            {lineValues.dk.toFixed(2)}
+                          </span>
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {lineValues.ma5 != null && (
+                        <span style={{ color: chartColors.ma5 }}>
+                          MA5:{lineValues.ma5.toFixed(2)}
+                        </span>
+                      )}
+                      {lineValues.ma10 != null && (
+                        <span style={{ color: chartColors.ma10 }}>
+                          MA10:{lineValues.ma10.toFixed(2)}
+                        </span>
+                      )}
+                      {lineValues.ma20 != null && (
+                        <span style={{ color: chartColors.ma20 }}>
+                          MA20:{lineValues.ma20.toFixed(2)}
+                        </span>
+                      )}
+                      {lineValues.ma60 != null && (
+                        <span style={{ color: chartColors.ma60 }}>
+                          MA60:{lineValues.ma60.toFixed(2)}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
               <KlineChart
                 data={klineData.data}
                 period={period}
