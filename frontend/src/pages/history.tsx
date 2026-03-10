@@ -111,24 +111,24 @@ function DateRow({
   onToggle: () => void;
   onStockClick: (stock: SignalStock) => void;
 }) {
-  const categoryEntries = Object.entries(result.category_count);
+  const categoryEntries = Object.entries(result.category_count ?? {});
 
   return (
     <div>
       <motion.button
         onClick={onToggle}
-        className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl hover:bg-elevated transition-colors duration-150 text-left"
+        className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 sm:py-3.5 rounded-xl hover:bg-elevated transition-colors duration-150 text-left"
       >
         <ChevronIcon expanded={expanded} />
-        <span className="font-medium text-ink">{result.run_date}</span>
-        <span className="text-sm text-ink-muted tabular-nums">
-          {result.total} 只
+        <span className="font-medium text-sm sm:text-base text-ink shrink-0">{result.run_date}</span>
+        <span className="text-xs sm:text-sm text-ink-muted tabular-nums shrink-0">
+          {result.total}只
         </span>
-        <div className="flex items-center gap-1.5 ml-auto">
+        <div className="flex items-center gap-1 sm:gap-1.5 ml-auto overflow-hidden">
           {categoryEntries.map(([cat, count]) => (
             <span
               key={cat}
-              className="text-xs bg-inset text-ink-muted px-2 py-0.5 rounded-md"
+              className="text-[10px] sm:text-xs bg-inset text-ink-muted px-1.5 sm:px-2 py-0.5 rounded-md whitespace-nowrap"
             >
               {CATEGORY_LABELS[cat] ?? cat} {count}
             </span>
@@ -145,7 +145,7 @@ function DateRow({
             transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
             className="overflow-hidden"
           >
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3 px-4 pb-4 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3 px-3 sm:px-4 pb-4 pt-1">
               {result.stocks.map((stock) => (
                 <SignalCard
                   key={stock.code}
@@ -190,9 +190,9 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-semibold text-ink">历史记录</h1>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-8">
+        <div className="flex items-center justify-between mb-4 sm:mb-6">
+          <h1 className="text-xl sm:text-2xl font-semibold text-ink">历史记录</h1>
           <div className="relative">
             <select
               value={selectedViewId ?? ""}

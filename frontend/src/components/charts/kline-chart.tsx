@@ -90,9 +90,14 @@ function buildOption(
     ((dataLen - defaultVisible) / dataLen) * 100,
   );
 
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
+  const gridLeft = isMobile ? 40 : 60;
+  const gridRight = isMobile ? 10 : 60;
+  const labelFontSize = isMobile ? 10 : 11;
+
   const commonAxisLabel = {
     color: AXIS_TEXT,
-    fontSize: 11,
+    fontSize: labelFontSize,
   } as const;
 
   const commonSplitLine = {
@@ -102,13 +107,13 @@ function buildOption(
 
   const grids: echarts.GridComponentOption[] = isDaily
     ? [
-        { left: 60, right: 60, top: 30, height: "50%" },
-        { left: 60, right: 60, top: "58%", height: "12%" },
-        { left: 60, right: 60, top: "73%", height: "18%" },
+        { left: gridLeft, right: gridRight, top: 30, height: "50%" },
+        { left: gridLeft, right: gridRight, top: "58%", height: "12%" },
+        { left: gridLeft, right: gridRight, top: "73%", height: "18%" },
       ]
     : [
-        { left: 60, right: 60, top: 30, height: "65%" },
-        { left: 60, right: 60, top: "73%", height: "16%" },
+        { left: gridLeft, right: gridRight, top: 30, height: "65%" },
+        { left: gridLeft, right: gridRight, top: "73%", height: "16%" },
       ];
 
   const xAxes: echarts.XAXisComponentOption[] = isDaily

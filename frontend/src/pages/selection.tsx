@@ -572,12 +572,12 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="max-w-6xl mx-auto px-6 py-8 space-y-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-8 space-y-6 sm:space-y-8">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-ink">智能选股</h1>
-            <p className="text-ink-secondary text-sm mt-1">
+            <h1 className="text-xl sm:text-2xl font-semibold text-ink">智能选股</h1>
+            <p className="text-ink-secondary text-xs sm:text-sm mt-1">
               管理选股视图、调整参数并运行策略
             </p>
           </div>
