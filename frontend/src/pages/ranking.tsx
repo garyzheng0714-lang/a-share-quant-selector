@@ -6,7 +6,7 @@ import { Card, Skeleton, Badge, ProgressBar, CopyButton } from "@/components/ui"
 import { EmptyState } from "@/components/onboarding";
 import { useRanking } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
-import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT } from "@/lib/tokens";
+import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT, duration, ease } from "@/lib/tokens";
 import type { RankingStock } from "@/lib/api";
 
 const FILTERS: { key: string; label: string }[] = [
@@ -104,12 +104,12 @@ function RankingCard({
             {score.toFixed(0)}
           </span>
         </div>
-        <div className="h-1.5 bg-inset rounded-full overflow-hidden">
+        <div className="h-1.5 bg-elevated rounded-full overflow-hidden">
           <motion.div
             className={`h-full rounded-full ${scoreColor(score)}`}
             initial={{ width: 0 }}
             animate={{ width: `${Math.min(100, score)}%` }}
-            transition={{ duration: 0.5, ease: [0.25, 0.1, 0.25, 1] }}
+            transition={{ duration: duration.slow, ease: [...ease.default] }}
           />
         </div>
       </div>
@@ -246,7 +246,7 @@ export function Component() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
+              transition={{ duration: duration.fast }}
               className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3 sm:gap-4"
             >
               {filtered.map((stock, i) => (

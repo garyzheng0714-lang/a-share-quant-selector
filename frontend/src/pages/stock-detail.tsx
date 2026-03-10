@@ -6,6 +6,7 @@ import { KlineChart, type KlineOverlay } from "@/components/charts/kline-chart";
 import { Button, CopyButton } from "@/components/ui";
 import { useKline } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
+import { chartColors, ease } from "@/lib/tokens";
 
 type Period = "daily" | "weekly";
 type WeeklyLineMode = "trend" | "ma";
@@ -15,9 +16,6 @@ function formatVolume(v: number): string {
   if (v >= 1e4) return (v / 1e4).toFixed(1) + "万";
   return v.toFixed(0);
 }
-
-const BULL = "#ef4444";
-const BEAR = "#22c55e";
 
 export function Component() {
   const { code } = useParams<{ code: string }>();
@@ -88,14 +86,12 @@ export function Component() {
               {!isLoading && (
                 <div className="flex items-center gap-1.5">
                   <span
-                    className="text-sm sm:text-lg font-mono font-semibold"
-                    style={{ color: isBull ? BULL : BEAR }}
+                    className={`text-sm sm:text-lg font-mono font-semibold ${isBull ? "text-bull" : "text-bear"}`}
                   >
                     {latestClose.toFixed(2)}
                   </span>
                   <span
-                    className="text-xs sm:text-sm font-mono"
-                    style={{ color: isBull ? BULL : BEAR }}
+                    className={`text-xs sm:text-sm font-mono ${isBull ? "text-bull" : "text-bear"}`}
                   >
                     {isBull ? "+" : ""}
                     {changePercent.toFixed(2)}%
@@ -122,11 +118,7 @@ export function Component() {
                     <motion.div
                       layoutId="period-indicator"
                       className="absolute inset-0 bg-elevated rounded-md -z-10"
-                      transition={{
-                        type: "spring",
-                        damping: 25,
-                        stiffness: 300,
-                      }}
+                      transition={ease.spring}
                     />
                   )}
                 </button>
@@ -138,7 +130,7 @@ export function Component() {
                 onClick={() =>
                   setWeeklyLineMode((m) => (m === "trend" ? "ma" : "trend"))
                 }
-                className="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-md bg-elevated text-ink hover:bg-[rgba(255,255,255,0.12)] transition-colors"
+                className="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-md bg-elevated text-ink hover:bg-border-hover transition-colors"
               >
                 {weeklyLineMode === "trend" ? "黄白线" : "均线"}
               </button>
@@ -188,11 +180,11 @@ export function Component() {
                       </span>
                       <span className="text-ink-secondary">
                         收{" "}
-                        <span style={{ color: overlay.change >= 0 ? BULL : BEAR }}>
+                        <span className={overlay.change >= 0 ? "text-bull" : "text-bear"}>
                           {overlay.close.toFixed(2)}
                         </span>
                       </span>
-                      <span style={{ color: overlay.change >= 0 ? BULL : BEAR }}>
+                      <span className={overlay.change >= 0 ? "text-bull" : "text-bear"}>
                         {overlay.change >= 0 ? "+" : ""}
                         {overlay.change.toFixed(2)}%
                       </span>
@@ -219,16 +211,16 @@ export function Component() {
                     ) : period === "weekly" && weeklyLineMode === "ma" ? (
                       <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-[10px] sm:text-xs font-mono mt-1">
                         {overlay.ma5 != null && (
-                          <span style={{ color: "#f59e0b" }}>MA5:{overlay.ma5.toFixed(2)}</span>
+                          <span style={{ color: chartColors.ma5 }}>MA5:{overlay.ma5.toFixed(2)}</span>
                         )}
                         {overlay.ma10 != null && (
-                          <span style={{ color: "#3b82f6" }}>MA10:{overlay.ma10.toFixed(2)}</span>
+                          <span style={{ color: chartColors.ma10 }}>MA10:{overlay.ma10.toFixed(2)}</span>
                         )}
                         {overlay.ma20 != null && (
-                          <span style={{ color: "#a855f7" }}>MA20:{overlay.ma20.toFixed(2)}</span>
+                          <span style={{ color: chartColors.ma20 }}>MA20:{overlay.ma20.toFixed(2)}</span>
                         )}
                         {overlay.ma60 != null && (
-                          <span style={{ color: "#22c55e" }}>MA60:{overlay.ma60.toFixed(2)}</span>
+                          <span style={{ color: chartColors.ma60 }}>MA60:{overlay.ma60.toFixed(2)}</span>
                         )}
                       </div>
                     ) : null}
@@ -237,9 +229,9 @@ export function Component() {
                     {period === "daily" && overlay.kdjK != null && (
                       <div className="flex items-center gap-2 sm:gap-3 text-[10px] sm:text-xs font-mono mt-1">
                         <span className="text-ink-secondary">KDJ</span>
-                        <span style={{ color: "#3b82f6" }}>K:{overlay.kdjK.toFixed(1)}</span>
-                        <span style={{ color: "#f59e0b" }}>D:{overlay.kdjD?.toFixed(1)}</span>
-                        <span style={{ color: "#ef4444" }}>J:{overlay.kdjJ?.toFixed(1)}</span>
+                        <span style={{ color: chartColors.kdjK }}>K:{overlay.kdjK.toFixed(1)}</span>
+                        <span style={{ color: chartColors.kdjD }}>D:{overlay.kdjD?.toFixed(1)}</span>
+                        <span style={{ color: chartColors.kdjJ }}>J:{overlay.kdjJ?.toFixed(1)}</span>
                       </div>
                     )}
                   </motion.div>

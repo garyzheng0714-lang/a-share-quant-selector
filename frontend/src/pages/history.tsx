@@ -5,7 +5,7 @@ import { PageTransition } from "@/components/layout/page-transition";
 import { Card, Skeleton, Badge, CopyButton } from "@/components/ui";
 import { EmptyState } from "@/components/onboarding";
 import { useViews, useViewResults } from "@/lib/hooks";
-import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT } from "@/lib/tokens";
+import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT, duration, ease } from "@/lib/tokens";
 import type { SelectionResult, SignalStock } from "@/lib/api";
 
 function formatMarketCap(value: number): string {
@@ -22,7 +22,7 @@ function ChevronIcon({ expanded }: { expanded: boolean }) {
       viewBox="0 0 16 16"
       fill="none"
       animate={{ rotate: expanded ? 90 : 0 }}
-      transition={{ duration: 0.15 }}
+      transition={{ duration: duration.fast }}
     >
       <path
         d="M6 4l4 4-4 4"
@@ -79,7 +79,7 @@ function SignalCard({
       {stock.similarity_score !== null && (
         <div className="mt-2 flex items-center gap-2">
           <span className="text-xs text-ink-muted">相似度</span>
-          <div className="flex-1 h-1 bg-inset rounded-full overflow-hidden">
+          <div className="flex-1 h-1.5 bg-elevated rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full ${
                 stock.similarity_score >= 85
@@ -144,7 +144,7 @@ function DateRow({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
+            transition={{ duration: duration.normal, ease: [...ease.default] }}
             className="overflow-hidden"
           >
             <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3 px-3 sm:px-4 pb-4 pt-1">
@@ -267,7 +267,7 @@ export function Component() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
+              transition={{ duration: duration.fast }}
               className="space-y-1"
             >
               {results.map((result) => (

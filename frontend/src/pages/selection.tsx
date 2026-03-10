@@ -8,7 +8,7 @@ import { useViews } from "@/lib/hooks";
 import { api } from "@/lib/api";
 import type { ViewData, SignalStock, SelectionResult } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
-import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT } from "@/lib/tokens";
+import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT, duration } from "@/lib/tokens";
 import { useToastStore } from "@/lib/toast-store";
 import { EmptyState } from "@/components/onboarding";
 
@@ -108,7 +108,7 @@ function SignalCard({ stock, index, onNavigate }: SignalCardProps) {
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25, delay: Math.min(index * 0.03, 0.3) }}
+      transition={{ duration: duration.fast, delay: Math.min(index * 0.03, 0.3) }}
     >
       <Card
         hoverable
@@ -288,7 +288,7 @@ function ProgressRing({ pct }: { pct: number }) {
         strokeLinecap="round"
         strokeDasharray={c}
         animate={{ strokeDashoffset: offset }}
-        transition={{ duration: 0.3 }}
+        transition={{ duration: duration.normal }}
         transform="rotate(-90 48 48)"
       />
       <text
@@ -685,7 +685,7 @@ export function Component() {
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 16 }}
-              transition={{ duration: 0.3 }}
+              transition={{ duration: duration.normal }}
               className="space-y-6"
             >
               <Card className="p-6">
@@ -777,7 +777,7 @@ export function Component() {
                     initial={{ opacity: 0, y: 16 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 16 }}
-                    transition={{ duration: 0.3 }}
+                    transition={{ duration: duration.normal }}
                     className="space-y-4"
                   >
                     {/* Summary + filters */}
