@@ -22,5 +22,12 @@ export default defineConfig(({ command }) => ({
   },
   build: {
     outDir: "dist",
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          echarts: ["echarts", "zrender"],
+        },
+      },
+    },
   },
 }));
