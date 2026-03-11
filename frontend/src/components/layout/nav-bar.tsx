@@ -52,7 +52,7 @@ export function NavBar() {
               to={item.to}
               end={item.end}
               className={({ isActive }) =>
-                `relative px-2.5 sm:px-3 py-1.5 text-sm whitespace-nowrap rounded-lg transition-colors duration-150 ${
+                `relative px-2.5 sm:px-3 py-1.5 text-sm tracking-wide whitespace-nowrap rounded-lg transition-colors duration-150 ${
                   isActive
                     ? "text-ink font-medium"
                     : "text-ink-muted hover:text-ink-secondary"

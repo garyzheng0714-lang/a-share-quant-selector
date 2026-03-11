@@ -11,15 +11,25 @@ export const duration = {
   count: 0.8,
 } as const;
 
+export const typography = {
+  heading: { letterSpacing: "-0.03em", fontWeight: 700 },
+  subheading: { letterSpacing: "-0.02em", fontWeight: 600 },
+} as const;
+
+export const stagger = {
+  fast: 0.03,
+  normal: 0.05,
+} as const;
+
 export const chartColors = {
   bull: "#ef4444",
   bear: "#22c55e",
-  axisText: "#8b95a8",
+  axisText: "#c1bec6",
   gridLine: "rgba(255,255,255,0.05)",
-  tooltipBg: "rgba(14,17,24,0.85)",
-  priceLine: "rgba(228,168,83,0.6)",
+  tooltipBg: "rgba(10,8,18,0.9)",
+  priceLine: "rgba(144,70,255,0.6)",
   trend: "#ffffff",
-  dk: "#facc15",
+  dk: "#c6a0ff",
   kdjK: "#3b82f6",
   kdjD: "#f59e0b",
   kdjJ: "#ef4444",
@@ -27,9 +37,9 @@ export const chartColors = {
   ma10: "#3b82f6",
   ma20: "#a855f7",
   ma60: "#22c55e",
-  datazoomFill: "rgba(245,158,11,0.08)",
-  datazoomHandle: "#f59e0b",
-  markLineBg: "rgba(14,17,24,0.9)",
+  datazoomFill: "rgba(144,70,255,0.08)",
+  datazoomHandle: "#9046FF",
+  markLineBg: "rgba(10,8,18,0.9)",
   datazoomBg: "rgba(255,255,255,0.03)",
   dataBackgroundLine: "rgba(148,163,184,0.15)",
   dataBackgroundArea: "rgba(148,163,184,0.05)",

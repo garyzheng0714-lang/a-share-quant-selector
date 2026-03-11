@@ -1,28 +1,29 @@
 @import "tailwindcss";
 
 @theme {
-  --color-canvas: #0b0e14;
-  --color-surface: rgba(255, 255, 255, 0.04);
-  --color-elevated: rgba(255, 255, 255, 0.08);
+  --color-canvas: #000000;
+  --color-surface: #19161d;
+  --color-elevated: #211d25;
   --color-inset: rgba(255, 255, 255, 0.03);
 
-  --color-ink: #e8ecf4;
-  --color-ink-secondary: #8b95a8;
-  --color-ink-muted: #505a6e;
-  --color-ink-inverse: #0b0e14;
+  --color-ink: #fafafa;
+  --color-ink-secondary: #c1bec6;
+  --color-ink-muted: #938f9b;
+  --color-ink-inverse: #000000;
 
-  --color-accent: #e4a853;
-  --color-accent-hover: #d49a48;
-  --color-accent-dim: oklch(0.7 0.12 75 / 0.12);
+  --color-accent: #9046ff;
+  --color-accent-hover: #7c3aed;
+  --color-accent-dim: oklch(0.5 0.15 285 / 0.12);
+  --color-accent-light: #c6a0ff;
 
   --color-bull: #ef4444;
   --color-bear: #22c55e;
   --color-bull-dim: oklch(0.55 0.18 25 / 0.12);
   --color-bear-dim: oklch(0.6 0.14 155 / 0.12);
 
-  --color-border: rgba(255, 255, 255, 0.08);
-  --color-border-hover: rgba(255, 255, 255, 0.15);
-  --color-border-focus: #e4a853;
+  --color-border: #352f3d;
+  --color-border-hover: rgba(255, 255, 255, 0.18);
+  --color-border-focus: #9046ff;
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
@@ -40,21 +41,21 @@
     @apply text-ink antialiased font-sans;
     background: linear-gradient(
       145deg,
-      #0b0e14 0%,
-      #0f1319 50%,
-      #0d1018 100%
+      #000000 0%,
+      #0a0812 50%,
+      #05030a 100%
     );
     background-attachment: fixed;
     min-height: 100vh;
   }
 
   ::selection {
-    background-color: rgba(228, 168, 83, 0.25);
+    background-color: rgba(144, 70, 255, 0.25);
   }
 
   :focus-visible {
     @apply outline-none ring-2 ring-accent/30 ring-offset-2;
-    --tw-ring-offset-color: #0b0e14;
+    --tw-ring-offset-color: #000000;
   }
 
   ::-webkit-scrollbar {
@@ -76,7 +77,7 @@
 @layer components {
   .glass {
     backdrop-filter: blur(20px) saturate(1.4);
-    background: rgba(14, 17, 24, 0.78);
+    background: rgba(10, 8, 18, 0.82);
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
 
@@ -84,16 +85,41 @@
     backdrop-filter: blur(12px) saturate(1.2);
     background: linear-gradient(
       135deg,
-      rgba(255, 255, 255, 0.05) 0%,
+      rgba(144, 70, 255, 0.04) 0%,
       rgba(255, 255, 255, 0.02) 100%
     );
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    border: 1px solid #352f3d;
   }
 
   .glass-elevated {
     backdrop-filter: blur(16px) saturate(1.3);
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(144, 70, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 40px rgba(144, 70, 255, 0.15);
+  }
+
+  .mask-fade-x {
+    mask-image: linear-gradient(
+      90deg,
+      transparent 0,
+      black 64px,
+      black calc(100% - 64px),
+      transparent
+    );
+  }
+}
+
+@keyframes fadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
