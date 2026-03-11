@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Card, Skeleton, Badge, ProgressBar, CopyButton } from "@/components/ui";
 import { EmptyState } from "@/components/onboarding";
+import { MiniSparkline } from "@/components/charts/mini-sparkline";
 import { useRanking } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
 import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT, duration, ease } from "@/lib/tokens";
@@ -53,103 +54,112 @@ function RankingCard({
 }) {
   const score = stock.similarity_score ?? 0;
   const breakdown = stock.match_breakdown;
-
   const isTop3 = rank <= 3;
 
   return (
     <Card
       hoverable
       onClick={onClick}
-      className={`p-5 ${isTop3 ? "border-accent/25" : ""}`}
+      className={`overflow-hidden ${isTop3 ? "border-accent/25" : ""}`}
     >
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <span
-            className={`text-2xl font-bold tabular-nums ${rankColor(rank)}`}
-          >
-            {rank}
-          </span>
-          <div>
-            <span className="flex items-center gap-1">
-              <span className="font-mono text-sm text-accent">{stock.code}</span>
-              <CopyButton text={stock.code} />
+      <div className="relative">
+        <MiniSparkline
+          code={stock.code}
+          className="w-full h-12 opacity-60"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-surface/30 to-surface" />
+      </div>
+
+      <div className="px-5 pb-5 pt-2">
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <span
+              className={`text-2xl font-bold tabular-nums ${rankColor(rank)}`}
+            >
+              {rank}
             </span>
-            <p className="text-sm font-medium text-ink">{stock.name}</p>
+            <div>
+              <span className="flex items-center gap-1">
+                <span className="font-mono text-sm text-accent">{stock.code}</span>
+                <CopyButton text={stock.code} />
+              </span>
+              <p className="text-sm font-medium text-ink">{stock.name}</p>
+            </div>
+          </div>
+          <Badge variant={CATEGORY_BADGE_VARIANT[stock.category] ?? "inactive"}>
+            {CATEGORY_LABELS[stock.category] ?? stock.category}
+          </Badge>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3 text-sm mb-4">
+          <div>
+            <span className="text-ink-muted text-xs">价格</span>
+            <p className="font-medium text-ink tabular-nums">
+              {stock.close.toFixed(2)}
+            </p>
+          </div>
+          <div>
+            <span className="text-ink-muted text-xs">J值</span>
+            <p className="font-medium text-ink tabular-nums">
+              {stock.J.toFixed(1)}
+            </p>
+          </div>
+          <div>
+            <span className="text-ink-muted text-xs">市值</span>
+            <p className="font-medium text-ink-secondary">
+              {formatMarketCap(stock.market_cap)}
+            </p>
           </div>
         </div>
-        <Badge variant={CATEGORY_BADGE_VARIANT[stock.category] ?? "inactive"}>
-          {CATEGORY_LABELS[stock.category] ?? stock.category}
-        </Badge>
-      </div>
 
-      <div className="grid grid-cols-3 gap-3 text-sm mb-4">
-        <div>
-          <span className="text-ink-muted text-xs">价格</span>
-          <p className="font-medium text-ink tabular-nums">
-            {stock.close.toFixed(2)}
-          </p>
-        </div>
-        <div>
-          <span className="text-ink-muted text-xs">J值</span>
-          <p className="font-medium text-ink tabular-nums">
-            {stock.J.toFixed(1)}
-          </p>
-        </div>
-        <div>
-          <span className="text-ink-muted text-xs">市值</span>
-          <p className="font-medium text-ink-secondary">
-            {formatMarketCap(stock.market_cap)}
-          </p>
-        </div>
-      </div>
-
-      <div className="mb-3">
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-xs text-ink-muted">相似度</span>
-          <span className="text-xs font-medium tabular-nums text-ink">
-            {score.toFixed(0)}
-          </span>
-        </div>
-        <div className="h-1.5 bg-elevated rounded-full overflow-hidden">
-          <motion.div
-            className={`h-full rounded-full ${scoreColor(score)}`}
-            initial={{ width: 0 }}
-            animate={{ width: `${Math.min(100, score)}%` }}
-            transition={{ duration: duration.slow, ease: [...ease.default] }}
-          />
-        </div>
-      </div>
-
-      {breakdown && Object.keys(breakdown).length > 0 && (
-        <div className="space-y-1.5 mb-3">
-          {Object.entries(breakdown).map(([key, value]) => (
-            <div key={key} className="flex items-center gap-2">
-              <span className="text-xs text-ink-muted w-8 shrink-0 text-right">
-                {BREAKDOWN_LABELS[key] ?? key}
-              </span>
-              <div className="flex-1 min-w-0">
-                <ProgressBar value={value} colorByValue />
-              </div>
-              <span className="text-xs text-ink-muted tabular-nums w-7 shrink-0 text-right">
-                {value.toFixed(0)}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {stock.views.length > 0 && (
-        <div className="flex flex-wrap gap-1 pt-2 border-t border-border">
-          {stock.views.map((v) => (
-            <span
-              key={v}
-              className="text-xs bg-inset text-ink-muted px-2 py-0.5 rounded-md"
-            >
-              {v}
+        <div className="mb-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-xs text-ink-muted">相似度</span>
+            <span className="text-xs font-medium tabular-nums text-ink">
+              {score.toFixed(0)}
             </span>
-          ))}
+          </div>
+          <div className="h-1.5 bg-elevated rounded-full overflow-hidden">
+            <motion.div
+              className={`h-full rounded-full ${scoreColor(score)}`}
+              initial={{ width: 0 }}
+              animate={{ width: `${Math.min(100, score)}%` }}
+              transition={{ duration: duration.slow, ease: [...ease.default] }}
+            />
+          </div>
         </div>
-      )}
+
+        {breakdown && Object.keys(breakdown).length > 0 && (
+          <div className="space-y-1.5 mb-3">
+            {Object.entries(breakdown).map(([key, value]) => (
+              <div key={key} className="flex items-center gap-2">
+                <span className="text-xs text-ink-muted w-8 shrink-0 text-right">
+                  {BREAKDOWN_LABELS[key] ?? key}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <ProgressBar value={value} colorByValue />
+                </div>
+                <span className="text-xs text-ink-muted tabular-nums w-7 shrink-0 text-right">
+                  {value.toFixed(0)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {stock.views.length > 0 && (
+          <div className="flex flex-wrap gap-1 pt-2 border-t border-border">
+            {stock.views.map((v) => (
+              <span
+                key={v}
+                className="text-xs bg-inset text-ink-muted px-2 py-0.5 rounded-md"
+              >
+                {v}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
     </Card>
   );
 }
@@ -158,7 +168,7 @@ function RankingSkeleton() {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4 sm:gap-5">
       {Array.from({ length: 6 }, (_, i) => (
-        <Skeleton key={i} className="h-56 w-full" />
+        <Skeleton key={i} className="h-64 w-full" />
       ))}
     </div>
   );
@@ -241,9 +251,7 @@ export function Component() {
               </svg>
             }
             title="暂无排名数据"
-            description="创建选股视图并运行策略后，综合排名将在这里展示"
-            ctaLabel="去选股"
-            onCta={() => navigate("/selection")}
+            description="运行策略后，综合排名将在这里展示"
           />
         ) : (
           <AnimatePresence mode="wait">

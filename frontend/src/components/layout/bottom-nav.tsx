@@ -4,47 +4,15 @@ import { motion } from "framer-motion";
 const navItems = [
   {
     to: "/",
-    label: "概览",
+    label: "排名",
     end: true,
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
         <path
-          d="M3 7.5L10 2.5L17 7.5V16a1 1 0 01-1 1H4a1 1 0 01-1-1V7.5z"
+          d="M10 2.5l2.47 5 5.53.8-4 3.9.94 5.5L10 14.9l-4.94 2.8.94-5.5-4-3.9 5.53-.8L10 2.5z"
           stroke="currentColor"
           strokeWidth="1.5"
           strokeLinejoin="round"
-        />
-        <path
-          d="M7.5 17V11h5v6"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    to: "/selection",
-    label: "选股",
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-        <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="1.5" />
-        <circle cx="10" cy="10" r="3" stroke="currentColor" strokeWidth="1.5" />
-        <circle cx="10" cy="10" r="0.75" fill="currentColor" />
-      </svg>
-    ),
-  },
-  {
-    to: "/stocks",
-    label: "股票",
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-        <path
-          d="M3 4h14M3 8h14M3 12h10M3 16h7"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
         />
       </svg>
     ),
@@ -65,20 +33,6 @@ const navItems = [
       </svg>
     ),
   },
-  {
-    to: "/ranking",
-    label: "排名",
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-        <path
-          d="M10 2.5l2.47 5 5.53.8-4 3.9.94 5.5L10 14.9l-4.94 2.8.94-5.5-4-3.9 5.53-.8L10 2.5z"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinejoin="round"
-        />
-      </svg>
-    ),
-  },
 ];
 
 export function BottomNav() {
@@ -92,7 +46,7 @@ export function BottomNav() {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 sm:hidden glass border-t border-border pb-[env(safe-area-inset-bottom)]">
-      <div className="grid grid-cols-5 h-14">
+      <div className="grid grid-cols-2 h-14">
         {navItems.map((item, i) => (
           <NavLink
             key={item.to}
