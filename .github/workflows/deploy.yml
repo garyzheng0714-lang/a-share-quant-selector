@@ -21,24 +21,65 @@ jobs:
             DEPLOY_DIR="/opt/a-share-quant"
             REPO="https://github.com/${{ github.repository }}.git"
 
+            # GitHub mirror proxies for China ECS
+            MIRRORS=(
+              "https://ghfast.top/"
+              "https://ghproxy.cc/"
+              "https://github.moeyy.xyz/"
+            )
+
+            fetch_with_retry() {
+              local dir="$1" repo="$2"
+              cd "$dir"
+
+              # Try direct first (short timeout)
+              echo ">>> Trying direct GitHub..."
+              if git fetch origin main --depth 1 2>/dev/null; then
+                return 0
+              fi
+
+              # Try mirrors
+              for mirror in "${MIRRORS[@]}"; do
+                echo ">>> Trying mirror: ${mirror}"
+                git remote set-url origin "${mirror}${repo#https://}"
+                if git fetch origin main --depth 1 2>/dev/null; then
+                  git remote set-url origin "$repo"
+                  return 0
+                fi
+              done
+
+              git remote set-url origin "$repo"
+              return 1
+            }
+
             # First-time setup: clone repo (preserve config)
             if [ ! -d "$DEPLOY_DIR/.git" ]; then
               echo ">>> First deploy: initializing git repo"
-              # Backup config if exists
               [ -d "$DEPLOY_DIR/config" ] && cp -r "$DEPLOY_DIR/config" /tmp/_quant_cfg_bak
 
               rm -rf "$DEPLOY_DIR"
-              git clone --depth 1 "$REPO" "$DEPLOY_DIR"
+              CLONED=false
+              for mirror in "" "${MIRRORS[@]}"; do
+                CLONE_URL="${mirror}${REPO#https://}"
+                [ -z "$mirror" ] && CLONE_URL="$REPO"
+                echo ">>> Trying clone from: ${CLONE_URL}"
+                if git clone --depth 1 "$CLONE_URL" "$DEPLOY_DIR" 2>/dev/null; then
+                  cd "$DEPLOY_DIR" && git remote set-url origin "$REPO"
+                  CLONED=true
+                  break
+                fi
+                rm -rf "$DEPLOY_DIR"
+              done
+              $CLONED || { echo ">>> All mirrors failed"; exit 1; }
 
-              # Restore config
               if [ -d "/tmp/_quant_cfg_bak" ]; then
                 cp -r /tmp/_quant_cfg_bak/* "$DEPLOY_DIR/config/" 2>/dev/null || true
                 rm -rf /tmp/_quant_cfg_bak
               fi
             else
               echo ">>> Pulling latest code"
-              cd "$DEPLOY_DIR"
-              git fetch origin main
+              GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=15 \
+                fetch_with_retry "$DEPLOY_DIR" "$REPO" || { echo ">>> All fetch attempts failed"; exit 1; }
               git reset --hard origin/main
             fi
 
