@@ -63,7 +63,14 @@ export function Component() {
     ? klineData.data[klineData.data.length - 1]
     : null;
 
-  type TrendValues = { type: "trend"; trend: number; dk: number | null };
+  type TrendValues = {
+    type: "trend";
+    trend: number;
+    dk: number | null;
+    kdjK: number | null;
+    kdjD: number | null;
+    kdjJ: number | null;
+  };
   type MaValues = {
     type: "ma";
     ma5: number | null;
@@ -75,7 +82,14 @@ export function Component() {
   const getLineValues = (): TrendValues | MaValues | null => {
     const src = overlay ?? null;
     if (src?.trendLine != null) {
-      return { type: "trend", trend: src.trendLine, dk: src.dkLine ?? null };
+      return {
+        type: "trend",
+        trend: src.trendLine,
+        dk: src.dkLine ?? null,
+        kdjK: src.kdjK ?? null,
+        kdjD: src.kdjD ?? null,
+        kdjJ: src.kdjJ ?? null,
+      };
     }
     if (src?.ma5 != null) {
       return { type: "ma", ma5: src.ma5, ma10: src.ma10 ?? null, ma20: src.ma20 ?? null, ma60: src.ma60 ?? null };
@@ -84,12 +98,21 @@ export function Component() {
     if (period === "daily") {
       const t = latestRow[9] as number | null;
       const d = latestRow[10] as number | null;
-      return t != null ? { type: "trend", trend: t, dk: d } : null;
+      return t != null
+        ? {
+            type: "trend",
+            trend: t,
+            dk: d,
+            kdjK: latestRow[6] as number | null,
+            kdjD: latestRow[7] as number | null,
+            kdjJ: latestRow[8] as number | null,
+          }
+        : null;
     }
     if (weeklyLineMode === "trend") {
       const t = latestRow[10] as number | null;
       const d = latestRow[11] as number | null;
-      return t != null ? { type: "trend", trend: t, dk: d } : null;
+      return t != null ? { type: "trend", trend: t, dk: d, kdjK: null, kdjD: null, kdjJ: null } : null;
     }
     return {
       type: "ma",
@@ -230,6 +253,23 @@ export function Component() {
                             {lineValues.dk.toFixed(2)}
                           </span>
                         </span>
+                      )}
+                      {lineValues.kdjK != null && (
+                        <>
+                          <span style={{ color: chartColors.kdjK }}>
+                            K:{lineValues.kdjK.toFixed(1)}
+                          </span>
+                          {lineValues.kdjD != null && (
+                            <span style={{ color: chartColors.kdjD }}>
+                              D:{lineValues.kdjD.toFixed(1)}
+                            </span>
+                          )}
+                          {lineValues.kdjJ != null && (
+                            <span style={{ color: chartColors.kdjJ }}>
+                              J:{lineValues.kdjJ.toFixed(1)}
+                            </span>
+                          )}
+                        </>
                       )}
                     </>
                   ) : (
