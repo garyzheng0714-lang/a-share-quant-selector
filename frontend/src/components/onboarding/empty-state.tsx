@@ -25,7 +25,7 @@ export function EmptyState({
       transition={{ duration: duration.normal, ease: ease.default }}
       className="flex flex-col items-center py-12 sm:py-16 px-4"
     >
-      <div className="glass-card w-14 h-14 rounded-2xl flex items-center justify-center mb-5 text-ink-muted">
+      <div className="bg-elevated w-14 h-14 rounded-2xl flex items-center justify-center mb-5 text-ink-muted">
         {icon}
       </div>
       <h3 className="text-sm font-semibold text-ink mb-1.5">{title}</h3>

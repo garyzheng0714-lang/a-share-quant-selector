@@ -128,7 +128,7 @@ export function Component() {
     <PageTransition>
       <div className="h-[calc(100vh-48px-4rem)] sm:h-[calc(100vh-48px)] flex flex-col">
         {/* Header */}
-        <div className="px-3 sm:px-6 py-2 sm:py-3 border-b border-border glass-elevated">
+        <div className="px-3 sm:px-6 py-2 sm:py-3 border-b border-border bg-surface">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 sm:gap-4 min-w-0">
               <button
@@ -166,7 +166,7 @@ export function Component() {
               )}
             </div>
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            <div className="flex items-center gap-0.5 bg-inset rounded-lg p-0.5">
+            <div className="flex items-center gap-0.5 bg-inset rounded-xl p-0.5">
               {(["daily", "weekly"] as Period[]).map((p) => (
                 <button
                   key={p}
@@ -396,7 +396,7 @@ export function Component() {
 
         {/* Bottom navigation */}
         {hasNav && (
-          <div className="flex items-center justify-between px-3 sm:px-6 py-2 sm:py-3 border-t border-border glass-elevated">
+          <div className="flex items-center justify-between px-3 sm:px-6 py-2 sm:py-3 border-t border-border bg-surface">
             <Button
               variant="ghost"
               size="sm"

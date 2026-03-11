@@ -36,25 +36,25 @@ export function NavBar() {
 
   return (
     <motion.header
-      className="fixed top-0 left-0 right-0 z-50 glass"
-      animate={{ y: hidden ? -48 : 0 }}
+      className="fixed top-3 left-1/2 -translate-x-1/2 z-50 nav-island"
+      animate={{ y: hidden ? -60 : 0, opacity: hidden ? 0 : 1 }}
       transition={{ type: "spring", damping: 30, stiffness: 300 }}
     >
-      <nav className="max-w-7xl mx-auto h-12 px-3 sm:px-6 flex items-center gap-2 sm:gap-0 sm:justify-between overflow-x-auto scrollbar-none">
-        <span className="text-sm font-semibold shrink-0 tracking-tight sm:mr-6">
+      <nav className="flex items-center h-11 px-2 gap-1">
+        <span className="px-3 text-sm font-semibold tracking-tight shrink-0">
           <span className="text-accent">QS</span>
-          <span className="hidden sm:inline text-ink">elect</span>
+          <span className="text-ink">elect</span>
         </span>
-        <div className="relative hidden sm:flex items-center shrink-0">
+        <div className="hidden sm:flex items-center">
           {navItems.map((item, i) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.end}
               className={({ isActive }) =>
-                `relative px-2.5 sm:px-3 py-1.5 text-sm tracking-wide whitespace-nowrap rounded-lg transition-colors duration-150 ${
+                `relative px-3 py-1.5 text-[13px] font-medium tracking-[0.02em] uppercase whitespace-nowrap rounded-xl transition-colors duration-150 ${
                   isActive
-                    ? "text-ink font-medium"
+                    ? "text-ink"
                     : "text-ink-muted hover:text-ink-secondary"
                 }`
               }
@@ -63,7 +63,7 @@ export function NavBar() {
               {i === activeIndex && (
                 <motion.div
                   layoutId="nav-indicator"
-                  className="absolute inset-0 rounded-lg -z-10 bg-elevated"
+                  className="absolute inset-0 rounded-xl -z-10 bg-white/10"
                   transition={{
                     type: "spring",
                     damping: 25,
@@ -74,7 +74,7 @@ export function NavBar() {
             </NavLink>
           ))}
         </div>
-        <div className="ml-auto shrink-0">
+        <div className="ml-2 shrink-0">
           <SchedulerDot />
         </div>
       </nav>

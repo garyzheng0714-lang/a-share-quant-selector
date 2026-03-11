@@ -12,7 +12,7 @@ export function RootLayout() {
   return (
     <>
       <NavBar />
-      <main className="pt-12 pb-16 sm:pb-0 min-h-screen">
+      <main className="pt-16 pb-16 sm:pb-0 min-h-screen">
         <AnimatePresence mode="wait">
           <Outlet />
         </AnimatePresence>

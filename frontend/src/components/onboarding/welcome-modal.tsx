@@ -128,7 +128,7 @@ export function WelcomeModal({ onDismiss }: WelcomeModalProps) {
         animate={{ scale: 1, y: 0 }}
         exit={{ scale: 0.96, y: 12 }}
         transition={ease.spring}
-        className="glass-elevated glow-accent relative w-full max-w-md rounded-3xl p-6 sm:p-8 shadow-float"
+        className="solid-card relative w-full max-w-md rounded-[32px] p-6 sm:p-8 shadow-float"
       >
         {/* Skip button */}
         <button
@@ -149,7 +149,7 @@ export function WelcomeModal({ onDismiss }: WelcomeModalProps) {
               transition={{ duration: duration.fast }}
               className="flex flex-col items-center"
             >
-              <div className="glass-card w-16 h-16 rounded-2xl flex items-center justify-center mb-6 text-ink-secondary">
+              <div className="bg-elevated w-16 h-16 rounded-2xl flex items-center justify-center mb-6 text-ink-secondary">
                 {current.icon}
               </div>
               <h2 className="text-lg font-semibold text-ink mb-2">

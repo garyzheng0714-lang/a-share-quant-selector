@@ -119,7 +119,7 @@ function DateRow({
     <div>
       <motion.button
         onClick={onToggle}
-        className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 sm:py-3.5 rounded-xl hover:bg-elevated transition-colors duration-150 text-left"
+        className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 sm:py-3.5 rounded-[16px] hover:bg-elevated transition-colors duration-150 text-left"
       >
         <ChevronIcon expanded={expanded} />
         <span className="font-medium text-sm sm:text-base text-ink shrink-0">{result.run_date}</span>
@@ -147,7 +147,7 @@ function DateRow({
             transition={{ duration: duration.normal, ease: [...ease.default] }}
             className="overflow-hidden"
           >
-            <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3 px-3 sm:px-4 pb-4 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 sm:gap-5 px-3 sm:px-4 pb-4 pt-1">
               {result.stocks.map((stock) => (
                 <SignalCard
                   key={stock.code}
@@ -192,9 +192,9 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-8">
-        <div className="flex items-center justify-between mb-4 sm:mb-6">
-          <h1 className="text-xl sm:text-2xl font-semibold text-ink">历史记录</h1>
+      <div className="max-w-6xl mx-auto px-5 sm:px-8 lg:px-16 py-6 sm:py-12">
+        <div className="flex items-center justify-between mb-6 sm:mb-8">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-[-0.03em] text-ink">历史记录</h1>
           <div className="relative">
             <select
               value={selectedViewId ?? ""}
@@ -203,7 +203,7 @@ export function Component() {
                 setSelectedViewId(val ? Number(val) : null);
                 setExpandedDate(null);
               }}
-              className="h-10 pl-3 pr-8 bg-inset rounded-xl text-sm text-ink border border-border appearance-none cursor-pointer transition-all duration-150 focus:border-border-focus focus:ring-2 focus:ring-accent/10"
+              className="h-10 pl-3 pr-8 bg-elevated rounded-[16px] text-sm text-ink border border-border appearance-none cursor-pointer transition-all duration-150 focus:border-border-focus focus:ring-2 focus:ring-accent/10"
             >
               {!views?.length && (
                 <option value="">加载中...</option>
