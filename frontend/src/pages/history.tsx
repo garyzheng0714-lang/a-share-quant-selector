@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { PageTransition } from "@/components/layout/page-transition";
-import { Card, Skeleton, Badge, CopyButton } from "@/components/ui";
+import { Skeleton, Badge, CopyButton } from "@/components/ui";
 import { EmptyState } from "@/components/onboarding";
 import { useViews, useViewResults } from "@/lib/hooks";
 import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT, duration, ease } from "@/lib/tokens";
@@ -35,70 +35,78 @@ function ChevronIcon({ expanded }: { expanded: boolean }) {
   );
 }
 
-function SignalCard({
+function StockRow({
   stock,
   onClick,
 }: {
   stock: SignalStock;
   onClick: () => void;
 }) {
+  const score = stock.similarity_score;
+
   return (
-    <Card hoverable onClick={onClick} className="p-4">
-      <div className="flex items-center justify-between mb-2">
-        <div>
-          <span className="font-mono text-sm text-accent">{stock.code}</span>
-          <CopyButton text={stock.code} />
-          <span className="text-sm font-medium text-ink ml-2">
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-3 px-3 sm:px-4 py-2 sm:py-2.5 hover:bg-elevated active:bg-inset transition-colors duration-100 text-left group"
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm font-medium text-ink truncate">
             {stock.name}
           </span>
+          <span className="font-mono text-xs text-ink-muted">{stock.code}</span>
+          <CopyButton text={stock.code} />
         </div>
-        <Badge variant={CATEGORY_BADGE_VARIANT[stock.category] ?? "inactive"}>
-          {CATEGORY_LABELS[stock.category] ?? stock.category}
-        </Badge>
-      </div>
-      <div className="grid grid-cols-3 gap-2 text-sm">
-        <div>
-          <span className="text-ink-muted text-xs">价格</span>
-          <p className="font-medium text-ink tabular-nums">
+        <div className="flex items-center gap-3 mt-0.5">
+          <span className="text-xs text-ink-muted tabular-nums">
             {stock.close.toFixed(2)}
-          </p>
-        </div>
-        <div>
-          <span className="text-ink-muted text-xs">J值</span>
-          <p className="font-medium text-ink tabular-nums">
-            {stock.J.toFixed(1)}
-          </p>
-        </div>
-        <div>
-          <span className="text-ink-muted text-xs">市值</span>
-          <p className="font-medium text-ink-secondary">
+          </span>
+          <span className="text-xs text-ink-muted tabular-nums">
+            J {stock.J.toFixed(1)}
+          </span>
+          <span className="text-xs text-ink-muted">
             {formatMarketCap(stock.market_cap)}
-          </p>
-        </div>
-      </div>
-      {stock.similarity_score !== null && (
-        <div className="mt-2 flex items-center gap-2">
-          <span className="text-xs text-ink-muted">相似度</span>
-          <div className="flex-1 h-1.5 bg-elevated rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full ${
-                stock.similarity_score >= 85
-                  ? "bg-bear"
-                  : stock.similarity_score >= 60
-                    ? "bg-accent"
-                    : "bg-ink-muted"
-              }`}
-              style={{
-                width: `${Math.min(100, stock.similarity_score)}%`,
-              }}
-            />
-          </div>
-          <span className="text-xs text-ink-muted tabular-nums w-7 text-right">
-            {stock.similarity_score.toFixed(0)}
           </span>
         </div>
+      </div>
+
+      <Badge
+        variant={CATEGORY_BADGE_VARIANT[stock.category] ?? "inactive"}
+        className="hidden sm:inline-flex shrink-0"
+      >
+        {CATEGORY_LABELS[stock.category] ?? stock.category}
+      </Badge>
+
+      {score !== null && (
+        <span
+          className={`text-xs font-medium tabular-nums shrink-0 ${
+            score >= 85
+              ? "text-bear"
+              : score >= 60
+                ? "text-accent"
+                : "text-ink-muted"
+          }`}
+        >
+          {score.toFixed(0)}
+        </span>
       )}
-    </Card>
+
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 14 14"
+        fill="none"
+        className="text-ink-muted/50 shrink-0 group-hover:text-ink-muted transition-colors"
+      >
+        <path
+          d="M5.25 3.5L8.75 7l-3.5 3.5"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
   );
 }
 
@@ -119,11 +127,13 @@ function DateRow({
     <div>
       <motion.button
         onClick={onToggle}
-        className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 sm:py-3.5 rounded-[16px] hover:bg-elevated transition-colors duration-150 text-left"
+        className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 rounded-xl hover:bg-elevated transition-colors duration-150 text-left"
       >
         <ChevronIcon expanded={expanded} />
-        <span className="font-medium text-sm sm:text-base text-ink shrink-0">{result.run_date}</span>
-        <span className="text-xs sm:text-sm text-ink-muted tabular-nums shrink-0">
+        <span className="font-medium text-sm text-ink shrink-0">
+          {result.run_date}
+        </span>
+        <span className="text-xs text-ink-muted tabular-nums shrink-0">
           {result.total}只
         </span>
         <div className="hidden sm:flex items-center gap-1.5 ml-auto">
@@ -147,9 +157,9 @@ function DateRow({
             transition={{ duration: duration.normal, ease: [...ease.default] }}
             className="overflow-hidden"
           >
-            <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 sm:gap-5 px-3 sm:px-4 pb-4 pt-1">
+            <div className="divide-y divide-border/30 ml-6 mr-2 mb-3 border-l border-border/40 pl-1">
               {result.stocks.map((stock) => (
-                <SignalCard
+                <StockRow
                   key={stock.code}
                   stock={stock}
                   onClick={() => onStockClick(stock)}
@@ -167,7 +177,7 @@ function HistorySkeleton() {
   return (
     <div className="space-y-2">
       {Array.from({ length: 5 }, (_, i) => (
-        <Skeleton key={i} className="h-14 w-full" />
+        <Skeleton key={i} className="h-12 w-full rounded-xl" />
       ))}
     </div>
   );
@@ -192,9 +202,11 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="max-w-6xl mx-auto px-5 sm:px-8 lg:px-16 py-6 sm:py-12">
-        <div className="flex items-center justify-between mb-6 sm:mb-8">
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-[-0.03em] text-ink">历史记录</h1>
+      <div className="max-w-3xl mx-auto px-4 sm:px-8 py-6 sm:py-10">
+        <div className="flex items-center justify-between mb-5 sm:mb-6">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-[-0.03em] text-ink">
+            历史记录
+          </h1>
           <div className="relative">
             <select
               value={selectedViewId ?? ""}
@@ -203,11 +215,9 @@ export function Component() {
                 setSelectedViewId(val ? Number(val) : null);
                 setExpandedDate(null);
               }}
-              className="h-10 pl-3 pr-8 bg-elevated rounded-[16px] text-sm text-ink border border-border appearance-none cursor-pointer transition-all duration-150 focus:border-border-focus focus:ring-2 focus:ring-accent/10"
+              className="h-9 pl-3 pr-7 bg-elevated rounded-full text-xs sm:text-sm text-ink border border-border appearance-none cursor-pointer transition-all duration-150 focus:border-border-focus focus:ring-2 focus:ring-accent/10"
             >
-              {!views?.length && (
-                <option value="">加载中...</option>
-              )}
+              {!views?.length && <option value="">加载中...</option>}
               {views?.map((v) => (
                 <option key={v.id} value={v.id}>
                   {v.name}
@@ -216,8 +226,8 @@ export function Component() {
             </select>
             <svg
               className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-ink-muted"
-              width="14"
-              height="14"
+              width="12"
+              height="12"
               viewBox="0 0 14 14"
               fill="none"
             >
@@ -239,8 +249,22 @@ export function Component() {
             <EmptyState
               icon={
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                  <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" strokeWidth="1.5" />
-                  <path d="M9 12l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  <rect
+                    x="3"
+                    y="3"
+                    width="18"
+                    height="18"
+                    rx="3"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  />
+                  <path
+                    d="M9 12l2 2 4-4"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
               }
               title="请选择一个视图"
@@ -250,25 +274,35 @@ export function Component() {
             <EmptyState
               icon={
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
-                  <path d="M12 7v5l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="9"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  />
+                  <path
+                    d="M12 7v5l3 3"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
               }
               title="暂无历史记录"
               description="运行选股策略后，每次结果会自动保存在这里"
-              ctaLabel="去选股"
-              onCta={() => navigate("/selection")}
             />
           )
         ) : (
           <AnimatePresence mode="wait">
             <motion.div
               key={selectedViewId}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: duration.fast }}
-              className="space-y-1"
+              className="space-y-0.5"
             >
               {results.map((result) => (
                 <DateRow
