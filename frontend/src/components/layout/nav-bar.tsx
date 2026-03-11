@@ -1,13 +1,10 @@
 import { motion, useMotionValueEvent, useScroll } from "framer-motion";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, Link } from "react-router-dom";
 import { useState, useRef } from "react";
 
 const navItems = [
-  { to: "/", label: "概览", end: true },
-  { to: "/selection", label: "选股" },
-  { to: "/stocks", label: "股票" },
+  { to: "/", label: "排名", end: true },
   { to: "/history", label: "历史" },
-  { to: "/ranking", label: "排名" },
 ];
 
 export function NavBar() {
@@ -41,10 +38,10 @@ export function NavBar() {
       transition={{ type: "spring", damping: 30, stiffness: 300 }}
     >
       <nav className="flex items-center h-11 px-2 gap-1">
-        <span className="px-3 text-sm font-semibold tracking-tight shrink-0">
+        <Link to="/" className="px-3 text-sm font-semibold tracking-tight shrink-0 hover:opacity-80 transition-opacity">
           <span className="text-accent">QS</span>
           <span className="text-ink">elect</span>
-        </span>
+        </Link>
         <div className="hidden sm:flex items-center">
           {navItems.map((item, i) => (
             <NavLink

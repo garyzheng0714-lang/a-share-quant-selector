@@ -3,12 +3,8 @@ import { AnimatePresence } from "framer-motion";
 import { NavBar } from "./nav-bar";
 import { BottomNav } from "./bottom-nav";
 import { ToastContainer } from "@/components/ui/toast";
-import { WelcomeModal } from "@/components/onboarding";
-import { useOnboardingState } from "@/lib/onboarding";
 
 export function RootLayout() {
-  const { welcomeDismissed, dismissWelcome } = useOnboardingState();
-
   return (
     <>
       <NavBar />
@@ -19,9 +15,6 @@ export function RootLayout() {
       </main>
       <BottomNav />
       <ToastContainer />
-      <AnimatePresence>
-        {!welcomeDismissed && <WelcomeModal onDismiss={dismissWelcome} />}
-      </AnimatePresence>
     </>
   );
 }
