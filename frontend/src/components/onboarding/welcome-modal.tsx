@@ -128,7 +128,7 @@ export function WelcomeModal({ onDismiss }: WelcomeModalProps) {
         animate={{ scale: 1, y: 0 }}
         exit={{ scale: 0.96, y: 12 }}
         transition={ease.spring}
-        className="glass-elevated relative w-full max-w-md rounded-2xl p-6 sm:p-8 shadow-float"
+        className="glass-elevated glow-accent relative w-full max-w-md rounded-3xl p-6 sm:p-8 shadow-float"
       >
         {/* Skip button */}
         <button

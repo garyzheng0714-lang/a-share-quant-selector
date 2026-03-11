@@ -578,7 +578,7 @@ export function Component() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl sm:text-2xl font-semibold text-ink">智能选股</h1>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-ink">智能选股</h1>
             <p className="text-ink-secondary text-xs sm:text-sm mt-1">
               管理选股视图、调整参数并运行策略
             </p>

@@ -47,9 +47,9 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
         <div className="flex items-baseline justify-between mb-4 sm:mb-8">
-          <h1 className="text-xl sm:text-2xl font-semibold text-ink">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-ink">
             今日选股概览
           </h1>
           <span className="text-xs sm:text-sm text-ink-muted">
@@ -80,7 +80,7 @@ export function Component() {
         </div>
 
         <h2 className="text-lg font-medium text-ink mb-4">最新排名信号</h2>
-        <div className="space-y-2">
+        <div className="space-y-3">
           {rankingLoading ? (
             Array.from({ length: 5 }).map((_, i) => (
               <Skeleton key={i} className="h-14 rounded-xl" />
@@ -201,7 +201,7 @@ function StatCard({
           className="absolute top-0 left-0 right-0 h-px"
           style={{
             background:
-              "linear-gradient(90deg, transparent, rgba(228,168,83,0.5), transparent)",
+              "linear-gradient(90deg, transparent, rgba(144,70,255,0.5), transparent)",
           }}
         />
       )}
