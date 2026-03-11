@@ -134,7 +134,7 @@ function DateRow({
           {result.run_date}
         </span>
         <span className="text-xs text-ink-muted tabular-nums shrink-0">
-          {result.total}只
+          {result.total || result.stocks.length}只
         </span>
         <div className="hidden sm:flex items-center gap-1.5 ml-auto">
           {categoryEntries.map(([cat, count]) => (
