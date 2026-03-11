@@ -43,7 +43,7 @@ function StockRow({ stock, onClick }: { stock: StockItem; onClick: () => void })
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       onClick={onClick}
-      className="group grid grid-cols-[5rem_1fr_5rem] sm:grid-cols-[7rem_2fr_1fr_1fr_1fr] items-center h-11 sm:h-12 px-3 sm:px-4 border-l-2 border-transparent hover:bg-elevated hover:border-accent transition-colors duration-150 cursor-pointer rounded-lg"
+      className="group grid grid-cols-[5rem_1fr_5rem] sm:grid-cols-[7rem_2fr_1fr_1fr_1fr] items-center h-11 sm:h-12 px-3 sm:px-4 border-l-2 border-transparent hover:bg-surface-hover hover:border-accent transition-colors duration-150 cursor-pointer rounded-lg"
     >
       <span className="font-mono text-xs sm:text-sm text-accent">
         {stock.code}
@@ -93,7 +93,7 @@ function ListSkeleton() {
 
 function GridSkeleton() {
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3 sm:gap-4">
+    <div className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4 sm:gap-5">
       {Array.from({ length: 8 }, (_, i) => (
         <Skeleton key={i} className="h-28 w-full" />
       ))}
@@ -122,9 +122,9 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-8">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between mb-4 sm:mb-6">
-          <h1 className="text-xl sm:text-2xl font-semibold text-ink">股票列表</h1>
+      <div className="max-w-6xl mx-auto px-5 sm:px-8 lg:px-16 py-6 sm:py-12">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between mb-6 sm:mb-8">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-[-0.03em] text-ink">股票列表</h1>
           <div className="flex items-center gap-2">
             <div className="flex-1 sm:w-56">
               <Input
@@ -133,7 +133,7 @@ export function Component() {
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
-            <div className="flex items-center bg-inset rounded-xl p-1 shrink-0">
+            <div className="flex items-center bg-inset rounded-[16px] p-1 shrink-0">
               <button
                 onClick={() => viewMode !== "list" && toggleViewMode()}
                 className={`p-2 rounded-lg transition-colors duration-150 ${
@@ -197,14 +197,24 @@ export function Component() {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: duration.fast }}
-                  className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3 sm:gap-4"
+                  className="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4 sm:gap-5"
                 >
-                  {filtered.map((stock) => (
-                    <StockCard
+                  {filtered.map((stock, i) => (
+                    <motion.div
                       key={stock.code}
-                      stock={stock}
-                      onClick={() => navigate(`/stock/${stock.code}`)}
-                    />
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{
+                        duration: 0.2,
+                        delay: Math.min(i * 0.04, 0.5),
+                        ease: [0.25, 0.1, 0.25, 1],
+                      }}
+                    >
+                      <StockCard
+                        stock={stock}
+                        onClick={() => navigate(`/stock/${stock.code}`)}
+                      />
+                    </motion.div>
                   ))}
                 </motion.div>
               )}

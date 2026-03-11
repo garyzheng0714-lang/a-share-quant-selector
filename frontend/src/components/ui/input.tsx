@@ -15,7 +15,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         <div className="relative">
           <input
             ref={ref}
-            className={`w-full h-10 px-3 rounded-xl text-sm text-ink bg-surface border border-border transition-all duration-150 focus:border-border-focus focus:ring-2 focus:ring-accent/15 placeholder:text-ink-muted ${suffix ? "pr-10" : ""} ${className}`}
+            className={`w-full h-10 px-3 rounded-[16px] text-sm text-ink bg-elevated border border-border transition-all duration-150 focus:border-border-focus focus:ring-2 focus:ring-accent/15 placeholder:text-ink-muted ${suffix ? "pr-10" : ""} ${className}`}
             {...props}
           />
           {suffix && (

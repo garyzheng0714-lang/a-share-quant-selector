@@ -2,8 +2,9 @@
 
 @theme {
   --color-canvas: #000000;
-  --color-surface: #19161d;
-  --color-elevated: #211d25;
+  --color-surface: #28242e;
+  --color-elevated: #19161d;
+  --color-surface-hover: #312c38;
   --color-inset: rgba(255, 255, 255, 0.03);
 
   --color-ink: #fafafa;
@@ -39,13 +40,7 @@
 @layer base {
   body {
     @apply text-ink antialiased font-sans;
-    background: linear-gradient(
-      145deg,
-      #000000 0%,
-      #0a0812 50%,
-      #05030a 100%
-    );
-    background-attachment: fixed;
+    background: #000000;
     min-height: 100vh;
   }
 
@@ -81,14 +76,14 @@
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
 
-  .glass-card {
-    backdrop-filter: blur(12px) saturate(1.2);
-    background: linear-gradient(
-      135deg,
-      rgba(144, 70, 255, 0.04) 0%,
-      rgba(255, 255, 255, 0.02) 100%
-    );
-    border: 1px solid #352f3d;
+  .solid-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .solid-card-hover:hover {
+    border-color: var(--color-border-hover);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
   }
 
   .glass-elevated {
@@ -97,8 +92,11 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
   }
 
-  .glow-accent {
-    box-shadow: 0 0 40px rgba(144, 70, 255, 0.15);
+  .nav-island {
+    background: rgba(25, 25, 25, 0.6);
+    backdrop-filter: blur(4px);
+    border: 1px solid #352f3d;
+    border-radius: 18px;
   }
 
   .mask-fade-x {

@@ -1,3 +1,4 @@
+import { motion } from "framer-motion";
 import { PageTransition } from "@/components/layout/page-transition";
 import {
   Card,
@@ -47,9 +48,9 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
-        <div className="flex items-baseline justify-between mb-4 sm:mb-8">
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-ink">
+      <div className="max-w-6xl mx-auto px-5 sm:px-8 lg:px-16 py-6 sm:py-12">
+        <div className="flex items-baseline justify-between mb-6 sm:mb-8">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-[-0.03em] text-ink">
             今日选股概览
           </h1>
           <span className="text-xs sm:text-sm text-ink-muted">
@@ -61,7 +62,7 @@ export function Component() {
           <WorkflowGuideBanner />
         </div>
 
-        <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6 sm:mb-10">
+        <div className="grid grid-cols-3 gap-4 sm:gap-5 mb-6 sm:mb-10">
           {statsLoading ? (
             Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className="h-24 rounded-2xl" />
@@ -83,7 +84,7 @@ export function Component() {
         <div className="space-y-3">
           {rankingLoading ? (
             Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-14 rounded-xl" />
+              <Skeleton key={i} className="h-14 rounded-[32px]" />
             ))
           ) : topStocks.length === 0 ? (
             <EmptyState
@@ -105,10 +106,19 @@ export function Component() {
               const changeColor =
                 stock.close > 0 ? "text-bull" : "text-bear";
               return (
-                <Card
+                <motion.div
                   key={stock.code}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{
+                    duration: 0.2,
+                    delay: Math.min(i * 0.04, 0.5),
+                    ease: [0.25, 0.1, 0.25, 1],
+                  }}
+                >
+                <Card
                   hoverable
-                  className="px-3 sm:px-5 py-2.5 sm:py-3"
+                  className="px-4 sm:px-6 py-3 sm:py-4"
                   onClick={() => handleStockClick(stock.code, i)}
                 >
                   {/* Desktop: single-row grid */}
@@ -176,6 +186,7 @@ export function Component() {
                     </div>
                   </div>
                 </Card>
+                </motion.div>
               );
             })
           )}
@@ -195,7 +206,7 @@ function StatCard({
   accent?: boolean;
 }) {
   return (
-    <Card className="p-3 sm:p-6 relative overflow-hidden">
+    <Card className="p-4 sm:p-8 relative overflow-hidden">
       {accent && (
         <div
           className="absolute top-0 left-0 right-0 h-px"
@@ -207,7 +218,7 @@ function StatCard({
       )}
       <AnimatedNumber
         value={value}
-        className={`text-xl sm:text-3xl font-mono font-semibold block ${accent ? "text-accent" : "text-ink"}`}
+        className={`text-2xl sm:text-4xl font-mono font-semibold block ${accent ? "text-accent" : "text-ink"}`}
       />
       <span className="text-xs sm:text-sm text-ink-secondary mt-0.5 sm:mt-1 block">
         {label}

@@ -108,7 +108,7 @@ function SignalCard({ stock, index, onNavigate }: SignalCardProps) {
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: duration.fast, delay: Math.min(index * 0.03, 0.3) }}
+      transition={{ duration: 0.2, delay: Math.min(index * 0.04, 0.5), ease: [0.25, 0.1, 0.25, 1] }}
     >
       <Card
         hoverable
@@ -574,11 +574,11 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-8 space-y-6 sm:space-y-8">
+      <div className="max-w-6xl mx-auto px-5 sm:px-8 lg:px-16 py-6 sm:py-12 space-y-6 sm:space-y-8">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-ink">智能选股</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-[-0.03em] text-ink">智能选股</h1>
             <p className="text-ink-secondary text-xs sm:text-sm mt-1">
               管理选股视图、调整参数并运行策略
             </p>
@@ -791,7 +791,7 @@ export function Component() {
                           共 {results.total} 只
                         </p>
                       </div>
-                      <div className="flex gap-1.5 bg-inset rounded-xl p-1">
+                      <div className="flex gap-1.5 bg-inset rounded-[16px] p-1">
                         {CATEGORY_FILTERS.map((f) => {
                           const count =
                             f.key === "all"
@@ -826,7 +826,7 @@ export function Component() {
                         </p>
                       </Card>
                     ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
                         {filteredStocks.map((stock, i) => (
                           <SignalCard
                             key={stock.code}

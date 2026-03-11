@@ -156,7 +156,7 @@ function RankingCard({
 
 function RankingSkeleton() {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3 sm:gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4 sm:gap-5">
       {Array.from({ length: 6 }, (_, i) => (
         <Skeleton key={i} className="h-56 w-full" />
       ))}
@@ -200,9 +200,9 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-8">
-        <div className="flex items-center justify-between mb-4 sm:mb-6">
-          <h1 className="text-xl sm:text-2xl font-semibold text-ink">综合排名</h1>
+      <div className="max-w-6xl mx-auto px-5 sm:px-8 lg:px-16 py-6 sm:py-12">
+        <div className="flex items-center justify-between mb-6 sm:mb-8">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-[-0.03em] text-ink">综合排名</h1>
           <div className="flex items-center gap-2">
             {runDate && (
               <span className="text-xs sm:text-sm text-ink-muted">{runDate}</span>
@@ -215,12 +215,12 @@ export function Component() {
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-2 mb-4 sm:mb-6 overflow-x-auto scrollbar-none pb-1">
+        <div className="flex items-center gap-1.5 sm:gap-2 mb-6 sm:mb-8 overflow-x-auto scrollbar-none pb-1">
           {FILTERS.map((f) => (
             <button
               key={f.key}
               onClick={() => setFilter(f.key)}
-              className={`px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm rounded-xl whitespace-nowrap shrink-0 transition-colors duration-150 ${
+              className={`px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm rounded-[16px] whitespace-nowrap shrink-0 transition-colors duration-150 ${
                 filter === f.key
                   ? "bg-accent text-ink-inverse font-medium"
                   : "bg-surface text-ink-muted hover:bg-elevated hover:text-ink-secondary"
@@ -253,15 +253,25 @@ export function Component() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
               transition={{ duration: duration.fast }}
-              className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3 sm:gap-4"
+              className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4 sm:gap-5"
             >
               {filtered.map((stock, i) => (
-                <RankingCard
+                <motion.div
                   key={stock.code}
-                  stock={stock}
-                  rank={i + 1}
-                  onClick={() => handleClick(stock, i)}
-                />
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{
+                    duration: 0.2,
+                    delay: Math.min(i * 0.04, 0.5),
+                    ease: [0.25, 0.1, 0.25, 1],
+                  }}
+                >
+                  <RankingCard
+                    stock={stock}
+                    rank={i + 1}
+                    onClick={() => handleClick(stock, i)}
+                  />
+                </motion.div>
               ))}
             </motion.div>
           </AnimatePresence>

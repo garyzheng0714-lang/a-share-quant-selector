@@ -6,19 +6,21 @@ export const ease = {
 
 export const duration = {
   fast: 0.15,
-  normal: 0.3,
-  slow: 0.4,
+  normal: 0.2,
+  slow: 0.3,
   count: 0.8,
 } as const;
 
 export const typography = {
   heading: { letterSpacing: "-0.03em", fontWeight: 700 },
   subheading: { letterSpacing: "-0.02em", fontWeight: 600 },
+  body: { letterSpacing: "-0.02em", fontWeight: 400 },
 } as const;
 
 export const stagger = {
   fast: 0.03,
   normal: 0.05,
+  list: 0.04,
 } as const;
 
 export const chartColors = {
