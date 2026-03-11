@@ -138,18 +138,6 @@ export function Component() {
                 ←
               </button>
 
-              {hasNav && (
-                <button
-                  onClick={() => goToStock(-1)}
-                  disabled={stockNavIndex <= 0}
-                  className="p-1 text-ink-muted hover:text-ink disabled:opacity-25 disabled:pointer-events-none transition-colors shrink-0"
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <path d="M8.75 3.5L5.25 7l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </button>
-              )}
-
               <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
                 <span className="text-sm sm:text-base font-mono font-semibold text-ink shrink-0">
                   {code}
@@ -169,18 +157,6 @@ export function Component() {
                   </span>
                 )}
               </div>
-
-              {hasNav && (
-                <button
-                  onClick={() => goToStock(1)}
-                  disabled={stockNavIndex >= stockNavList.length - 1}
-                  className="p-1 text-ink-muted hover:text-ink disabled:opacity-25 disabled:pointer-events-none transition-colors shrink-0"
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <path d="M5.25 3.5L8.75 7l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </button>
-              )}
 
               {!isLoading && (
                 <div className="hidden sm:flex items-center gap-1.5">
@@ -331,13 +307,39 @@ export function Component() {
                   )}
                 </div>
               )}
-              <KlineChart
-                data={klineData.data}
-                period={period}
-                weeklyLineMode={weeklyLineMode}
-                onCrosshairMove={handleCrosshairMove}
-                className="h-full"
-              />
+              <div className="h-full px-2 sm:px-4">
+                <KlineChart
+                  data={klineData.data}
+                  period={period}
+                  weeklyLineMode={weeklyLineMode}
+                  onCrosshairMove={handleCrosshairMove}
+                  className="h-full"
+                />
+              </div>
+
+              {/* Floating side nav buttons */}
+              {hasNav && (
+                <>
+                  <button
+                    onClick={() => goToStock(-1)}
+                    disabled={stockNavIndex <= 0}
+                    className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-16 sm:w-10 sm:h-20 flex items-center justify-center bg-surface/60 backdrop-blur-sm rounded-r-xl border border-l-0 border-border/30 text-ink-muted hover:text-ink hover:bg-surface/80 disabled:opacity-20 disabled:pointer-events-none transition-all active:scale-95"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 14 14" fill="none">
+                      <path d="M8.75 3.5L5.25 7l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => goToStock(1)}
+                    disabled={stockNavIndex >= stockNavList.length - 1}
+                    className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-16 sm:w-10 sm:h-20 flex items-center justify-center bg-surface/60 backdrop-blur-sm rounded-l-xl border border-r-0 border-border/30 text-ink-muted hover:text-ink hover:bg-surface/80 disabled:opacity-20 disabled:pointer-events-none transition-all active:scale-95"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 14 14" fill="none">
+                      <path d="M5.25 3.5L8.75 7l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </>
+              )}
 
               {/* Data overlay */}
               <AnimatePresence>
