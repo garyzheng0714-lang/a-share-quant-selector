@@ -6,6 +6,7 @@ Web 服务器 - A股量化选股系统
 - 选股执行 API
 - APScheduler 定时任务
 """
+
 import gc
 import json
 import logging
@@ -32,10 +33,17 @@ def _to_python(val):
         return val.tolist()
     return val
 
+
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from utils.csv_manager import CSVManager
+from utils.stock_info import (
+    fetch_industry_mapping,
+    fetch_market_caps,
+    get_stock_profile_cached,
+    get_industry_summary,
+)
 from strategy.strategy_registry import StrategyRegistry
 from strategy.pattern_library import B1PatternLibrary
 from views.view_manager import (
@@ -75,7 +83,9 @@ _stock_list_cache: list | None = None
 _stock_list_cache_ts: float = 0
 _stock_names_cache: dict | None = None
 _stock_names_cache_ts: float = 0
-_CACHE_TTL = 3600  # 1 小时
+_CACHE_TTL = 3600
+_industry_cache: dict | None = None
+_industry_cache_ts: float = 0
 
 
 def _load_stock_names() -> dict:
@@ -107,6 +117,15 @@ def _get_cached_stock_names() -> dict:
     return _stock_names_cache
 
 
+def _get_cached_industry() -> dict:
+    global _industry_cache, _industry_cache_ts
+    now = time.time()
+    if _industry_cache is None or now - _industry_cache_ts > _CACHE_TTL:
+        _industry_cache = fetch_industry_mapping()
+        _industry_cache_ts = now
+    return _industry_cache
+
+
 def _get_b1_library() -> B1PatternLibrary:
     """获取 B1 图形库单例（线程安全懒初始化）.
 
@@ -120,9 +139,7 @@ def _get_b1_library() -> B1PatternLibrary:
                 cache_path = Path("data") / "b1_pattern_library_cache.json"
                 B1PatternLibrary.CACHE_FILE = cache_path
                 _b1_library = B1PatternLibrary(csv_manager)
-                logger.info(
-                    "B1 图形库初始化完成，案例数: %d", len(_b1_library.cases)
-                )
+                logger.info("B1 图形库初始化完成，案例数: %d", len(_b1_library.cases))
     return _b1_library
 
 
@@ -163,6 +180,7 @@ def _run_selection_core(view_id: int, progress_cb=None) -> dict:
 
     stock_codes = _get_cached_stock_list()
     stock_names = _get_cached_stock_names()
+    industry_map = _get_cached_industry()
 
     invalid_keywords = ["退", "未知", "退市", "已退"]
     valid_stocks = []
@@ -203,22 +221,25 @@ def _run_selection_core(view_id: int, progress_cb=None) -> dict:
                 for s in signal_list:
                     cat = s.get("category", "unknown")
                     category_count[cat] = category_count.get(cat, 0) + 1
-                    results_list.append({
-                        "code": code,
-                        "name": name,
-                        "strategy": strategy_name,
-                        "category": cat,
-                        "close": _to_python(s.get("close")),
-                        "J": _to_python(s.get("J")),
-                        "volume_ratio": _to_python(s.get("volume_ratio")),
-                        "market_cap": _to_python(s.get("market_cap")),
-                        "short_term_trend": _to_python(s.get("short_term_trend")),
-                        "bull_bear_line": _to_python(s.get("bull_bear_line")),
-                        "reasons": s.get("reasons", []),
-                        "similarity_score": None,
-                        "matched_case": None,
-                        "match_breakdown": None,
-                    })
+                    results_list.append(
+                        {
+                            "code": code,
+                            "name": name,
+                            "strategy": strategy_name,
+                            "category": cat,
+                            "close": _to_python(s.get("close")),
+                            "J": _to_python(s.get("J")),
+                            "volume_ratio": _to_python(s.get("volume_ratio")),
+                            "market_cap": _to_python(s.get("market_cap")),
+                            "industry": industry_map.get(code, ""),
+                            "short_term_trend": _to_python(s.get("short_term_trend")),
+                            "bull_bear_line": _to_python(s.get("bull_bear_line")),
+                            "reasons": s.get("reasons", []),
+                            "similarity_score": None,
+                            "matched_case": None,
+                            "match_breakdown": None,
+                        }
+                    )
 
             del df, df_with_indicators
             if i % 500 == 0:
@@ -245,20 +266,15 @@ def _run_selection_core(view_id: int, progress_cb=None) -> dict:
                     best = match_result.get("best_match")
 
                     if best is not None:
-                        stock["similarity_score"] = _to_python(
-                            best["similarity_score"]
-                        )
+                        stock["similarity_score"] = _to_python(best["similarity_score"])
                         stock["matched_case"] = best["case_name"]
                         stock["match_breakdown"] = {
-                            k: _to_python(v)
-                            for k, v in best["breakdown"].items()
+                            k: _to_python(v) for k, v in best["breakdown"].items()
                         }
 
                     del df
                 except Exception as e:
-                    logger.error(
-                        "B1 匹配失败 [%s]: %s", stock["code"], e
-                    )
+                    logger.error("B1 匹配失败 [%s]: %s", stock["code"], e)
 
         except Exception as e:
             logger.error("B1 图形库初始化失败: %s", e)
@@ -283,6 +299,7 @@ def _run_selection_for_view(view_id: int) -> dict:
 
 def _run_selection_async(view_id: int, task_id: str) -> None:
     """异步选股后台线程."""
+
     def progress_cb(current: int, total: int, phase: str = "扫描股票") -> None:
         selection_tasks[task_id]["progress"] = current
         selection_tasks[task_id]["total"] = total
@@ -424,15 +441,14 @@ def api_run_selection(view_id):
     try:
         # 检查是否已有该视图的运行任务
         for tid, task in selection_tasks.items():
-            if (
-                task.get("view_id") == view_id
-                and task["status"] == "running"
-            ):
-                return jsonify({
-                    "success": True,
-                    "task_id": tid,
-                    "status": "running",
-                })
+            if task.get("view_id") == view_id and task["status"] == "running":
+                return jsonify(
+                    {
+                        "success": True,
+                        "task_id": tid,
+                        "status": "running",
+                    }
+                )
 
         task_id = uuid.uuid4().hex[:8]
         selection_tasks[task_id] = {
@@ -447,11 +463,13 @@ def api_run_selection(view_id):
 
         _executor.submit(_run_selection_async, view_id, task_id)
 
-        return jsonify({
-            "success": True,
-            "task_id": task_id,
-            "status": "starting",
-        })
+        return jsonify(
+            {
+                "success": True,
+                "task_id": task_id,
+                "status": "starting",
+            }
+        )
     except Exception as e:
         logger.error("启动选股任务失败: %s", e)
         return jsonify({"success": False, "error": str(e)})
@@ -527,16 +545,18 @@ def api_get_stats():
         latest_date = max(dates).strftime("%Y-%m-%d") if dates else "-"
         views = list_views()
 
-        return jsonify({
-            "success": True,
-            "data": {
-                "total_stocks": len(stocks),
-                "latest_date": latest_date,
-                "total_views": len(views),
-                "active_views": sum(1 for v in views if v["is_active"]),
-                "scheduler_running": scheduler_instance is not None,
-            },
-        })
+        return jsonify(
+            {
+                "success": True,
+                "data": {
+                    "total_stocks": len(stocks),
+                    "latest_date": latest_date,
+                    "total_views": len(views),
+                    "active_views": sum(1 for v in views if v["is_active"]),
+                    "scheduler_running": scheduler_instance is not None,
+                },
+            }
+        )
     except Exception as e:
         logger.error("获取统计信息失败: %s", e)
         return jsonify({"success": False, "error": str(e)})
@@ -560,25 +580,27 @@ def api_get_stocks():
             df = csv_manager.read_stock(code)
             if not df.empty:
                 latest = df.iloc[0]
-                stock_list.append({
-                    "code": code,
-                    "name": stock_names.get(code, "未知"),
-                    "latest_price": round(latest["close"], 2),
-                    "latest_date": latest["date"].strftime("%Y-%m-%d"),
-                    "market_cap": round(
-                        latest.get("market_cap", 0) / 1e8, 2
-                    ),
-                    "data_count": len(df),
-                })
+                stock_list.append(
+                    {
+                        "code": code,
+                        "name": stock_names.get(code, "未知"),
+                        "latest_price": round(latest["close"], 2),
+                        "latest_date": latest["date"].strftime("%Y-%m-%d"),
+                        "market_cap": round(latest.get("market_cap", 0) / 1e8, 2),
+                        "data_count": len(df),
+                    }
+                )
 
-        return jsonify({
-            "success": True,
-            "data": stock_list,
-            "total": len(stocks),
-            "page": page,
-            "per_page": per_page,
-            "total_pages": (len(stocks) + per_page - 1) // per_page,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "data": stock_list,
+                "total": len(stocks),
+                "page": page,
+                "per_page": per_page,
+                "total_pages": (len(stocks) + per_page - 1) // per_page,
+            }
+        )
     except Exception as e:
         logger.error("获取股票列表失败: %s", e)
         return jsonify({"success": False, "error": str(e)})
@@ -598,20 +620,22 @@ def api_get_stock_detail(code):
 
         data = []
         for i, (_, row) in enumerate(df.head(100).iterrows()):
-            data.append({
-                "date": row["date"].strftime("%Y-%m-%d"),
-                "open": round(row["open"], 2),
-                "high": round(row["high"], 2),
-                "low": round(row["low"], 2),
-                "close": round(row["close"], 2),
-                "volume": int(row["volume"]),
-                "amount": round(row["amount"] / 1e4, 2),
-                "turnover": round(row.get("turnover", 0), 2),
-                "market_cap": round(row.get("market_cap", 0) / 1e8, 2),
-                "K": round(kdj_df.iloc[i]["K"], 2),
-                "D": round(kdj_df.iloc[i]["D"], 2),
-                "J": round(kdj_df.iloc[i]["J"], 2),
-            })
+            data.append(
+                {
+                    "date": row["date"].strftime("%Y-%m-%d"),
+                    "open": round(row["open"], 2),
+                    "high": round(row["high"], 2),
+                    "low": round(row["low"], 2),
+                    "close": round(row["close"], 2),
+                    "volume": int(row["volume"]),
+                    "amount": round(row["amount"] / 1e4, 2),
+                    "turnover": round(row.get("turnover", 0), 2),
+                    "market_cap": round(row.get("market_cap", 0) / 1e8, 2),
+                    "K": round(kdj_df.iloc[i]["K"], 2),
+                    "D": round(kdj_df.iloc[i]["D"], 2),
+                    "J": round(kdj_df.iloc[i]["J"], 2),
+                }
+            )
 
         return jsonify({"success": True, "code": code, "data": data})
     except Exception as e:
@@ -647,13 +671,17 @@ def api_get_stock_kline(code):
 
         if period == "weekly":
             df_slice["date"] = pd.to_datetime(df_slice["date"])
-            weekly = df_slice.resample("W", on="date").agg(
-                open=("open", "first"),
-                high=("high", "max"),
-                low=("low", "min"),
-                close=("close", "last"),
-                volume=("volume", "sum"),
-            ).dropna(subset=["open"])
+            weekly = (
+                df_slice.resample("W", on="date")
+                .agg(
+                    open=("open", "first"),
+                    high=("high", "max"),
+                    low=("low", "min"),
+                    close=("close", "last"),
+                    volume=("volume", "sum"),
+                )
+                .dropna(subset=["open"])
+            )
 
             weekly["MA5"] = weekly["close"].rolling(window=5).mean()
             weekly["MA10"] = weekly["close"].rolling(window=10).mean()
@@ -672,20 +700,26 @@ def api_get_stock_kline(code):
 
             data = []
             for date_idx, row in weekly.iterrows():
-                data.append([
-                    date_idx.strftime("%Y-%m-%d"),
-                    round(float(row["open"]), 2),
-                    round(float(row["close"]), 2),
-                    round(float(row["low"]), 2),
-                    round(float(row["high"]), 2),
-                    int(row["volume"]),
-                    round(float(row["MA5"]), 2) if pd.notna(row["MA5"]) else None,
-                    round(float(row["MA10"]), 2) if pd.notna(row["MA10"]) else None,
-                    round(float(row["MA20"]), 2) if pd.notna(row["MA20"]) else None,
-                    round(float(row["MA60"]), 2) if pd.notna(row["MA60"]) else None,
-                    round(float(row["trend_line"]), 2) if pd.notna(row["trend_line"]) else None,
-                    round(float(row["dk_line"]), 2) if pd.notna(row["dk_line"]) else None,
-                ])
+                data.append(
+                    [
+                        date_idx.strftime("%Y-%m-%d"),
+                        round(float(row["open"]), 2),
+                        round(float(row["close"]), 2),
+                        round(float(row["low"]), 2),
+                        round(float(row["high"]), 2),
+                        int(row["volume"]),
+                        round(float(row["MA5"]), 2) if pd.notna(row["MA5"]) else None,
+                        round(float(row["MA10"]), 2) if pd.notna(row["MA10"]) else None,
+                        round(float(row["MA20"]), 2) if pd.notna(row["MA20"]) else None,
+                        round(float(row["MA60"]), 2) if pd.notna(row["MA60"]) else None,
+                        round(float(row["trend_line"]), 2)
+                        if pd.notna(row["trend_line"])
+                        else None,
+                        round(float(row["dk_line"]), 2)
+                        if pd.notna(row["dk_line"])
+                        else None,
+                    ]
+                )
         else:
             kdj_df = KDJ(df_slice, n=9, m1=3, m2=3)
 
@@ -703,29 +737,33 @@ def api_get_stock_kline(code):
             for i, (_, row) in enumerate(df_slice.iterrows()):
                 tl = trend_line.iloc[i]
                 dk = dk_line.iloc[i]
-                data.append([
-                    row["date"].strftime("%Y-%m-%d")
-                    if hasattr(row["date"], "strftime")
-                    else str(row["date"])[:10],
-                    round(float(row["open"]), 2),
-                    round(float(row["close"]), 2),
-                    round(float(row["low"]), 2),
-                    round(float(row["high"]), 2),
-                    int(row["volume"]),
-                    round(float(kdj_df.iloc[i]["K"]), 2),
-                    round(float(kdj_df.iloc[i]["D"]), 2),
-                    round(float(kdj_df.iloc[i]["J"]), 2),
-                    round(float(tl), 2) if pd.notna(tl) else None,
-                    round(float(dk), 2) if pd.notna(dk) else None,
-                ])
+                data.append(
+                    [
+                        row["date"].strftime("%Y-%m-%d")
+                        if hasattr(row["date"], "strftime")
+                        else str(row["date"])[:10],
+                        round(float(row["open"]), 2),
+                        round(float(row["close"]), 2),
+                        round(float(row["low"]), 2),
+                        round(float(row["high"]), 2),
+                        int(row["volume"]),
+                        round(float(kdj_df.iloc[i]["K"]), 2),
+                        round(float(kdj_df.iloc[i]["D"]), 2),
+                        round(float(kdj_df.iloc[i]["J"]), 2),
+                        round(float(tl), 2) if pd.notna(tl) else None,
+                        round(float(dk), 2) if pd.notna(dk) else None,
+                    ]
+                )
 
-        return jsonify({
-            "success": True,
-            "code": code,
-            "name": stock_name,
-            "period": period,
-            "data": data,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "code": code,
+                "name": stock_name,
+                "period": period,
+                "data": data,
+            }
+        )
     except Exception as e:
         logger.error("获取K线数据失败: %s", e)
         return jsonify({"success": False, "error": str(e)})
@@ -737,6 +775,7 @@ def api_get_ranking():
     try:
         views = list_views()
         active_views = [v for v in views if v["is_active"]]
+        industry_map = _get_cached_industry()
 
         category_priority = {
             "bowl_center": 0,
@@ -769,20 +808,14 @@ def api_get_ranking():
                         "category": stock.get("category", "unknown"),
                         "close": _to_python(stock.get("close")),
                         "J": _to_python(stock.get("J")),
-                        "volume_ratio": _to_python(
-                            stock.get("volume_ratio")
-                        ),
-                        "market_cap": _to_python(
-                            stock.get("market_cap")
-                        ),
-                        "similarity_score": _to_python(
-                            stock.get("similarity_score")
-                        ),
+                        "volume_ratio": _to_python(stock.get("volume_ratio")),
+                        "market_cap": _to_python(stock.get("market_cap")),
+                        "industry": industry_map.get(sc, ""),
+                        "similarity_score": _to_python(stock.get("similarity_score")),
                         "matched_case": stock.get("matched_case"),
-                        "match_breakdown": {
-                            k: _to_python(v)
-                            for k, v in bd.items()
-                        } if isinstance(bd, dict) else None,
+                        "match_breakdown": {k: _to_python(v) for k, v in bd.items()}
+                        if isinstance(bd, dict)
+                        else None,
                         "views": [view["name"]],
                         "run_date": latest["run_date"],
                     }
@@ -795,14 +828,37 @@ def api_get_ranking():
             ),
         )
 
-        return jsonify({
-            "success": True,
-            "data": ranked,
-            "total": len(ranked),
-            "run_date": run_date,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "data": ranked,
+                "total": len(ranked),
+                "run_date": run_date,
+            }
+        )
     except Exception as e:
         logger.error("获取综合排名失败: %s", e)
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/stock/<code>/profile", methods=["GET"])
+def api_get_stock_profile(code):
+    try:
+        profile = get_stock_profile_cached(code)
+        return jsonify({"success": True, "data": profile})
+    except Exception as e:
+        logger.error("获取股票资料失败 [%s]: %s", code, e)
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/industries", methods=["GET"])
+def api_get_industries():
+    try:
+        industry_map = _get_cached_industry()
+        summary = get_industry_summary(industry_map)
+        return jsonify({"success": True, "data": summary, "total": len(summary)})
+    except Exception as e:
+        logger.error("获取行业统计失败: %s", e)
         return jsonify({"success": False, "error": str(e)})
 
 
@@ -814,11 +870,13 @@ def api_update_data():
 
         fetcher = AKShareFetcher("data")
         fetcher.daily_update()
-        return jsonify({
-            "success": True,
-            "message": "数据更新完成",
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        })
+        return jsonify(
+            {
+                "success": True,
+                "message": "数据更新完成",
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
     except Exception as e:
         logger.error("数据更新失败: %s", e)
         return jsonify({"success": False, "error": str(e)})
@@ -830,13 +888,15 @@ def api_update_data():
 @app.route("/api/scheduler/status", methods=["GET"])
 def api_scheduler_status():
     """获取调度器状态."""
-    return jsonify({
-        "success": True,
-        "data": {
-            "running": scheduler_instance is not None,
-            "running_tasks": dict(running_tasks),
-        },
-    })
+    return jsonify(
+        {
+            "success": True,
+            "data": {
+                "running": scheduler_instance is not None,
+                "running_tasks": dict(running_tasks),
+            },
+        }
+    )
 
 
 @app.route("/api/scheduler/start", methods=["POST"])
@@ -903,14 +963,10 @@ def _start_scheduler():
         from apscheduler.schedulers.background import BackgroundScheduler
         from apscheduler.triggers.cron import CronTrigger
 
-        scheduler_instance = BackgroundScheduler(
-            timezone="Asia/Shanghai"
-        )
+        scheduler_instance = BackgroundScheduler(timezone="Asia/Shanghai")
         scheduler_instance.add_job(
             _scheduled_job,
-            CronTrigger(
-                hour=16, minute=0, day_of_week="mon-fri"
-            ),
+            CronTrigger(hour=16, minute=0, day_of_week="mon-fri"),
             id="daily_selection",
             name="每日选股",
             replace_existing=True,

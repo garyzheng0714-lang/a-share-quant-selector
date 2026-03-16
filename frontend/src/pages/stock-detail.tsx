@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { PageTransition } from "@/components/layout/page-transition";
 import { KlineChart, type KlineOverlay } from "@/components/charts/kline-chart";
 import { CopyButton } from "@/components/ui";
-import { useKline } from "@/lib/hooks";
+import { useKline, useStockProfile } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
 import { chartColors, ease } from "@/lib/tokens";
 
@@ -28,7 +28,9 @@ export function Component() {
   const stockNavIndex = useAppStore((s) => s.stockNavIndex);
   const setStockNavIndex = useAppStore((s) => s.setStockNavIndex);
 
+  const [profileOpen, setProfileOpen] = useState(false);
   const { data: klineData, isLoading } = useKline(code ?? null, period);
+  const { data: profile, isLoading: profileLoading } = useStockProfile(code ?? null);
 
   const currentStock = stockNavList[stockNavIndex];
   const stockName = klineData?.name ?? currentStock?.name ?? "";
@@ -151,6 +153,23 @@ export function Component() {
                 <span className="text-sm text-ink-secondary truncate hidden sm:block">
                   {stockName}
                 </span>
+                {profileLoading ? (
+                  <div className="hidden sm:flex items-center gap-1.5">
+                    <span className="inline-block w-12 h-4 rounded bg-elevated animate-pulse" />
+                    <span className="inline-block w-10 h-4 rounded bg-elevated animate-pulse" />
+                  </div>
+                ) : profile?.industry ? (
+                  <div className="hidden sm:flex items-center gap-1.5">
+                    <span className="px-1.5 py-0.5 text-[10px] rounded bg-accent/10 text-accent leading-tight">
+                      {profile.industry}
+                    </span>
+                    {profile.board && (
+                      <span className="px-1.5 py-0.5 text-[10px] rounded bg-elevated text-ink-muted leading-tight">
+                        {profile.board}
+                      </span>
+                    )}
+                  </div>
+                ) : null}
                 {hasNav && (
                   <span className="text-[10px] text-ink-muted tabular-nums shrink-0">
                     {stockNavIndex + 1}/{stockNavList.length}
@@ -213,9 +232,18 @@ export function Component() {
           {/* Mobile: second row with name + price */}
           {!isLoading && (
             <div className="flex items-center justify-between mt-1.5 sm:hidden">
-              <span className="text-xs text-ink-secondary truncate">
-                {stockName}
-              </span>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="text-xs text-ink-secondary truncate">
+                  {stockName}
+                </span>
+                {profileLoading ? (
+                  <span className="inline-block w-10 h-3.5 rounded bg-elevated animate-pulse shrink-0" />
+                ) : profile?.industry ? (
+                  <span className="px-1 py-px text-[9px] rounded bg-accent/10 text-accent leading-tight shrink-0">
+                    {profile.industry}
+                  </span>
+                ) : null}
+              </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span
                   className={`text-sm font-mono font-semibold ${isBull ? "text-bull" : "text-bear"}`}
@@ -232,6 +260,50 @@ export function Component() {
             </div>
           )}
         </div>
+
+        {/* Company info panel */}
+        {profile && (
+          <div className="bg-surface border-b border-border">
+            <button
+              onClick={() => setProfileOpen((v) => !v)}
+              className="w-full px-3 py-2 flex items-center gap-1 text-xs text-ink-secondary hover:text-ink transition-colors"
+            >
+              <span>公司信息</span>
+              <motion.span
+                animate={{ rotate: profileOpen ? 90 : 0 }}
+                transition={{ duration: 0.15 }}
+                className="text-[10px]"
+              >
+                ▸
+              </motion.span>
+            </button>
+            <AnimatePresence initial={false}>
+              {profileOpen && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                  className="overflow-hidden"
+                >
+                  <div className="px-3 pb-2.5 space-y-1.5">
+                    {profile.business && (
+                      <p className="text-xs text-ink-secondary leading-relaxed break-all">
+                        <span className="text-ink-muted">主营业务：</span>
+                        {profile.business}
+                      </p>
+                    )}
+                    {profile.listing_date && (
+                      <p className="text-xs text-ink-muted">
+                        上市日期：{profile.listing_date}
+                      </p>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
 
         {/* Chart area */}
         <div className="flex-1 relative min-h-0">

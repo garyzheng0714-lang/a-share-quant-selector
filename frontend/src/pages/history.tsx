@@ -67,6 +67,9 @@ function StockRow({
           <span className="text-xs text-ink-muted">
             {formatMarketCap(stock.market_cap)}
           </span>
+          {stock.industry && (
+            <span className="text-xs text-ink-muted/70">{stock.industry}</span>
+          )}
         </div>
       </div>
 

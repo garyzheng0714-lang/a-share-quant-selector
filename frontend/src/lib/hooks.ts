@@ -21,6 +21,10 @@ export function useKline(code: string | null, period: string = "daily") {
   return useSWR(code ? `kline-${code}-${period}` : null, () => api.getKline(code!, period));
 }
 
+export function useStockProfile(code: string | null) {
+  return useSWR(code ? `profile-${code}` : null, () => api.getStockProfile(code!).then((r) => r.data));
+}
+
 export function useRanking() {
   return useSWR("ranking", () => api.getRanking());
 }

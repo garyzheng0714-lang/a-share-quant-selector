@@ -60,6 +60,7 @@ export interface SignalStock {
   similarity_score: number | null;
   matched_case: string | null;
   match_breakdown: Record<string, number> | null;
+  industry?: string;
 }
 
 export interface SelectionResult {
@@ -84,6 +85,23 @@ export interface RankingStock {
   match_breakdown: Record<string, number>;
   views: string[];
   run_date: string;
+  industry?: string;
+}
+
+export interface IndustryItem {
+  name: string;
+  count: number;
+}
+
+export interface StockProfile {
+  code: string;
+  name: string;
+  industry: string;
+  board: string;
+  business: string;
+  listing_date: string;
+  total_shares: string;
+  circ_shares: string;
 }
 
 export interface KlineDataPoint {
@@ -136,10 +154,14 @@ export const api = {
     request<ApiResponse<StockItem[]> & { total: number; page: number; total_pages: number }>(
       `/api/stocks?page=${page}&per_page=${perPage}`,
     ),
+  getStockProfile: (code: string) =>
+    request<ApiResponse<StockProfile>>(`/api/stock/${code}/profile`),
   getKline: (code: string, period: string = "daily", days?: number) =>
     request<KlineResponse>(`/api/stock/${code}/kline?period=${period}${days ? `&days=${days}` : ""}`),
   getRanking: () =>
     request<ApiResponse<RankingStock[]> & { total: number; run_date: string }>("/api/ranking"),
+  getIndustries: () =>
+    request<ApiResponse<IndustryItem[]> & { total: number }>("/api/industries"),
   getSchedulerStatus: () =>
     request<ApiResponse<{ running: boolean; running_tasks: Record<string, string> }>>("/api/scheduler/status"),
   startScheduler: () => request<{ success: boolean }>("/api/scheduler/start", { method: "POST" }),

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageTransition } from "@/components/layout/page-transition";
@@ -6,7 +6,7 @@ import { Skeleton, Badge, CopyButton } from "@/components/ui";
 import { EmptyState } from "@/components/onboarding";
 import { useRanking } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
-import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT, duration } from "@/lib/tokens";
+import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT, duration, ease } from "@/lib/tokens";
 import type { RankingStock } from "@/lib/api";
 
 const FILTERS: { key: string; label: string }[] = [
@@ -82,6 +82,9 @@ function RankingRow({
           <span className="text-xs text-ink-muted">
             {formatMarketCap(stock.market_cap)}
           </span>
+          {stock.industry && (
+            <span className="text-xs text-ink-muted/70">{stock.industry}</span>
+          )}
         </div>
       </div>
 
@@ -137,9 +140,103 @@ function RankingSkeleton() {
   );
 }
 
+type ViewMode = "ranking" | "industry";
+
+function ChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <motion.svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      animate={{ rotate: expanded ? 90 : 0 }}
+      transition={{ duration: duration.fast }}
+    >
+      <path
+        d="M6 4l4 4-4 4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </motion.svg>
+  );
+}
+
+function IndustryGroup({
+  industry,
+  stocks,
+  expanded,
+  onToggle,
+  onStockClick,
+}: {
+  industry: string;
+  stocks: RankingStock[];
+  expanded: boolean;
+  onToggle: () => void;
+  onStockClick: (stock: RankingStock, index: number) => void;
+}) {
+  return (
+    <div>
+      <motion.button
+        onClick={onToggle}
+        className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 rounded-xl hover:bg-elevated transition-colors duration-150 text-left"
+      >
+        <ChevronIcon expanded={expanded} />
+        <span className="font-medium text-sm text-ink shrink-0">
+          {industry}
+        </span>
+        <span className="text-xs text-ink-muted tabular-nums shrink-0">
+          {stocks.length}只
+        </span>
+        <div className="hidden sm:flex items-center gap-1.5 ml-auto">
+          {Object.entries(
+            stocks.reduce<Record<string, number>>((acc, s) => {
+              acc[s.category] = (acc[s.category] ?? 0) + 1;
+              return acc;
+            }, {}),
+          ).map(([cat, count]) => (
+            <span
+              key={cat}
+              className="text-xs bg-inset text-ink-muted px-2 py-0.5 rounded-md whitespace-nowrap"
+            >
+              {CATEGORY_LABELS[cat] ?? cat} {count}
+            </span>
+          ))}
+        </div>
+      </motion.button>
+
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: duration.normal, ease: [...ease.default] }}
+            className="overflow-hidden"
+          >
+            <div className="divide-y divide-border/30 ml-6 mr-2 mb-3 border-l border-border/40 pl-1">
+              {stocks.map((stock, i) => (
+                <RankingRow
+                  key={stock.code}
+                  stock={stock}
+                  rank={i + 1}
+                  onClick={() => onStockClick(stock, i)}
+                />
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export function Component() {
   const { data: ranking, isLoading } = useRanking();
   const [filter, setFilter] = useState("all");
+  const [viewMode, setViewMode] = useState<ViewMode>("ranking");
+  const [expandedIndustry, setExpandedIndustry] = useState<string | null>(null);
   const navigate = useNavigate();
   const setStockNav = useAppStore((s) => s.setStockNav);
 
@@ -149,6 +246,16 @@ export function Component() {
     filter === "all"
       ? stocks
       : stocks.filter((s) => s.category === filter);
+
+  const industryGroups = useMemo(() => {
+    const groups: Record<string, RankingStock[]> = {};
+    for (const s of filtered) {
+      const key = s.industry || "未知";
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(s);
+    }
+    return Object.entries(groups).sort((a, b) => b[1].length - a[1].length);
+  }, [filtered]);
 
   const handleClick = (stock: RankingStock, index: number) => {
     const signalStocks = filtered.map((s) => ({
@@ -204,6 +311,25 @@ export function Component() {
               {f.label}
             </button>
           ))}
+
+          <div className="w-px h-5 bg-border/50 shrink-0 mx-1" />
+
+          {(["ranking", "industry"] as const).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => {
+                setViewMode(mode);
+                if (mode === "industry") setExpandedIndustry(null);
+              }}
+              className={`px-3 sm:px-4 py-1.5 text-xs sm:text-sm rounded-full whitespace-nowrap shrink-0 transition-colors duration-150 ${
+                viewMode === mode
+                  ? "bg-elevated text-ink font-medium ring-1 ring-border"
+                  : "text-ink-muted hover:text-ink-secondary"
+              }`}
+            >
+              {mode === "ranking" ? "排名" : "行业"}
+            </button>
+          ))}
         </div>
 
         {isLoading ? (
@@ -225,32 +351,58 @@ export function Component() {
           />
         ) : (
           <AnimatePresence mode="wait">
-            <motion.div
-              key={filter}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: duration.fast }}
-              className="divide-y divide-border/50"
-            >
-              {filtered.map((stock, i) => (
-                <motion.div
-                  key={stock.code}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{
-                    duration: 0.15,
-                    delay: Math.min(i * 0.02, 0.4),
-                  }}
-                >
-                  <RankingRow
-                    stock={stock}
-                    rank={i + 1}
-                    onClick={() => handleClick(stock, i)}
+            {viewMode === "ranking" ? (
+              <motion.div
+                key={`ranking-${filter}`}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: duration.fast }}
+                className="divide-y divide-border/50"
+              >
+                {filtered.map((stock, i) => (
+                  <motion.div
+                    key={stock.code}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{
+                      duration: 0.15,
+                      delay: Math.min(i * 0.02, 0.4),
+                    }}
+                  >
+                    <RankingRow
+                      stock={stock}
+                      rank={i + 1}
+                      onClick={() => handleClick(stock, i)}
+                    />
+                  </motion.div>
+                ))}
+              </motion.div>
+            ) : (
+              <motion.div
+                key={`industry-${filter}`}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: duration.fast }}
+                className="space-y-0.5"
+              >
+                {industryGroups.map(([industry, groupStocks]) => (
+                  <IndustryGroup
+                    key={industry}
+                    industry={industry}
+                    stocks={groupStocks}
+                    expanded={expandedIndustry === industry}
+                    onToggle={() =>
+                      setExpandedIndustry((prev) =>
+                        prev === industry ? null : industry,
+                      )
+                    }
+                    onStockClick={(stock, index) => handleClick(stock, index)}
                   />
-                </motion.div>
-              ))}
-            </motion.div>
+                ))}
+              </motion.div>
+            )}
           </AnimatePresence>
         )}
       </div>
