@@ -106,7 +106,76 @@ class AKShareFetcher:
                 json.dump(stock_dict, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"  保存股票名称失败: {e}")
-    
+
+    def _fetch_market_cap_tencent(self, stock_codes):
+        """使用腾讯接口批量获取市值数据（akshare备选方案）"""
+        market_cap_map = {}
+        batch_size = 100
+        total = len(stock_codes)
+
+        try:
+            for i in range(0, total, batch_size):
+                batch = stock_codes[i:i + batch_size]
+                query_codes = []
+                for code in batch:
+                    if code.startswith('6') or code.startswith('8'):
+                        query_codes.append(f"sh{code}")
+                    else:
+                        query_codes.append(f"sz{code}")
+
+                url = f"https://qt.gtimg.cn/q={','.join(query_codes)}"
+                resp = requests.get(url, timeout=30, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                })
+
+                lines = resp.text.strip().split(';')
+                for line in lines:
+                    if 'v_' in line and '~' in line:
+                        try:
+                            # 提取代码
+                            code_match = line.split('v_')[1].split('=')[0] if 'v_' in line else ''
+                            if not code_match or len(code_match) < 8:
+                                continue
+                            code = code_match[2:]  # 去掉 sh/sz 前缀
+
+                            parts = line.split('~')
+                            if len(parts) >= 46:
+                                # 字段44是总市值（亿）
+                                cap = float(parts[44]) if parts[44] else 0
+                                if cap > 0:
+                                    # 转为元（腾讯接口是亿）
+                                    market_cap_map[code] = int(cap * 1e8)
+                        except:
+                            continue
+
+                if i % 500 == 0 and i > 0:
+                    print(f"  已获取 {i}/{total} 只市值...")
+                    time.sleep(0.1)
+
+        except Exception as e:
+            print(f"  腾讯接口获取市值失败: {e}")
+
+        return market_cap_map
+
+    def _get_realtime_market_cap(self, stock_code):
+        """从实时数据获取总市值"""
+        try:
+            import akshare as ak
+            spot_df = ak.stock_individual_info_em(symbol=stock_code)
+            if not spot_df.empty:
+                total_cap_row = spot_df[spot_df['item'] == '总市值']
+                if not total_cap_row.empty:
+                    total_cap = total_cap_row['value'].values[0]
+                    if isinstance(total_cap, str):
+                        if '亿' in total_cap:
+                            return float(total_cap.replace('亿', '')) * 1e8
+                        else:
+                            return float(total_cap)
+                    return float(total_cap)
+        except Exception as e:
+            print(f"  获取总市值失败: {e}")
+        return None
+
     def _fetch_stock_list_http(self):
         """使用腾讯接口获取股票列表 - 覆盖5000+只A股"""
         try:
@@ -406,11 +475,15 @@ class AKShareFetcher:
                 if records:
                     df = pd.DataFrame(records)
                     df['date'] = pd.to_datetime(df['date'])
-                    # 估算市值
-                    df['market_cap'] = abs(hash(stock_code)) % 500 * 100000000 + 5000000000
+                    # 从实时数据获取总市值
+                    market_cap = self._get_realtime_market_cap(stock_code)
+                    if market_cap:
+                        df['market_cap'] = market_cap
+                    else:
+                        df['market_cap'] = abs(hash(stock_code)) % 500 * 100000000 + 5000000000
                     df = df.sort_values('date', ascending=False)
                     return df
-            
+
             return None
         except Exception as e:
             print(f"  HTTP获取历史数据失败: {e}")
@@ -447,8 +520,12 @@ class AKShareFetcher:
         df['low'] = np.minimum(df[['open', 'close']].min(axis=1) * (1 - abs(np.random.normal(0, 0.01, days))),
                                df[['open', 'close']].min(axis=1))
         
-        # 添加流通市值（根据股票代码估算）
-        df['market_cap'] = np.random.uniform(5000000000, 50000000000)
+        # 添加总市值（从实时数据获取）
+        market_cap = self._get_realtime_market_cap(stock_code)
+        if market_cap:
+            df['market_cap'] = market_cap
+        else:
+            df['market_cap'] = np.random.uniform(5000000000, 50000000000)
         
         # 按日期倒序排列
         df = df.sort_values('date', ascending=False)
@@ -492,7 +569,12 @@ class AKShareFetcher:
                     '收盘': 'close', '成交量': 'volume', '成交额': 'amount', '换手率': 'turnover'
                 })
                 df = df[['date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'turnover']]
-                df['market_cap'] = (hash(stock_code) % 100 + 50) * 1000000000
+                # 从实时数据获取总市值
+                market_cap = self._get_realtime_market_cap(stock_code)
+                if market_cap:
+                    df['market_cap'] = market_cap
+                else:
+                    df['market_cap'] = (hash(stock_code) % 100 + 50) * 1000000000
                 df['date'] = pd.to_datetime(df['date'])
                 df = df.sort_values('date', ascending=False)
                 return df
@@ -562,15 +644,20 @@ class AKShareFetcher:
                 if records:
                     df = pd.DataFrame(records)
                     df['date'] = pd.to_datetime(df['date'])
-                    df['market_cap'] = abs(hash(stock_code)) % 500 * 100000000 + 5000000000
+                    # 从实时数据获取总市值
+                    market_cap = self._get_realtime_market_cap(stock_code)
+                    if market_cap:
+                        df['market_cap'] = market_cap
+                    else:
+                        df['market_cap'] = abs(hash(stock_code)) % 500 * 100000000 + 5000000000
                     df = df.sort_values('date', ascending=False)
                     return df
-            
+
             return None
         except Exception as e:
             print(f"  获取更新数据失败: {e}")
             return None
-    
+
     def init_full_data(self, max_stocks=None, skip_failed=True):
         """
         首次全量抓取
@@ -600,32 +687,61 @@ class AKShareFetcher:
         
         if max_stocks:
             stock_codes = stock_codes[:max_stocks]
-        
+
+        # 批量获取市值数据（主接口：akshare，备选：腾讯）
+        print("\n正在批量获取市值数据...")
+        market_cap_map = {}
+
+        # 方法1: 尝试akshare接口
+        try:
+            spot_df = ak.stock_zh_a_spot_em()
+            for _, row in spot_df.iterrows():
+                code = str(row['代码']).zfill(6)
+                cap = row['总市值']
+                if pd.notna(cap) and cap > 0:
+                    if cap < 1e10:
+                        cap = int(cap * 1e8)
+                    else:
+                        cap = int(cap)
+                    market_cap_map[code] = cap
+            print(f"  ✓ akshare接口成功: {len(market_cap_map)} 只股票市值")
+        except Exception as e:
+            print(f"  akshare接口失败: {e}")
+            print("  尝试腾讯备选接口...")
+            market_cap_map = self._fetch_market_cap_tencent(stock_codes)
+            if market_cap_map:
+                print(f"  ✓ 腾讯接口成功: {len(market_cap_map)} 只股票市值")
+            else:
+                print(f"  ✗ 腾讯接口也失败，市值数据将缺失")
+
         total = len(stock_codes)
         success = 0
         failed = 0
         failed_list = []
-        
+
         print(f"\n开始抓取 {total} 只股票的6年历史数据...")
         print("=" * 60)
-        
+
         for i, code in enumerate(stock_codes, 1):
             print(f"[{i}/{total}] 抓取 {code} {stock_dict.get(code, '')} ...", end=" ")
-            
+
             df = self.fetch_stock_history(code, years=6)
-            
+
             if df is not None and not df.empty:
                 # 数据校验 - 检查是否有有效价格数据
                 valid_data = True
-                if len(df) < 10:  # 数据太少，可能是新股或数据异常
+                if len(df) < 10:
                     print(f"⚠ 数据太少({len(df)}条)")
                     valid_data = False
                     failed_list.append(code)
-                elif df['close'].mean() <= 0:  # 价格异常
+                elif df['close'].mean() <= 0:
                     print(f"⚠ 价格异常")
                     valid_data = False
                     failed_list.append(code)
                 else:
+                    # 使用批量获取的市值数据
+                    if code in market_cap_map:
+                        df['market_cap'] = market_cap_map[code]
                     self.csv_manager.write_stock(code, df)
                     print(f"✓ ({len(df)}条)")
                     success += 1
@@ -759,19 +875,50 @@ class AKShareFetcher:
             print("=" * 60)
             return
         
+        # 批量获取最新市值数据（主接口：akshare，备选：腾讯）
+        print("\n正在批量获取最新市值数据...")
+        market_cap_map = {}
+
+        # 方法1: 尝试akshare接口
+        try:
+            import akshare as ak
+            spot_df = ak.stock_zh_a_spot_em()
+            for _, row in spot_df.iterrows():
+                code = str(row['代码']).zfill(6)
+                cap = row['总市值']
+                if pd.notna(cap) and cap > 0:
+                    if cap < 1e10:
+                        cap = int(cap * 1e8)
+                    else:
+                        cap = int(cap)
+                    market_cap_map[code] = cap
+            print(f"  ✓ akshare接口成功: {len(market_cap_map)} 只股票市值")
+        except Exception as e:
+            print(f"  akshare接口失败: {e}")
+            print("  尝试腾讯备选接口...")
+            update_codes = [code for code, _ in stocks_to_update]
+            market_cap_map = self._fetch_market_cap_tencent(update_codes)
+            if market_cap_map:
+                print(f"  ✓ 腾讯接口成功: {len(market_cap_map)} 只股票市值")
+            else:
+                print(f"  ✗ 腾讯接口也失败，市值数据将缺失")
+
         print(f"\n开始更新 {need_update} 只股票...")
         print("=" * 60)
-        
+
         for i, (code, days_to_fetch) in enumerate(stocks_to_update, 1):
             print(f"[{i}/{need_update}] 更新 {code} (需获取 {days_to_fetch} 天数据)...", end=" ")
-            
+
             # 重新读取现有数据以获取旧记录数
             existing_df = self.csv_manager.read_stock(code)
             old_count = len(existing_df)
-            
+
             df = self.fetch_stock_update(code, days=days_to_fetch)
-            
+
             if df is not None and not df.empty:
+                # 更新市值数据（和价格数据一起更新）
+                if code in market_cap_map:
+                    df['market_cap'] = market_cap_map[code]
                 self.csv_manager.update_stock(code, df)
                 new_df = self.csv_manager.read_stock(code)
                 new_count = len(new_df)

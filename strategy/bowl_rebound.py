@@ -12,8 +12,8 @@
 3. 趋势线在上 = 知行短期趋势线 > 知行多空线
    - 短期趋势在多空线上方，表示上升趋势
 
-4. 异动放量阳线 = V>=REF(V,1)*N AND C>O AND 流通市值>CAP
-   - 成交量是前一天的N倍以上 AND 阳线 AND 流通市值达标
+4. 异动放量阳线 = V>=REF(V,1)*N AND C>O AND 总市值>CAP
+   - 成交量是前一天的N倍以上 AND 阳线 AND 总市值达标
 
 5. 异动 = EXIST(关键K线, M)
    - 在M天内存在关键K线
@@ -50,7 +50,7 @@ class BowlReboundStrategy(BaseStrategy):
         default_params = {
             'N': 4,              # 成交量倍数
             'M': 15,             # 回溯天数
-            'CAP': 4000000000,   # 流通市值>40亿
+            'CAP': 4000000000,   # 总市值>40亿
             'J_VAL': 30,         # J值上限
             'duokong_pct': 3,    # 距离多空线百分比(默认3%)
             'short_pct': 2,      # 距离短期趋势线百分比(默认2%)
@@ -124,8 +124,8 @@ class BowlReboundStrategy(BaseStrategy):
         # 阳线：收盘价 > 开盘价
         result['positive_candle'] = result['close'] > result['open']
         
-        # 流通市值达标
-        result['market_cap_ok'] = result['market_cap'] > self.params['CAP']
+        # 总市值达标（优先从实时数据获取）
+        result['market_cap_ok'] = self._check_market_cap_realtime(result)
         
         # 关键K线 = 放量 AND 阳线 AND 市值达标
         result['key_candle'] = (
@@ -142,7 +142,56 @@ class BowlReboundStrategy(BaseStrategy):
         result['j_low'] = result['J'] <= self.params['J_VAL']
         
         return result
-    
+
+    def _check_market_cap_realtime(self, df) -> pd.Series:
+        """
+        检查总市值是否达标
+        优先从CSV数据获取，如果异常则从实时数据获取
+        """
+        import akshare as ak
+
+        # 尝试从CSV数据获取
+        if 'market_cap' in df.columns:
+            # 检查数据是否合理（单位应该是元）
+            sample_cap = df['market_cap'].dropna().iloc[-1] if not df['market_cap'].dropna().empty else 0
+
+            # 如果市值在合理范围（10亿到1000亿之间），使用CSV数据
+            if 1e9 < sample_cap < 1e11:
+                return df['market_cap'] > self.params['CAP']
+
+        # 从实时数据获取总市值
+        try:
+            # 从股票代码推断市场
+            stock_code = str(df['code'].iloc[0]) if 'code' in df.columns else None
+
+            if stock_code:
+                # 获取实时数据
+                spot_df = ak.stock_individual_info_em(symbol=stock_code)
+                if not spot_df.empty:
+                    # 查找总市值
+                    total_cap_row = spot_df[spot_df['item'] == '总市值']
+                    if not total_cap_row.empty:
+                        total_cap = total_cap_row['value'].values[0]
+                        # 转换为数字（可能是字符串）
+                        if isinstance(total_cap, str):
+                            # 处理"33.19亿"格式
+                            if '亿' in total_cap:
+                                total_cap = float(total_cap.replace('亿', '')) * 1e8
+                            else:
+                                total_cap = float(total_cap)
+
+                        # 创建 Series
+                        return pd.Series([total_cap > self.params['CAP']] * len(df), index=df.index)
+        except Exception as e:
+            # 如果实时获取失败，尝试用收盘价估算
+            if 'close' in df.columns:
+                # 假设总股本2亿股，估算市值
+                estimated_cap = df['close'] * 2e8  # 粗略估计
+                return estimated_cap > self.params['CAP']
+
+        # 默认返回True（不过滤）
+        return pd.Series([True] * len(df), index=df.index)
+
     def select_stocks(self, df, stock_name='') -> list:
         """
         选股逻辑 - 基于最新一天的数据进行筛选
@@ -156,7 +205,11 @@ class BowlReboundStrategy(BaseStrategy):
             invalid_keywords = ['退', '未知', '退市', '已退']
             if any(kw in stock_name for kw in invalid_keywords):
                 return []
-        
+
+            # 过滤 ST/*ST 股票
+            if stock_name.startswith('ST') or stock_name.startswith('*ST'):
+                return []
+
         # 获取最新一天的数据
         latest = df.iloc[0]
         latest_date = latest['date']
@@ -182,11 +235,19 @@ class BowlReboundStrategy(BaseStrategy):
         
         # 3. 异动条件：在M天内存在放量阳线
         lookback_df = df.head(self.params['M'])
+
+        # 剔除：如果回顾期内最大成交量的一天是阴线（最大量是阴量）
+        max_volume_idx = lookback_df['volume'].idxmax()
+        max_volume_row = lookback_df.loc[max_volume_idx]
+        if max_volume_row['close'] < max_volume_row['open']:
+            # 最大成交量那天是阴线，剔除
+            return []
+
         key_candles = lookback_df[
-            (lookback_df['key_candle'] == True) & 
+            (lookback_df['key_candle'] == True) &
             (lookback_df['close'] > lookback_df['open'])
         ]
-        
+
         if key_candles.empty:
             return []
         
