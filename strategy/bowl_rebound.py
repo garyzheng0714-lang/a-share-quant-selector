@@ -12,8 +12,8 @@
 3. 趋势线在上 = 知行短期趋势线 > 知行多空线
    - 短期趋势在多空线上方，表示上升趋势
 
-4. 异动放量阳线 = V>=REF(V,1)*N AND C>O AND 流通市值>CAP
-   - 成交量是前一天的N倍以上 AND 阳线 AND 流通市值达标
+4. 异动放量阳线 = V>=REF(V,1)*N AND C>O AND 总市值>CAP
+   - 成交量是前一天的N倍以上 AND 阳线 AND 总市值达标
 
 5. 异动 = EXIST(关键K线, M)
    - 在M天内存在关键K线
@@ -50,7 +50,7 @@ class BowlReboundStrategy(BaseStrategy):
         default_params = {
             'N': 4,              # 成交量倍数
             'M': 15,             # 回溯天数
-            'CAP': 4000000000,   # 流通市值>40亿
+            'CAP': 4000000000,   # 总市值>40亿
             'J_VAL': 30,         # J值上限
             'duokong_pct': 3,    # 距离多空线百分比(默认3%)
             'short_pct': 2,      # 距离短期趋势线百分比(默认2%)
@@ -124,7 +124,7 @@ class BowlReboundStrategy(BaseStrategy):
         # 阳线：收盘价 > 开盘价
         result['positive_candle'] = result['close'] > result['open']
         
-        # 流通市值达标
+        # 总市值达标
         result['market_cap_ok'] = result['market_cap'] > self.params['CAP']
         
         # 关键K线 = 放量 AND 阳线 AND 市值达标
@@ -156,6 +156,8 @@ class BowlReboundStrategy(BaseStrategy):
             invalid_keywords = ['退', '未知', '退市', '已退']
             if any(kw in stock_name for kw in invalid_keywords):
                 return []
+            if stock_name.startswith('ST') or stock_name.startswith('*ST'):
+                return []
         
         # 获取最新一天的数据
         latest = df.iloc[0]
@@ -182,6 +184,11 @@ class BowlReboundStrategy(BaseStrategy):
         
         # 3. 异动条件：在M天内存在放量阳线
         lookback_df = df.head(self.params['M'])
+        max_volume_idx = lookback_df['volume'].idxmax()
+        max_volume_row = lookback_df.loc[max_volume_idx]
+        if max_volume_row['close'] < max_volume_row['open']:
+            return []
+
         key_candles = lookback_df[
             (lookback_df['key_candle'] == True) & 
             (lookback_df['close'] > lookback_df['open'])

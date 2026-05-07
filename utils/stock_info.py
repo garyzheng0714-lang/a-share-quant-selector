@@ -7,6 +7,7 @@
 
 import json
 import logging
+import requests
 import time
 from datetime import datetime
 from pathlib import Path
@@ -138,18 +139,109 @@ def _load_cached_industry() -> dict[str, str]:
     return {}
 
 
-def fetch_market_caps(force: bool = False) -> dict[str, dict]:
+def _parse_market_cap(value) -> float:
+    """把不同数据源的市值字段统一为元."""
+    if value is None:
+        return 0
+    try:
+        if isinstance(value, str):
+            text = value.strip().replace(",", "")
+            if not text or text in {"-", "--", "nan", "None"}:
+                return 0
+            if text.endswith("亿"):
+                return float(text[:-1]) * 1e8
+            if text.endswith("万"):
+                return float(text[:-1]) * 1e4
+            return float(text)
+        number = float(value)
+        if number != number:
+            return 0
+        return number
+    except (TypeError, ValueError):
+        return 0
+
+
+def _save_market_caps(caps: dict[str, dict]) -> None:
+    cache_data = {**caps, "_updated_at": datetime.now().isoformat()}
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(MARKET_CAP_CACHE, "w", encoding="utf-8") as f:
+        json.dump(cache_data, f, ensure_ascii=False)
+
+
+def _fetch_market_caps_tencent(stock_codes: list[str]) -> dict[str, dict]:
+    """通过腾讯行情接口批量兜底获取总市值，单位统一为元."""
+    caps: dict[str, dict] = {}
+    if not stock_codes:
+        return caps
+
+    batch_size = 100
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+
+    for i in range(0, len(stock_codes), batch_size):
+        batch = stock_codes[i : i + batch_size]
+        query_codes = [
+            f"sh{code}" if code.startswith(("6", "8")) else f"sz{code}"
+            for code in batch
+        ]
+        try:
+            url = f"https://qt.gtimg.cn/q={','.join(query_codes)}"
+            resp = requests.get(url, timeout=30, headers=headers)
+            resp.raise_for_status()
+        except Exception as e:
+            logger.debug("腾讯市值接口批次 [%d] 获取失败: %s", i, e)
+            continue
+
+        for line in resp.text.strip().split(";"):
+            if "v_" not in line or "~" not in line:
+                continue
+            try:
+                code_match = line.split("v_", 1)[1].split("=", 1)[0]
+                code = code_match[2:]
+                parts = line.split("~")
+                if len(parts) < 45:
+                    continue
+                raw_total_mv = str(parts[44]).strip()
+                total_mv = _parse_market_cap(raw_total_mv)
+                if raw_total_mv and not raw_total_mv.endswith("亿"):
+                    total_mv *= 1e8
+                if total_mv > 0:
+                    caps[code] = {"total_mv": total_mv, "circ_mv": total_mv}
+            except Exception:
+                continue
+
+        if i and i % 500 == 0:
+            logger.info("腾讯市值进度: %d/%d", i, len(stock_codes))
+            time.sleep(0.1)
+
+    return caps
+
+
+def fetch_market_caps(
+    force: bool = False, stock_codes: Optional[list[str]] = None
+) -> dict[str, dict]:
     """获取全部 A 股的实时市值数据.
 
     Returns:
         {stock_code: {"total_mv": 总市值, "circ_mv": 流通市值}} (单位: 元)
     """
+    requested_codes = [str(code).zfill(6) for code in stock_codes or []]
+
     if not force and _is_cache_valid(MARKET_CAP_CACHE):
         try:
             with open(MARKET_CAP_CACHE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             caps = {k: v for k, v in data.items() if not k.startswith("_")}
             if caps:
+                missing = [
+                    code
+                    for code in requested_codes
+                    if not caps.get(code, {}).get("total_mv")
+                ]
+                if missing:
+                    caps.update(_fetch_market_caps_tencent(missing))
+                    _save_market_caps(caps)
                 logger.info("从缓存加载市值数据: %d 只股票", len(caps))
                 return caps
         except Exception:
@@ -165,25 +257,34 @@ def fetch_market_caps(force: bool = False) -> dict[str, dict]:
         if spot_df is not None and not spot_df.empty:
             for _, row in spot_df.iterrows():
                 code = str(row.get("代码", ""))
-                total_mv = row.get("总市值", 0)
-                circ_mv = row.get("流通市值", 0)
+                total_mv = _parse_market_cap(row.get("总市值", 0))
+                circ_mv = _parse_market_cap(row.get("流通市值", 0))
                 if code and (total_mv or circ_mv):
                     caps[code] = {
-                        "total_mv": float(total_mv) if total_mv else 0,
-                        "circ_mv": float(circ_mv) if circ_mv else 0,
+                        "total_mv": total_mv,
+                        "circ_mv": circ_mv,
                     }
 
             if caps:
-                cache_data = {**caps, "_updated_at": datetime.now().isoformat()}
-                DATA_DIR.mkdir(parents=True, exist_ok=True)
-                with open(MARKET_CAP_CACHE, "w", encoding="utf-8") as f:
-                    json.dump(cache_data, f, ensure_ascii=False)
+                missing = [
+                    code
+                    for code in requested_codes
+                    if not caps.get(code, {}).get("total_mv")
+                ]
+                if missing:
+                    caps.update(_fetch_market_caps_tencent(missing))
+                _save_market_caps(caps)
                 logger.info("市值数据缓存已保存: %d 只股票", len(caps))
 
     except ImportError:
         logger.error("akshare 未安装，无法获取市值数据")
     except Exception as e:
         logger.error("获取市值数据失败: %s", e)
+
+    if not caps and requested_codes:
+        caps = _fetch_market_caps_tencent(requested_codes)
+        if caps:
+            _save_market_caps(caps)
 
     return caps if caps else _load_cached_market_caps()
 

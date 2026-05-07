@@ -72,15 +72,6 @@ B1_PERFECT_CASES = [
         "description": "靠近多空线+量能平稳+J值中位",
     },
     {
-        "id": "case_005",
-        "name": "澄天伟业",
-        "code": "300689",
-        "breakout_date": "2025-07-15",
-        "lookback_days": 25,
-        "tags": ["创业板", "芯片"],
-        "description": "持续缩量+价格震荡+J值低位",
-    },
-    {
         "id": "case_006",
         "name": "国轩高科",
         "code": "002074",
@@ -124,6 +115,15 @@ B1_PERFECT_CASES = [
         "lookback_days": 25,
         "tags": ["中小板", "医药"],
         "description": "价格接近短期趋势线+缩量+顶部未放量",
+    },
+    {
+        "id": "case_011",
+        "name": "航天发展",
+        "code": "000547",
+        "breakout_date": "2025-11-12",
+        "lookback_days": 25,
+        "tags": ["主板", "军工"],
+        "description": "航天军工+量能异动+趋势突破",
     },
 ]
 

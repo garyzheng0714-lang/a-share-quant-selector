@@ -188,7 +188,7 @@ class AKShareFetcher:
         self._market_cap_cache: dict[str, float] = {}
 
     def _get_real_market_cap(self, stock_code: str) -> float:
-        """获取真实流通市值（带内存缓存）."""
+        """获取真实总市值（带内存缓存）."""
         if stock_code in self._market_cap_cache:
             return self._market_cap_cache[stock_code]
 
@@ -198,14 +198,20 @@ class AKShareFetcher:
         return self._market_cap_cache.get(stock_code, 0)
 
     def _load_market_cap_bulk(self) -> None:
-        """批量加载市值数据到内存缓存."""
+        """批量加载总市值数据到内存缓存."""
         try:
             from utils.stock_info import fetch_market_caps
 
-            caps = fetch_market_caps()
+            known_codes = self.csv_manager.list_all_stocks()
+            if not known_codes:
+                known_codes = list(self._load_local_stock_names().keys())
+
+            caps = fetch_market_caps(stock_codes=known_codes or None)
             for code, data in caps.items():
                 if isinstance(data, dict):
-                    self._market_cap_cache[code] = data.get("circ_mv", 0)
+                    self._market_cap_cache[code] = (
+                        data.get("total_mv") or data.get("circ_mv") or 0
+                    )
                 elif isinstance(data, (int, float)):
                     self._market_cap_cache[code] = float(data)
         except Exception as e:
@@ -797,9 +803,7 @@ class AKShareFetcher:
                 if records:
                     df = pd.DataFrame(records)
                     df["date"] = pd.to_datetime(df["date"])
-                    df["market_cap"] = (
-                        abs(hash(stock_code)) % 500 * 100000000 + 5000000000
-                    )
+                    df["market_cap"] = self._get_real_market_cap(stock_code)
                     df = df.sort_values("date", ascending=False)
                     return df
 
