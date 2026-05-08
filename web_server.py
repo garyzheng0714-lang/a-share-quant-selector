@@ -39,7 +39,6 @@ sys.path.insert(0, str(project_root))
 
 from utils.csv_manager import CSVManager
 from utils.stock_info import (
-    fetch_industry_mapping,
     fetch_market_caps,
     get_stock_profile_cached,
     get_industry_summary,
@@ -86,6 +85,7 @@ _stock_names_cache_ts: float = 0
 _CACHE_TTL = 3600
 _industry_cache: dict | None = None
 _industry_cache_ts: float = 0
+_INDUSTRY_CACHE_FILE = project_root / "data" / "stock_industry.json"
 
 
 def _load_stock_names() -> dict:
@@ -118,10 +118,20 @@ def _get_cached_stock_names() -> dict:
 
 
 def _get_cached_industry() -> dict:
+    """读取本地行业缓存，不在请求链路里实时抓取外部数据."""
     global _industry_cache, _industry_cache_ts
     now = time.time()
     if _industry_cache is None or now - _industry_cache_ts > _CACHE_TTL:
-        _industry_cache = fetch_industry_mapping()
+        _industry_cache = {}
+        if _INDUSTRY_CACHE_FILE.exists():
+            try:
+                with open(_INDUSTRY_CACHE_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                _industry_cache = {
+                    k: v for k, v in data.items() if not k.startswith("_")
+                }
+            except Exception as e:
+                logger.warning("读取行业缓存失败: %s", e)
         _industry_cache_ts = now
     return _industry_cache
 
