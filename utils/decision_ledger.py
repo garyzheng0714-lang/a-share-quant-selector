@@ -103,9 +103,51 @@ def init_decision_ledger() -> None:
                 PRIMARY KEY(model_key, version)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS decision_outcomes (
+                run_id TEXT NOT NULL,
+                code TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                action TEXT NOT NULL,
+                entry_date TEXT,
+                entry_price REAL,
+                ret_1 REAL,
+                net_ret_5 REAL,
+                max_gain_5 REAL,
+                max_drawdown_5 REAL,
+                entry_feasible INTEGER,
+                days_tracked INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(run_id, code),
+                FOREIGN KEY(run_id) REFERENCES decision_runs(run_id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS evolution_runs (
+                evolution_id TEXT PRIMARY KEY,
+                trade_date TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL,
+                data_version TEXT NOT NULL,
+                universe_count INTEGER NOT NULL,
+                covered_count INTEGER NOT NULL,
+                coverage_ratio REAL NOT NULL,
+                labels_updated INTEGER NOT NULL DEFAULT 0,
+                dataset_rows INTEGER NOT NULL DEFAULT 0,
+                challenger_version TEXT,
+                promotion_status TEXT NOT NULL,
+                reason_codes_json TEXT NOT NULL,
+                metrics_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_decision_runs_date ON decision_runs(trade_date, stage)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_candidates_run_rank ON decision_candidates(run_id, rank_no)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_event_code_time ON event_evidence(code, published_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_status ON decision_outcomes(status, trade_date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_evolution_date ON evolution_runs(trade_date)")
 
 
 def make_run_id(trade_date: str, stage: str, strategy: str, data: str) -> str:
@@ -249,6 +291,145 @@ def register_model(model: dict) -> None:
             _json(model.get("metrics", {})), _json(model.get("source_refs", [])),
             _json(model.get("artifact", {})), now,
         ))
+
+
+def promote_model_bundle(version: str, validation_status: dict[str, str],
+                         required: tuple[str, ...] = ("market", "sector")) -> dict:
+    """原子晋级同一版本的模型，禁止线上混用不同训练批次。"""
+    init_decision_ledger()
+    if not all(validation_status.get(key) == "active" for key in required):
+        return {"promoted": False, "reason": "required_layers_not_validated"}
+    active_keys = sorted(key for key, status in validation_status.items() if status == "active")
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT model_key FROM model_registry WHERE version = ?", (version,)
+        ).fetchall()
+        registered = {row["model_key"] for row in rows}
+        if not set(required).issubset(registered):
+            return {"promoted": False, "reason": "bundle_incomplete"}
+        conn.execute("UPDATE model_registry SET status = 'shadow' WHERE status = 'active'")
+        placeholders = ",".join("?" for _ in active_keys)
+        conn.execute(
+            f"UPDATE model_registry SET status = 'active' "
+            f"WHERE version = ? AND model_key IN ({placeholders})",
+            [version, *active_keys],
+        )
+    return {"promoted": True, "version": version, "model_keys": active_keys}
+
+
+def list_pending_outcome_candidates() -> list[dict]:
+    """返回仍需真实行情回填的全部决策候选，包括 observe/avoid。"""
+    init_decision_ledger()
+    with _get_conn() as conn:
+        rows = conn.execute("""
+            SELECT r.run_id, r.trade_date, r.stage,
+                   c.code, c.name, c.action,
+                   COALESCE(o.status, 'pending') AS outcome_status
+            FROM decision_candidates c
+            JOIN decision_runs r ON r.run_id = c.run_id
+            LEFT JOIN decision_outcomes o ON o.run_id = c.run_id AND o.code = c.code
+            WHERE o.status IS NULL OR o.status NOT IN ('complete', 'invalid')
+            ORDER BY r.trade_date, r.stage, c.rank_no
+        """).fetchall()
+    return [dict(row) for row in rows]
+
+
+def upsert_decision_outcome(outcome: dict) -> None:
+    init_decision_ledger()
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    with _get_conn() as conn:
+        conn.execute("""
+            INSERT INTO decision_outcomes
+              (run_id, code, stage, trade_date, action, entry_date, entry_price,
+               ret_1, net_ret_5, max_gain_5, max_drawdown_5, entry_feasible,
+               days_tracked, status, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, code) DO UPDATE SET
+              action=excluded.action, entry_date=excluded.entry_date,
+              entry_price=excluded.entry_price, ret_1=excluded.ret_1,
+              net_ret_5=excluded.net_ret_5, max_gain_5=excluded.max_gain_5,
+              max_drawdown_5=excluded.max_drawdown_5,
+              entry_feasible=excluded.entry_feasible,
+              days_tracked=excluded.days_tracked, status=excluded.status,
+              updated_at=excluded.updated_at
+        """, (
+            outcome["run_id"], outcome["code"], outcome["stage"], outcome["trade_date"],
+            outcome["action"], outcome.get("entry_date"), outcome.get("entry_price"),
+            outcome.get("ret_1"), outcome.get("net_ret_5"), outcome.get("max_gain_5"),
+            outcome.get("max_drawdown_5"), outcome.get("entry_feasible"),
+            outcome.get("days_tracked", 0), outcome.get("status", "pending"), now,
+        ))
+
+
+def outcome_summary() -> dict:
+    """同时衡量命中率、错过上涨和躲过下跌，避免只看推荐票。"""
+    init_decision_ledger()
+    with _get_conn() as conn:
+        rows = [dict(row) for row in conn.execute(
+            "SELECT action, net_ret_5 FROM decision_outcomes "
+            "WHERE status = 'complete' AND net_ret_5 IS NOT NULL"
+        ).fetchall()]
+    result = {}
+    for action in ("buy", "observe", "avoid"):
+        values = [row["net_ret_5"] for row in rows if row["action"] == action]
+        result[action] = {
+            "count": len(values),
+            "win_rate": round(sum(value > 0 for value in values) / len(values), 4) if values else None,
+            "avg_net_ret_5": round(sum(values) / len(values), 4) if values else None,
+        }
+    non_buy = [row["net_ret_5"] for row in rows if row["action"] != "buy"]
+    result["missed_winner_rate"] = (
+        round(sum(value > 0 for value in non_buy) / len(non_buy), 4) if non_buy else None
+    )
+    return result
+
+
+def save_evolution_run(run: dict) -> str:
+    init_decision_ledger()
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    evolution_id = run.get("evolution_id") or hashlib.sha256(
+        f"{run['trade_date']}|{run['data_version']}".encode()
+    ).hexdigest()[:24]
+    with _get_conn() as conn:
+        conn.execute("""
+            INSERT INTO evolution_runs
+              (evolution_id, trade_date, status, data_version, universe_count,
+               covered_count, coverage_ratio, labels_updated, dataset_rows,
+               challenger_version, promotion_status, reason_codes_json,
+               metrics_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(trade_date) DO UPDATE SET
+              evolution_id=excluded.evolution_id, status=excluded.status,
+              data_version=excluded.data_version, universe_count=excluded.universe_count,
+              covered_count=excluded.covered_count, coverage_ratio=excluded.coverage_ratio,
+              labels_updated=excluded.labels_updated, dataset_rows=excluded.dataset_rows,
+              challenger_version=excluded.challenger_version,
+              promotion_status=excluded.promotion_status,
+              reason_codes_json=excluded.reason_codes_json,
+              metrics_json=excluded.metrics_json, updated_at=excluded.updated_at
+        """, (
+            evolution_id, run["trade_date"], run["status"], run["data_version"],
+            run["universe_count"], run["covered_count"], run["coverage_ratio"],
+            run.get("labels_updated", 0), run.get("dataset_rows", 0),
+            run.get("challenger_version"), run.get("promotion_status", "not_evaluated"),
+            _json(run.get("reason_codes", [])), _json(run.get("metrics", {})), now, now,
+        ))
+    return evolution_id
+
+
+def get_latest_evolution() -> dict | None:
+    init_decision_ledger()
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM evolution_runs ORDER BY trade_date DESC, updated_at DESC LIMIT 1"
+        ).fetchone()
+    if row is None:
+        return None
+    item = dict(row)
+    item["reason_codes"] = _loads(item.pop("reason_codes_json"), [])
+    item["metrics"] = _loads(item.pop("metrics_json"), {})
+    item["outcomes"] = outcome_summary()
+    return item
 
 
 def get_active_models() -> dict[str, dict]:

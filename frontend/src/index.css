@@ -42,7 +42,7 @@
   body {
     @apply text-ink antialiased font-sans;
     background: #000000;
-    min-height: 100vh;
+    min-height: 100dvh;
   }
 
   ::selection {
@@ -67,6 +67,15 @@
   }
   ::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.18);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 

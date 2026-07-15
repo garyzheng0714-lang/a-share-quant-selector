@@ -11,8 +11,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_FILES = (
-    PROJECT_ROOT / "strategy" / "factors" / "momentum_family.py",
-    PROJECT_ROOT / "utils" / "quant_pick.py",
+    PROJECT_ROOT / "strategy" / "super_b1.py",
+    PROJECT_ROOT / "utils" / "super_b1_scan.py",
     PROJECT_ROOT / "utils" / "hierarchical_decision.py",
     PROJECT_ROOT / "utils" / "execution_model.py",
     PROJECT_ROOT / "utils" / "event_risk.py",
@@ -20,7 +20,7 @@ BASELINE_FILES = (
     PROJECT_ROOT / "utils" / "data_freshness.py",
 )
 
-FEATURE_VERSION = "hierarchy-v1"
+FEATURE_VERSION = "b1-hierarchy-v2"
 LEDGER_VERSION = "decision-ledger-v1"
 
 
@@ -35,7 +35,7 @@ def _digest_files(paths: tuple[Path, ...]) -> str:
 
 def strategy_version() -> str:
     """纯规则基线的内容指纹。"""
-    return f"cloud-stair-{_digest_files(BASELINE_FILES)}"
+    return f"super-b1-{_digest_files(BASELINE_FILES)}"
 
 
 def data_version(data_dir: str | Path = "data") -> str:
