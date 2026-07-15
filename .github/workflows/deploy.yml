@@ -52,6 +52,8 @@ jobs:
               return 1
             }
 
+            git config --global --add safe.directory "$DEPLOY_DIR"
+
             # First-time setup: clone repo (preserve config)
             if [ ! -d "$DEPLOY_DIR/.git" ]; then
               echo ">>> First deploy: initializing git repo"
