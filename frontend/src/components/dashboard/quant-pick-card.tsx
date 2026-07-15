@@ -57,22 +57,22 @@ function CandidateRow({ item, list }: { item: DecisionCandidate; list: DecisionC
         setStockNav(toNav(list), list.findIndex((stock) => stock.code === item.code));
         navigate(`/stock/${item.code}`);
       }}
-      className="grid min-h-16 w-full grid-cols-[1fr_auto] items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-hover active:bg-inset"
+      className="grid min-h-[74px] w-full grid-cols-[1fr_auto] items-center gap-4 px-5 py-3.5 text-left transition-colors duration-200 hover:bg-surface-hover active:bg-inset"
     >
       <span className="min-w-0">
         <span className="flex items-baseline gap-2">
-          <span className="truncate text-[15px] font-semibold text-ink">{item.name}</span>
-          <span className="font-mono text-[10px] text-ink-muted">{item.code}</span>
+          <span className="truncate text-base font-semibold tracking-[-0.01em] text-ink">{item.name}</span>
+          <span className="font-mono text-[11px] text-ink-muted">{item.code}</span>
         </span>
-        <span className="mt-1 flex min-w-0 items-center gap-2 text-[11px] text-ink-muted">
+        <span className="mt-1.5 flex min-w-0 items-center gap-2 text-xs text-ink-muted">
           <span className="truncate">{item.industry || "未知板块"}</span>
           {item.sector?.score != null && <span className="num shrink-0">{Math.round(item.sector.score)} 分</span>}
           <span className="shrink-0 text-ink-secondary">{signal}</span>
         </span>
       </span>
       <span className="text-right">
-        <span className="num block text-sm text-ink">{item.baseline.close?.toFixed(2) ?? "-"}</span>
-        <span className={`mt-1 block text-[11px] font-medium ${action.className}`}>{action.label}</span>
+        <span className="num block text-base font-medium text-ink">{item.baseline.close?.toFixed(2) ?? "-"}</span>
+        <span className={`mt-1 block text-xs font-medium ${action.className}`}>{action.label}</span>
       </span>
     </button>
   );
@@ -131,23 +131,24 @@ export function QuantPickCard() {
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: duration.normal }}
-      className="overflow-hidden card-modern"
+      className="decision-panel"
       data-testid="hierarchical-decision"
     >
-      <div className={`border-l-2 px-4 py-4 ${canBuy ? "border-bull" : "border-accent"}`}>
+      <div className="px-5 py-5">
         <div className="flex items-start gap-3">
-          <div className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-[10px] ${canBuy ? "bg-bull-dim text-bull" : "bg-accent-dim text-accent"}`}>
+          <div className={`mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-[10px] ${canBuy ? "bg-bull-dim text-bull" : "bg-accent-dim text-accent"}`}>
             {canBuy ? <ShieldCheck size={18} /> : <CircleMinus size={18} />}
           </div>
           <div>
-            <h2 className="text-xl font-semibold tracking-[-0.03em] text-ink">{decisionTitle}</h2>
-            <p className="mt-1 text-xs leading-relaxed text-ink-secondary">{decisionNote}</p>
-            <p className="mt-2 text-[10px] text-ink-muted">{data.market?.decision_for_date ?? "下一交易日"}计划，使用 {data.trade_date} 收盘数据</p>
+            <p className="section-kicker">今日策略</p>
+            <h2 className="mt-1.5 text-[26px] font-semibold tracking-[-0.04em] text-ink">{decisionTitle}</h2>
+            <p className="mt-2 text-sm leading-relaxed text-ink-secondary">{decisionNote}</p>
+            <p className="mt-3 text-xs text-ink-muted">{data.market?.decision_for_date ?? "下一交易日"}计划，使用 {data.trade_date} 收盘数据</p>
           </div>
         </div>
       </div>
 
-      <div className="flex items-center justify-between border-t border-border px-4 py-3">
+      <div className="flex items-center justify-between border-t border-border bg-inset px-5 py-3.5">
         <h3 className="text-sm font-semibold text-ink">B1 股票</h3>
         <span className="num text-xs text-ink-muted">{candidates.length} 只</span>
       </div>
@@ -163,7 +164,7 @@ export function QuantPickCard() {
         </>
       ) : <p className="border-t border-border px-4 py-5 text-sm text-ink-muted">今天没有 B1 信号。</p>}
 
-      <details className="border-t border-border px-4 py-3 text-[11px] text-ink-muted">
+      <details className="border-t border-border px-5 py-3.5 text-xs text-ink-muted">
         <summary className="cursor-pointer select-none font-medium text-ink-secondary hover:text-ink">为什么</summary>
         <div className="mt-3 space-y-2 rounded-[10px] bg-inset px-3 py-3">
           <div className="flex justify-between"><span>大环境</span><span>{modelState(modelFor(models, "market"))}</span></div>

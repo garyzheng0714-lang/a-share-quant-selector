@@ -10,17 +10,17 @@ const actionLabel = { buy: "买入", observe: "观察", avoid: "回避", none: "
 
 function StockRow({ stock, onOpen }: { stock: SectorDetailStock; onOpen: () => void }) {
   return (
-    <button onClick={onOpen} className="grid min-h-16 w-full grid-cols-[1fr_auto_16px] items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-hover active:bg-inset">
+    <button onClick={onOpen} className="grid min-h-[72px] w-full grid-cols-[1fr_auto_16px] items-center gap-3 px-5 py-3.5 text-left transition-colors duration-200 hover:bg-surface-hover active:bg-inset">
       <span className="min-w-0">
         <span className="flex items-baseline gap-2">
-          <span className="truncate text-[15px] font-semibold text-ink">{stock.name}</span>
-          <span className="font-mono text-[10px] text-ink-muted">{stock.code}</span>
+          <span className="truncate text-base font-semibold tracking-[-0.01em] text-ink">{stock.name}</span>
+          <span className="font-mono text-[11px] text-ink-muted">{stock.code}</span>
         </span>
-        <span className={`mt-1 block truncate text-[11px] ${stock.b1 ? "text-accent-light" : "text-ink-muted"}`}>
+        <span className={`mt-1.5 block truncate text-xs ${stock.b1 ? "text-accent-light" : "text-ink-muted"}`}>
           {stock.b1_signals[0] ?? (stock.confirmation_count > 0 ? `辅助信号 ${stock.confirmation_count} 个` : "暂无 B1")}
         </span>
       </span>
-      <span className={`text-xs font-medium ${stock.action === "buy" ? "text-bull" : stock.action === "avoid" ? "text-bear" : "text-ink-muted"}`}>{actionLabel[stock.action]}</span>
+      <span className={`text-xs font-medium ${stock.action === "buy" ? "text-bull" : stock.action === "avoid" ? "text-bear" : stock.action === "observe" ? "text-accent" : "text-ink-muted"}`}>{actionLabel[stock.action]}</span>
       <ChevronRight size={14} className="text-ink-muted" />
     </button>
   );
@@ -50,28 +50,29 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="mx-auto max-w-4xl px-4 py-5 sm:px-6 sm:py-8">
-        <Link to="/sectors" className="mb-5 inline-flex min-h-9 items-center gap-2 text-xs text-ink-muted transition-colors hover:text-ink"><ArrowLeft size={14} />板块</Link>
+      <div className="mx-auto max-w-4xl px-4 py-7 sm:px-6 sm:py-10">
+        <Link to="/sectors" className="mb-7 inline-flex min-h-9 items-center gap-2 text-xs text-ink-muted transition-colors hover:text-accent"><ArrowLeft size={14} />返回板块</Link>
 
-        <header className="mb-4">
+        <header className="mb-6">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold tracking-[-0.04em] text-ink">{sectorName}</h1>
-              <p className="mt-1 text-sm text-ink-muted">排名 {state?.rank ?? "-"}，{state?.stage ?? "未评级"}</p>
+              <h1 className="text-[30px] font-semibold tracking-[-0.045em] text-ink">{sectorName}</h1>
+              <p className="mt-1.5 text-sm text-ink-muted">排名 {state?.rank ?? "-"}，{state?.stage ?? "未评级"}</p>
             </div>
             <div className="text-right">
-              <p className="num text-3xl font-semibold text-ink">{state?.score == null ? "-" : Math.round(state.score)}</p>
-              <p className="text-[10px] text-ink-muted">强度</p>
+              <p className="num text-[36px] font-semibold tracking-[-0.04em] text-accent">{state?.score == null ? "-" : Math.round(state.score)}</p>
+              <p className="mt-0.5 text-xs text-ink-muted">强度</p>
             </div>
           </div>
         </header>
 
-        <section className="mb-4 rounded-[14px] border-l-2 border-accent bg-surface px-4 py-3">
-          <p className="text-sm font-semibold text-ink">B1 {recommended.length} 只</p>
-          <p className="mt-1 text-xs text-ink-muted">列表已把 B1 股票排在前面。</p>
+        <section className="decision-panel mb-4 px-5 py-4">
+          <p className="section-kicker">板块机会</p>
+          <p className="mt-1.5 text-xl font-semibold text-ink">B1 {recommended.length} 只</p>
+          <p className="mt-1.5 text-sm text-ink-muted">B1 股票已排在列表前面。</p>
         </section>
 
-        <details className="mb-4 rounded-[12px] bg-surface px-4 py-3 text-xs text-ink-muted">
+        <details className="mb-6 rounded-[12px] border border-border bg-surface/60 px-5 py-3.5 text-xs text-ink-muted">
           <summary className="flex cursor-pointer list-none items-center justify-between text-ink-secondary">为什么排在这里<ChevronDown size={14} /></summary>
           <div className="mt-3 grid grid-cols-2 gap-2">
             {metrics.map((metric) => (
@@ -84,7 +85,7 @@ export function Component() {
         </details>
 
         <section className="overflow-hidden card-modern">
-          <div className="flex items-center justify-between px-4 py-3">
+          <div className="flex items-center justify-between bg-inset px-5 py-3.5">
             <h2 className="text-sm font-semibold text-ink">板块股票</h2>
             <span className="num text-xs text-ink-muted">{stocks.length} 只</span>
           </div>
