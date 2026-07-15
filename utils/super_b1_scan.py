@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).parent.parent / "data"
 CACHE_FILE = DATA_DIR / "super_b1_cache.json"
 CAP_FILE = DATA_DIR / "stock_market_cap.json"
+CACHE_SCHEMA_VERSION = 2
 _lock = threading.Lock()
 
 # 需要的K线根数：MA114 预热 + EXIST(...,200) 回看 + 余量
@@ -64,6 +65,10 @@ def _scan_one(args):
         if hit and hit.get("cap_missing"):
             return None, False, True
         if hit:
+            from utils.technical import weekly_four_ma_bullish
+
+            weekly_passed, weekly_detail = weekly_four_ma_bullish(df)
+            hit["weekly"] = {"passed": weekly_passed, **weekly_detail}
             hit["code"] = code
             hit["name"] = name
         return hit, False, False
@@ -127,6 +132,7 @@ def compute_scan(csv_manager, stock_names: dict) -> dict:
         )
     return {
         "available": True,
+        "schema_version": CACHE_SCHEMA_VERSION,
         "trade_date": trade_date,
         "total_scanned": len(tasks),
         "hits": hits,
@@ -144,7 +150,11 @@ def get_super_b1(csv_manager, stock_names: dict, force: bool = False) -> dict:
             try:
                 with open(CACHE_FILE, encoding="utf-8") as f:
                     cached = json.load(f)
-                if cached.get("available") and cached.get("trade_date") == _latest_data_date(csv_manager):
+                if (
+                    cached.get("available")
+                    and cached.get("schema_version") == CACHE_SCHEMA_VERSION
+                    and cached.get("trade_date") == _latest_data_date(csv_manager)
+                ):
                     return cached
             except Exception:
                 pass

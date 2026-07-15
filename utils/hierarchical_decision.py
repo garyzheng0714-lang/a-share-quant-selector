@@ -173,6 +173,7 @@ def run_close_decision(as_of: str | None = None) -> dict:
                 "confirmation_count": len(row.get("confirmations") or []),
                 "close": row.get("close"), "J": row.get("J"),
                 "RSI": row.get("RSI"), "cap_yi": row.get("cap_yi"),
+                "weekly": row.get("weekly"),
             },
             "market": {"probability": market_p, "threshold": market_t},
             "sector": {**(row.get("sector") or {}), "probability": sector_p, "threshold": sector_t},

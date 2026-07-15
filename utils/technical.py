@@ -217,11 +217,18 @@ def weekly_four_ma_bullish(df, periods=(5, 10, 20, 60)):
         last_vals[ordered[i]] > last_vals[ordered[i + 1]]
         for i in range(len(ordered) - 1)
     )
-    rising = all(last_vals[p] > prev_vals[p] for p in periods)
+    directions = {
+        f'MA{p}': bool(last_vals[p] > prev_vals[p])
+        for p in periods
+    }
+    rising_count = sum(directions.values())
+    rising = rising_count == len(periods)
 
     detail = {
         'aligned': aligned,
         'rising': rising,
+        'rising_count': rising_count,
+        'directions': directions,
         'ma_values': {f'MA{p}': round(float(last_vals[p]), 3) for p in periods},
     }
     return aligned and rising, detail
