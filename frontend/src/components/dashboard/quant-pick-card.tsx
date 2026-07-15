@@ -212,6 +212,7 @@ function CandidateRow({ item, list }: { item: DecisionCandidate; list: DecisionC
 }
 
 export function QuantPickCard() {
+  const [showAllCandidates, setShowAllCandidates] = useState(false);
   const { data, isLoading, error, mutate } = useLatestDecision();
   const { data: evolutionResponse } = useEvolutionStatus();
   if (isLoading) return <Skeleton className="h-32 w-full rounded-[14px]" />;
@@ -237,6 +238,7 @@ export function QuantPickCard() {
 
   const action = ACTION[data.final_action ?? "none"];
   const candidates = data.candidates ?? [];
+  const visibleCandidates = showAllCandidates ? candidates : candidates.slice(0, 5);
   const buys = candidates.filter((item) => item.action === "buy");
   const models = data.models ?? [];
   const degraded = data.status === "degraded" || models.some((model) => ["market", "sector"].includes(model.model_key) && model.status !== "active");
@@ -271,7 +273,19 @@ export function QuantPickCard() {
           <h3 className="text-xs font-semibold text-ink">{buys.length ? "可执行名单" : "观察名单"}</h3>
           <span className="num text-[10px] text-ink-muted">{candidates.length} 只</span>
         </div>
-        {candidates.length ? candidates.map((item) => <CandidateRow key={item.code} item={item} list={candidates} />) : <p className="py-4 text-xs text-ink-muted">没有 B1 候选，保持空仓。</p>}
+        {candidates.length ? (
+          <>
+            <div className="reveal-list">
+              {visibleCandidates.map((item) => <CandidateRow key={item.code} item={item} list={candidates} />)}
+            </div>
+            {candidates.length > 5 && (
+              <button onClick={() => setShowAllCandidates((value) => !value)} className="flex w-full items-center justify-center gap-2 border-t border-border py-3 text-xs font-medium text-accent hover:text-accent-hover">
+                {showAllCandidates ? "收起观察名单" : `还有 ${candidates.length - 5} 只，查看全部`}
+                <ChevronDown size={14} className={`transition-transform ${showAllCandidates ? "rotate-180" : ""}`} />
+              </button>
+            )}
+          </>
+        ) : <p className="py-4 text-xs text-ink-muted">没有 B1 候选，保持空仓。</p>}
       </div>
 
       <details className="border-t border-border px-4 py-3 text-[10px] text-ink-muted sm:px-5">
