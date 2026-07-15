@@ -14,18 +14,18 @@ export function BottomNav() {
   const activeIndex = navItems.findIndex((item) => item.matches.some((path) => location.pathname.startsWith(path)));
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 sm:hidden glass border-t border-border pb-[env(safe-area-inset-bottom)]">
-      <div className="grid grid-cols-2 h-14">
+    <nav className="glass fixed inset-x-0 bottom-0 z-50 border-t pb-[env(safe-area-inset-bottom)] sm:hidden" aria-label="手机主导航">
+      <div className="grid h-15 grid-cols-2">
         {navItems.map((item, i) => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.end}
-            className="relative flex flex-col items-center justify-center gap-0.5"
+            className="relative flex flex-col items-center justify-center gap-1 active:scale-[0.98]"
           >
             <item.Icon
               size={20}
-              strokeWidth={1.75}
+              strokeWidth={1.8}
               className={`transition-colors duration-150 ${
                 i === activeIndex ? "text-accent" : "text-ink-muted"
               }`}
@@ -42,7 +42,7 @@ export function BottomNav() {
             {i === activeIndex && (
               <motion.div
                 layoutId="bottom-nav-indicator"
-                className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full bg-accent"
+                className="absolute top-0 left-1/2 h-0.5 w-10 -translate-x-1/2 rounded-full bg-accent"
                 transition={{
                   type: "spring",
                   damping: 25,

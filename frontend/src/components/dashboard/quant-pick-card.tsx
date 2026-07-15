@@ -51,7 +51,7 @@ function EvolutionStrip({ evolution }: { evolution: EvolutionStatus }) {
     .slice(0, 2)
     .join("；");
   return (
-    <div className="mt-3 rounded-xl border border-border/60 bg-inset px-3 py-2.5">
+    <div className="mt-3 rounded-[10px] bg-inset px-3 py-2.5">
       <div className="flex items-center gap-2">
         <motion.span
           animate={{ rotate: promoted ? 360 : 0 }}
@@ -65,17 +65,10 @@ function EvolutionStrip({ evolution }: { evolution: EvolutionStatus }) {
           {promoted ? "挑战模型已晋级" : "冠军模型保持不变"}
         </span>
       </div>
-      <div className="mt-2 h-1 overflow-hidden rounded-full bg-border/70">
-        <motion.div
-          initial={{ width: 0 }} animate={{ width: `${coverage}%` }}
-          transition={{ duration: duration.slow }}
-          className={`h-full rounded-full ${coverage >= 60 ? "bg-bull" : "bg-accent"}`}
-        />
-      </div>
       <p className="mt-1.5 text-[10px] leading-relaxed text-ink-muted">
         覆盖 {evolution.covered_count}/{evolution.universe_count}（{coverage.toFixed(1)}%）
-        {evolution.dataset_rows ? ` · 训练样本 ${evolution.dataset_rows}` : ""}
-        {reason ? ` · ${reason}` : ""}
+        {evolution.dataset_rows ? ` / 训练样本 ${evolution.dataset_rows}` : ""}
+        {reason ? ` / ${reason}` : ""}
       </p>
     </div>
   );
@@ -166,7 +159,7 @@ function CandidateRow({ item, list }: { item: DecisionCandidate; list: DecisionC
               {item.name}
             </span>
             <span className="font-mono text-[11px] text-ink-muted">{item.code}</span>
-            <span className="ml-auto num text-sm text-ink">{item.baseline.close?.toFixed(2) ?? "—"}</span>
+            <span className="ml-auto num text-sm text-ink">{item.baseline.close?.toFixed(2) ?? "-"}</span>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-ink-muted">
             <span>{item.industry || "未知板块"}</span>
@@ -221,7 +214,7 @@ function CandidateRow({ item, list }: { item: DecisionCandidate; list: DecisionC
 export function QuantPickCard() {
   const { data, isLoading, error, mutate } = useLatestDecision();
   const { data: evolutionResponse } = useEvolutionStatus();
-  if (isLoading) return <Skeleton className="h-72 w-full rounded-2xl" />;
+  if (isLoading) return <Skeleton className="h-32 w-full rounded-[14px]" />;
   if (error) return <LoadError label="分层决策加载失败" onRetry={() => mutate()} />;
   if (!data?.available) {
     const stale = data?.reason === "stale_market_data";
@@ -247,6 +240,9 @@ export function QuantPickCard() {
   const buys = candidates.filter((item) => item.action === "buy");
   const models = data.models ?? [];
   const degraded = data.status === "degraded" || models.some((model) => ["market", "sector"].includes(model.model_key) && model.status !== "active");
+  const reasonText = data.reason_codes?.length
+    ? data.reason_codes.map((code) => REASONS[code] || code).join("；")
+    : "上层环境没有给出足够胜率";
 
   return (
     <motion.section
@@ -254,62 +250,43 @@ export function QuantPickCard() {
       transition={{ duration: duration.normal }} className="card-modern overflow-hidden"
       data-testid="hierarchical-decision"
     >
-      <div className="border-b border-border/50 px-4 py-4">
+      <div className={`border-l-2 px-4 py-4 sm:px-5 ${buys.length ? "border-bull" : "border-accent"}`}>
         <div className="flex items-start gap-3">
-          <div className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl ${degraded ? "bg-accent-dim text-accent" : "bg-bull-dim text-bull"}`}>
-            {degraded ? <ShieldAlert size={17} /> : <ShieldCheck size={17} />}
+          <div className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-[10px] ${buys.length ? "bg-bull-dim text-bull" : "bg-accent-dim text-accent"}`}>
+            {buys.length ? <ShieldCheck size={18} /> : <CircleMinus size={18} />}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-sm font-semibold text-ink">B1 个股排名</h2>
+              <h2 className="text-lg font-semibold tracking-[-0.03em] text-ink">{buys.length ? `今天可执行 ${buys.length} 只` : "今天不出手"}</h2>
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${action.className}`}>{action.label}</span>
-              <span className="text-[10px] text-ink-muted">{data.stage === "preopen" ? "盘前复核" : "收盘初筛"}</span>
             </div>
-            <p className="mt-1 text-[11px] leading-relaxed text-ink-muted">
-              {data.market?.decision_for_date ? `${data.market.decision_for_date} 交易计划` : "下一交易日计划"}
-              {" · "}依据 {data.trade_date} 收盘数据
-            </p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-secondary">{buys.length ? "候选已通过大环境、板块与 B1 主判。" : `${reasonText}，候选仅保留观察。`}</p>
+            <p className="mt-2 text-[10px] text-ink-muted">{data.market?.decision_for_date ? `${data.market.decision_for_date} 计划` : "下一交易日计划"} / {data.trade_date} 收盘数据</p>
           </div>
         </div>
+      </div>
+
+      <div className="border-t border-border px-4 py-3 sm:px-5">
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <h3 className="text-xs font-semibold text-ink">{buys.length ? "可执行名单" : "观察名单"}</h3>
+          <span className="num text-[10px] text-ink-muted">{candidates.length} 只</span>
+        </div>
+        {candidates.length ? candidates.map((item) => <CandidateRow key={item.code} item={item} list={candidates} />) : <p className="py-4 text-xs text-ink-muted">没有 B1 候选，保持空仓。</p>}
+      </div>
+
+      <details className="border-t border-border px-4 py-3 text-[10px] text-ink-muted sm:px-5">
+        <summary className="cursor-pointer select-none font-medium text-ink-secondary hover:text-ink">查看判定依据</summary>
         <div className="mt-4"><GateRail models={models} /></div>
-        <details className="mt-3 rounded-xl border border-border/60 bg-inset px-3 py-2 text-[10px] leading-relaxed text-ink-muted">
-          <summary className="min-h-6 cursor-pointer select-none text-ink-secondary">大环境和板块具体怎么判</summary>
-          <p className="mt-1.5">大环境看全市场1/5/20日收益、上涨家数占比、成交额5日对20日、跌停占比，以及等权指数相对20/60日均线。</p>
-          <p className="mt-1">板块再看相对市场强弱、板块广度、成交占比、波动分散度和有效成分股数。模型没有通过跨月份样本外验证时，显示“尚未验证”，不等同于断言市场一定会跌。</p>
+        <div className="mt-4 rounded-[10px] bg-inset px-3 py-2.5 leading-relaxed">
+          <p>大环境看收益、上涨家数、成交额、跌停占比与均线位置。</p>
+          <p className="mt-1">板块看相对强弱、广度、成交占比、波动分散度和有效成分股数。</p>
+          {degraded && <p className="mt-1 text-accent">当前市场或板块模型尚未通过样本外验证，因此自动降级。</p>}
+        </div>
+        {evolutionResponse?.available && evolutionResponse.data && <EvolutionStrip evolution={evolutionResponse.data} />}
+        <details className="mt-3">
+          <summary className="cursor-pointer hover:text-ink-secondary">版本与审计信息</summary>
+          <div className="mt-2 space-y-1 break-all font-mono"><p>run {data.run_id}</p><p>strategy {data.strategy_version}</p><p>feature {data.feature_version}</p><p>model {data.model_version}</p><p>data {data.data_version}</p></div>
         </details>
-        {evolutionResponse?.available && evolutionResponse.data && (
-          <EvolutionStrip evolution={evolutionResponse.data} />
-        )}
-      </div>
-
-      <div className="px-4 py-3.5">
-        {buys.length === 0 && (
-          <div className="mb-3 flex items-start gap-2 rounded-xl border border-accent/20 bg-accent-dim px-3 py-2.5">
-            <CircleMinus size={15} className="mt-0.5 shrink-0 text-accent" />
-            <p className="text-xs leading-relaxed text-ink-secondary">
-              <b className="text-ink">今天不推荐买入。</b>
-              {data.reason_codes?.length
-                ? ` ${data.reason_codes.map((code) => REASONS[code] || code).join("；")}。`
-                : " 上层环境未给出足够胜率，候选只保留用于观察。"}
-            </p>
-          </div>
-        )}
-        <div className="mb-1 flex items-center gap-1.5">
-          {buys.length ? <Check size={13} className="text-bull" /> : <CircleMinus size={13} className="text-ink-muted" />}
-          <span className="text-xs font-semibold text-ink">{buys.length ? `可执行 ${buys.length} 只` : "候选证据链"}</span>
-          <span className="text-[10px] text-ink-muted">B1主判，辅助因子不单独荐票</span>
-        </div>
-        {candidates.length ? candidates.map((item) => <CandidateRow key={item.code} item={item} list={candidates} />) : (
-          <p className="py-5 text-center text-xs text-ink-muted">基础形态也没有命中，保持空仓。</p>
-        )}
-      </div>
-
-      <details className="border-t border-border/50 px-4 py-3 text-[10px] text-ink-muted">
-        <summary className="cursor-pointer select-none hover:text-ink-secondary">版本与审计信息</summary>
-        <div className="mt-2 space-y-1 font-mono break-all">
-          <p>run {data.run_id}</p><p>strategy {data.strategy_version}</p>
-          <p>feature {data.feature_version}</p><p>model {data.model_version}</p><p>data {data.data_version}</p>
-        </div>
       </details>
     </motion.section>
   );

@@ -16,7 +16,7 @@ import type { FactorHit, FactorMeta, FactorsResponse, SignalStock } from "@/lib/
  */
 
 /** FactorHit → SignalStock：联动导航只消费 code/name/close/industry，其余字段填缺省 */
-export function toNavStocks(hits: FactorHit[]): SignalStock[] {
+function toNavStocks(hits: FactorHit[]): SignalStock[] {
   return hits.map((h) => ({
     code: h.code,
     name: h.name,
@@ -162,28 +162,39 @@ export function FactorWorkbench() {
   const hitRank = (f: FactorMeta) =>
     f.today_hits === null || f.today_hits === undefined ? -1 : f.today_hits;
   const gold = meta.factors.filter((f) => f.track?.grade === "short_robust");
+  const usable = meta.factors.filter((f) =>
+    ["short_robust", "short_ok"].includes(f.track?.grade ?? ""),
+  );
+  const negative = meta.factors.filter((f) => f.track?.grade === "negative");
 
   return (
     <section data-testid="factor-workbench">
+      <div className="mb-4 grid grid-cols-3 gap-2">
+        <div className="rounded-xl bg-surface px-3 py-2.5">
+          <div className="text-lg font-semibold text-ink tabular-nums">{meta.factors.length}</div>
+          <div className="text-[10px] text-ink-muted">全部策略</div>
+        </div>
+        <div className="rounded-xl bg-surface px-3 py-2.5">
+          <div className="text-lg font-semibold text-bull tabular-nums">{usable.length}</div>
+          <div className="text-[10px] text-ink-muted">短线可用</div>
+        </div>
+        <div className="rounded-xl bg-surface px-3 py-2.5">
+          <div className="text-lg font-semibold text-bear tabular-nums">{negative.length}</div>
+          <div className="text-[10px] text-ink-muted">历史不稳</div>
+        </div>
+      </div>
+
       <p className="text-[11px] text-ink-muted leading-relaxed mb-3">
-        28个知行系选股公式每日全市场扫描
-        {meta.trade_date && ` · ${meta.trade_date}`}
-        ，数字 = 今天命中几只。徽章 = 该公式在
-        <b className="text-ink-secondary">两段互不重叠的历史</b>
-        里的真实战绩（按你偏好的短线口径：持有5天）。
+        {meta.trade_date ? `${meta.trade_date} / ` : ""}先看历史可靠性，再看今日命中数。
       </p>
 
       {gold.length > 0 && (
         <div className="card-modern px-3.5 py-3 mb-4">
           <div className="text-xs font-semibold text-ink mb-1">
-            短线经得起检验的只有 {gold.length} 个：{gold.map((f) => f.name).join("、")}
+            优先研究：{gold.map((f) => f.name).join("、")}
           </div>
           <p className="text-[11px] text-ink-muted leading-relaxed">
-            它在持有1天和5天上、两段独立历史里都跑赢大盘。其余公式：有的只适合长线
-            （六脉神剑要持有10天以上才有效），有的只在某段行情里灵，
-            <b className="text-ink-secondary">还有13个任何周期都不赚钱</b>（灰掉的那些）。
-            另外，「同时命中多个公式=胜率更高」经 12 万条历史信号验证
-            <b className="text-ink-secondary">不成立</b>——样本内有效、样本外反转，是运气不是规律。
+            这些策略在持有1天和5天时，两段独立历史都跑赢大盘。灰色策略仅供复盘，不参与今日决策。
           </p>
         </div>
       )}
@@ -327,7 +338,7 @@ function FactorDetail({
                         {t.robust ? (
                           <span className="text-bull">✓ 两段都赢</span>
                         ) : (
-                          <span className="text-ink-muted">—</span>
+                          <span className="text-ink-muted">-</span>
                         )}
                       </td>
                     </tr>
@@ -381,7 +392,7 @@ function FactorDetail({
           <Skeleton className="h-14 w-full rounded-xl" />
           <Skeleton className="h-14 w-full rounded-xl" />
           <p className="text-[11px] text-ink-muted leading-relaxed">
-            正在计算……该日期首次计算这个因子需要全市场扫描（约1–3分钟），算过之后秒开。
+            正在计算。该日期首次计算需要全市场扫描，约 1-3 分钟，完成后可直接打开。
           </p>
         </div>
       ) : error ? (
@@ -392,13 +403,13 @@ function FactorDetail({
         </p>
       ) : hits.length === 0 ? (
         <p className="text-xs text-ink-muted leading-relaxed py-2">
-          {shownDate} 全市场无「{factor.name}」命中——选股公式条件苛刻，空结果是常态。
+          {shownDate} 全市场无「{factor.name}」命中。选股条件较严格，空结果是正常现象。
         </p>
       ) : (
         <div className="space-y-2">
           {allHits.length > MAX_SHOW && (
             <p className="text-[11px] text-ink-muted leading-relaxed px-1">
-              该因子当日命中 {allHits.length} 只——信号偏宽，参考价值有限；
+              该因子当日命中 {allHits.length} 只，信号偏宽，参考价值有限；
               下面只展示 J 值最低（最超卖）的 {MAX_SHOW} 只。
             </p>
           )}
@@ -440,7 +451,7 @@ function FactorDetail({
                           <span className={`ml-auto text-sm font-medium tabular-nums shrink-0 ${pctColor(h.pct_change)}`}>
                             {h.pct_change !== null && h.pct_change !== undefined
                               ? `${h.pct_change > 0 ? "+" : ""}${h.pct_change.toFixed(2)}%`
-                              : "—"}
+                              : "-"}
                           </span>
                         </div>
                         <div className="flex items-center gap-3 mt-1 text-xs text-ink-muted tabular-nums whitespace-nowrap min-w-0">

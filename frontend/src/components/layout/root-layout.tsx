@@ -8,7 +8,7 @@ export function RootLayout() {
   return (
     <>
       <NavBar />
-      <main id="main-content" className="pt-16 pb-[calc(4rem+env(safe-area-inset-bottom))] sm:pb-0 min-h-[100dvh]">
+      <main id="main-content" className="min-h-[100dvh] pt-14 pb-[calc(4rem+env(safe-area-inset-bottom))] sm:pb-8">
         <AnimatePresence mode="wait">
           <Outlet />
         </AnimatePresence>
