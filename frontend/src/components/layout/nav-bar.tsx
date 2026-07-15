@@ -11,7 +11,7 @@ export function NavBar() {
     <header className="nav-island fixed inset-x-0 top-0 z-50">
       <nav className="mx-auto flex h-14 max-w-6xl items-center px-4 sm:px-6" aria-label="主导航">
         <Link to="/sectors" className="shrink-0 text-[15px] font-semibold tracking-[-0.03em] text-ink">
-          Q<span className="text-accent">Select</span>
+          <span className="text-accent">Q</span>Select
         </Link>
         <div className="ml-8 hidden h-full items-center gap-1 sm:flex">
           {navItems.map((item) => {
