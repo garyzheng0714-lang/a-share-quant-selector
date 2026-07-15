@@ -7,9 +7,22 @@ import { useCoverage } from "@/lib/hooks";
 
 type View = "decision" | "research";
 
+function CoverageDetails() {
+  const { data: coverage } = useCoverage();
+
+  if (!coverage) return <p className="mt-2 pl-5 text-ink-muted">正在读取覆盖率…</p>;
+
+  return (
+    <p className="mt-2 pl-5 leading-relaxed">
+      已覆盖 {coverage.covered_count}/{coverage.universe_count}，可训练 {coverage.trainable_count}/{coverage.trainable_eligible_count}，次新股 {coverage.short_history_count} 只单列。
+      {coverage.running ? `后台仍在补齐 ${coverage.remaining_count} 只。` : "当前回补任务已结束。"}
+    </p>
+  );
+}
+
 export function Component() {
   const [view, setView] = useState<View>("decision");
-  const { data: coverage } = useCoverage();
+  const [coverageOpen, setCoverageOpen] = useState(false);
 
   return (
     <PageTransition>
@@ -27,12 +40,13 @@ export function Component() {
         {view === "decision" ? (
           <div className="view-enter">
             <QuantPickCard />
-            {coverage && (
-              <details className="mt-5 px-1 py-2 text-xs text-ink-muted">
-                <summary className="flex cursor-pointer list-none items-center gap-2 hover:text-ink-secondary"><Database size={13} />数据底座 {coverage.covered_count}/{coverage.universe_count}</summary>
-                <p className="mt-2 pl-5 leading-relaxed">可训练 {coverage.trainable_count}/{coverage.trainable_eligible_count}，次新股 {coverage.short_history_count} 只单列。{coverage.running ? `后台仍在补齐 ${coverage.remaining_count} 只。` : "当前回补任务已结束。"}</p>
-              </details>
-            )}
+            <details
+              className="mt-5 px-1 py-2 text-xs text-ink-muted"
+              onToggle={(event) => setCoverageOpen(event.currentTarget.open)}
+            >
+              <summary className="flex cursor-pointer list-none items-center gap-2 hover:text-ink-secondary"><Database size={13} />数据底座</summary>
+              {coverageOpen && <CoverageDetails />}
+            </details>
           </div>
         ) : (
           <section className="view-enter">
