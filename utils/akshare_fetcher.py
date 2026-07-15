@@ -916,25 +916,26 @@ class AKShareFetcher:
         updated = 0
         failed = 0
         skipped = 0
+        archived = 0
 
         print(f"\n开始更新 {total} 只股票的数据...")
         print("=" * 60)
 
         today = datetime.now().date()
-        today_str = today.strftime("%Y-%m-%d")
         current_time = datetime.now().time()
 
         # 判断是否在收盘后（15:00 之后）
         # A股收盘时间：工作日 15:00
         market_close_time = datetime.strptime("15:00", "%H:%M").time()
         is_after_market_close = current_time >= market_close_time
-
-        if not is_after_market_close and not max_stocks:
-            print(f"⚠️ 当前时间 {current_time.strftime('%H:%M')}，尚未收盘 (15:00)")
-            print("  盘中数据不是收盘价，建议收盘后再执行 update")
-            print("  如需强制更新，请使用 --max-stocks 参数")
-            print("=" * 60)
-            return
+        # 盘中只禁止写入“今天”的未收盘 K 线，不能阻断此前已收盘交易日的补更。
+        completed_cutoff = today if is_after_market_close else today - timedelta(days=1)
+        cutoff_str = completed_cutoff.strftime("%Y-%m-%d")
+        if not is_after_market_close:
+            print(
+                f"⚠️ 当前时间 {current_time.strftime('%H:%M')}，今天尚未收盘；"
+                f"本次严格更新到 {cutoff_str}"
+            )
 
         # 快速缓存：检查上次更新记录
         update_cache_file = self.full_data_dir / ".update_cache.json"
@@ -947,11 +948,11 @@ class AKShareFetcher:
                 update_cache = {}
 
         # 如果今天已经更新过（且已收盘），直接跳过
-        cache_date = update_cache.get("last_update_date")
-        if cache_date == today_str and not max_stocks:
-            print(f"✓ 数据已于 {cache_date} 收盘后更新过，无需重复更新")
+        cache_date = update_cache.get("completed_through_date")
+        if cache_date == cutoff_str and not max_stocks:
+            print(f"✓ 已完成截至 {cache_date} 的收盘数据更新，无需重复更新")
             print("=" * 60)
-            return
+            return {"target_date": cutoff_str, "updated": 0, "failed": 0, "cached": True}
 
         # 预筛选：快速检查哪些股票需要更新（只读取第一行）
         stocks_to_update = []
@@ -972,15 +973,19 @@ class AKShareFetcher:
                     continue
 
                 latest_date = pd.to_datetime(df_quick.iloc[0]["date"]).date()
-                days_needed = (today - latest_date).days
+                days_needed = (completed_cutoff - latest_date).days
 
                 if days_needed > 0:
+                    # 多年未更新通常是已退市/代码终止，日更接口也只支持近 1000 天。
+                    # 保留历史文件供回测，但不让它们阻塞当前活跃股票的更新完成标记。
+                    if days_needed > 180:
+                        archived += 1
+                        continue
                     days_to_fetch = min(days_needed + 2, 60)
                     stocks_to_update.append((code, days_to_fetch))
                 elif days_needed == 0:
-                    # 最新日期是今天
-                    # 如果是收盘后，或者强制更新模式(max_stocks)，都需要重新获取
-                    if is_after_market_close or max_stocks:
+                    # 收盘后首次执行时重新拉取当天最终数据；盘中截止日已完整则跳过。
+                    if is_after_market_close and cache_date != cutoff_str:
                         stocks_to_update.append((code, 2))
                     else:
                         skipped += 1
@@ -990,17 +995,20 @@ class AKShareFetcher:
                 stocks_to_update.append((code, 30))
 
         need_update = len(stocks_to_update)
-        print(f"  需要更新: {need_update} 只, 已最新: {skipped} 只")
+        print(f"  需要更新: {need_update} 只, 已最新: {skipped} 只, 历史归档: {archived} 只")
 
         if need_update == 0:
-            # 只有在完整更新（非max_stocks模式）且收盘后才记录缓存
-            if not max_stocks and is_after_market_close:
-                update_cache["last_update_date"] = today_str
+            # 盘中更新到上一完整交易日也可缓存；15:00 后 cutoff 会自动变成今天。
+            if not max_stocks:
+                update_cache["completed_through_date"] = cutoff_str
                 with open(update_cache_file, "w", encoding="utf-8") as f:
                     json.dump(update_cache, f)
             print("✓ 所有数据已是最新")
             print("=" * 60)
-            return
+            return {
+                "target_date": cutoff_str, "updated": 0, "failed": 0,
+                "skipped": skipped, "archived": archived, "cached": False,
+            }
 
         print(f"\n开始更新 {need_update} 只股票...")
         print("=" * 60)
@@ -1018,6 +1026,9 @@ class AKShareFetcher:
             df = self.fetch_stock_update(code, days=days_to_fetch)
 
             if df is not None and not df.empty:
+                # 腾讯接口盘中会包含今天的实时 K 线；未收盘时必须截掉。
+                df = df[pd.to_datetime(df["date"]).dt.date <= completed_cutoff].copy()
+            if df is not None and not df.empty:
                 self.csv_manager.update_stock(code, df)
                 new_df = self.csv_manager.read_stock(code)
                 new_count = len(new_df)
@@ -1031,10 +1042,15 @@ class AKShareFetcher:
             if i % 10 == 0:
                 time.sleep(0.1)  # 降低限速
 
-        # 更新缓存记录
-        update_cache["last_update_date"] = today_str
-        with open(update_cache_file, "w", encoding="utf-8") as f:
-            json.dump(update_cache, f)
+        # 失败时不写“已完成”缓存，否则下一次更新会永久跳过失败股票。
+        if failed == 0 and not max_stocks:
+            update_cache["completed_through_date"] = cutoff_str
+            with open(update_cache_file, "w", encoding="utf-8") as f:
+                json.dump(update_cache, f)
 
         print("=" * 60)
-        print(f"完成! 更新成功: {updated}, 跳过: {skipped}, 失败: {failed}")
+        print(f"完成! 更新成功: {updated}, 跳过: {skipped}, 历史归档: {archived}, 失败: {failed}")
+        return {
+            "target_date": cutoff_str, "updated": updated, "skipped": skipped,
+            "archived": archived, "failed": failed, "cached": False,
+        }

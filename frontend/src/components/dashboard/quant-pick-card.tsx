@@ -1,0 +1,253 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  Check, ChevronDown, CircleMinus, ExternalLink, ShieldAlert, ShieldCheck,
+} from "lucide-react";
+import { Skeleton, LoadError } from "@/components/ui";
+import { useLatestDecision } from "@/lib/hooks";
+import { useAppStore } from "@/lib/store";
+import { duration } from "@/lib/tokens";
+import type { DecisionAction, DecisionCandidate, DecisionModel, SignalStock } from "@/lib/api";
+
+const REASONS: Record<string, string> = {
+  hierarchy_models_unvalidated: "市场/板块模型未通过样本外走查",
+  no_rule_hits: "基础形态没有命中",
+  market_gate: "大环境闸门未通过",
+  sector_gate: "所属板块闸门未通过",
+  stock_risk_veto: "个股风险模型否决",
+  overnight_event_veto: "隔夜重大公告否决",
+  overnight_event_review: "隔夜公告需要人工复核",
+  overnight_source_missing: "盘前公告源不可用",
+  unresolved_tie_over_3: "无法可靠区分多只并列标的",
+  outside_top3: "未进入经验证的前三名",
+  all_candidates_downgraded: "全部候选均被上层闸门降级",
+};
+
+const ACTION: Record<DecisionAction, { label: string; className: string }> = {
+  buy: { label: "可执行", className: "bg-bull-dim text-bull" },
+  observe: { label: "只观察", className: "bg-accent-dim text-accent" },
+  avoid: { label: "回避", className: "bg-bear-dim text-bear" },
+  none: { label: "空仓", className: "bg-inset text-ink-muted" },
+};
+
+function modelFor(models: DecisionModel[], key: string) {
+  return models.find((model) => model.model_key === key);
+}
+
+function GateRail({ models }: { models: DecisionModel[] }) {
+  const gates = [
+    ["market", "1", "大环境"], ["sector", "2", "板块"],
+    ["risk", "3", "个股"], ["execution", "4", "执行"],
+  ] as const;
+  const hierarchyActive = ["market", "sector", "risk"].every(
+    (key) => modelFor(models, key)?.status === "active",
+  );
+  return (
+    <div className="grid grid-cols-4 gap-1.5" aria-label="决策顺序">
+      {gates.map(([key, no, label], index) => {
+        const model = modelFor(models, key);
+        const execution = key === "execution";
+        const passed = execution ? hierarchyActive : model?.status === "active";
+        return (
+          <div key={key} className="relative min-w-0">
+            {index < gates.length - 1 && (
+              <div className={`absolute left-[56%] top-3 h-px w-[94%] ${passed ? "bg-bull/45" : "bg-border"}`} />
+            )}
+            <div className="relative flex flex-col items-center text-center">
+              <span className={`grid h-6 w-6 place-items-center rounded-full border text-[10px] num ${
+                passed ? "border-bull/50 bg-bull-dim text-bull" : "border-border bg-surface text-ink-muted"
+              }`}>
+                {passed ? <Check size={12} /> : no}
+              </span>
+              <span className="mt-1 text-[11px] font-medium text-ink-secondary">{label}</span>
+              <span className={`text-[9px] ${passed ? "text-bull" : "text-ink-muted"}`}>
+                {execution
+                  ? hierarchyActive ? "成本已计入" : "未到执行层"
+                  : model?.status === "active" ? "已验证" : model?.status === "shadow" ? "影子观察" : "未通过"}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function toNav(list: DecisionCandidate[]): SignalStock[] {
+  return list.map((item) => ({
+    code: item.code, name: item.name, strategy: "hierarchical_decision",
+    category: item.industry || "", close: item.baseline.close ?? 0, J: item.baseline.J ?? 0,
+    volume_ratio: 0, market_cap: (item.baseline.cap_yi ?? 0) * 1e8,
+    short_term_trend: 0, bull_bear_line: 0, reasons: item.reason_codes,
+    similarity_score: null, matched_case: null, match_breakdown: null,
+    industry: item.industry,
+  }));
+}
+
+function Probability({ value, threshold }: { value?: number | null; threshold?: number | null }) {
+  if (value == null) return <span className="text-ink-muted">未启用</span>;
+  return (
+    <span className={threshold != null && value >= threshold ? "text-bull" : "text-ink-muted"}>
+      {(value * 100).toFixed(0)}%{threshold != null ? ` / 门槛 ${(threshold * 100).toFixed(0)}%` : ""}
+    </span>
+  );
+}
+
+function CandidateRow({ item, list }: { item: DecisionCandidate; list: DecisionCandidate[] }) {
+  const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+  const setStockNav = useAppStore((state) => state.setStockNav);
+  const action = ACTION[item.action];
+  return (
+    <div className="border-t border-border/50 first:border-t-0">
+      <div className="flex items-center gap-3 py-3">
+        <button
+          className="min-w-0 flex-1 text-left group"
+          onClick={() => {
+            setStockNav(toNav(list), list.findIndex((stock) => stock.code === item.code));
+            navigate(`/stock/${item.code}`);
+          }}
+        >
+          <div className="flex items-baseline gap-2">
+            <span className="truncate text-sm font-semibold text-ink group-hover:text-accent transition-colors">
+              {item.name}
+            </span>
+            <span className="font-mono text-[11px] text-ink-muted">{item.code}</span>
+            <span className="ml-auto num text-sm text-ink">{item.baseline.close?.toFixed(2) ?? "—"}</span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-ink-muted">
+            <span>{item.industry || "未知板块"}</span>
+            {item.sector?.score != null && <span className="num">板块热度 {Math.round(item.sector.score)}</span>}
+            {item.reason_codes[0] && <span className="text-ink-secondary">{REASONS[item.reason_codes[0]] || item.reason_codes[0]}</span>}
+          </div>
+        </button>
+        <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${action.className}`}>
+          {action.label}
+        </span>
+        <button
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+          aria-label={`查看${item.name}决策证据`}
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-muted hover:bg-inset hover:text-ink transition-colors"
+        >
+          <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: duration.fast }}>
+            <ChevronDown size={15} />
+          </motion.span>
+        </button>
+      </div>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }} transition={{ duration: duration.fast }}
+            className="overflow-hidden"
+          >
+            <div className="mb-3 grid grid-cols-3 gap-2 rounded-xl bg-inset px-3 py-2.5 text-[10px] text-ink-muted">
+              <div><p>大环境概率</p><p className="mt-0.5 num"><Probability value={item.market?.probability} threshold={item.market?.threshold} /></p></div>
+              <div><p>板块概率</p><p className="mt-0.5 num"><Probability value={item.sector?.probability} threshold={item.sector?.threshold} /></p></div>
+              <div><p>个股风险</p><p className="mt-0.5 num"><Probability value={item.stock?.risk_probability} threshold={item.stock?.risk_threshold} /></p></div>
+              {item.events?.length > 0 && (
+                <div className="col-span-3 border-t border-border/50 pt-2">
+                  {item.events.map((event) => event.source_url ? (
+                    <a key={event.event_id} href={event.source_url} target="_blank" rel="noreferrer" className="flex items-start gap-1 text-accent hover:underline">
+                      <ExternalLink size={10} className="mt-0.5 shrink-0" />{event.title}
+                    </a>
+                  ) : <p key={event.event_id}>{event.title}</p>)}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+export function QuantPickCard() {
+  const { data, isLoading, error, mutate } = useLatestDecision();
+  if (isLoading) return <Skeleton className="h-72 w-full rounded-2xl" />;
+  if (error) return <LoadError label="分层决策加载失败" onRetry={() => mutate()} />;
+  if (!data?.available) {
+    const stale = data?.reason === "stale_market_data";
+    return (
+      <div className="card-modern p-4">
+        <div className="flex items-start gap-2">
+          <ShieldAlert size={16} className="mt-0.5 shrink-0 text-accent" />
+          <div>
+            <p className="text-sm font-semibold text-ink">{stale ? "行情过期，已停止推荐" : "决策尚未生成"}</p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-muted">
+              {stale
+                ? `本地数据只到 ${data.freshness?.local_date ?? "未知"}，应至少更新到 ${data.freshness?.expected_date ?? "最近交易日"}。为避免拿旧行情冒充今天，系统不会展示任何股票。`
+                : data?.reason ?? "数据准备中"}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const action = ACTION[data.final_action ?? "none"];
+  const candidates = data.candidates ?? [];
+  const buys = candidates.filter((item) => item.action === "buy");
+  const models = data.models ?? [];
+  const degraded = data.status === "degraded" || models.some((model) => ["market", "sector"].includes(model.model_key) && model.status !== "active");
+
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: duration.normal }} className="card-modern overflow-hidden"
+      data-testid="hierarchical-decision"
+    >
+      <div className="border-b border-border/50 px-4 py-4">
+        <div className="flex items-start gap-3">
+          <div className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl ${degraded ? "bg-accent-dim text-accent" : "bg-bull-dim text-bull"}`}>
+            {degraded ? <ShieldAlert size={17} /> : <ShieldCheck size={17} />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold text-ink">今日决策</h2>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${action.className}`}>{action.label}</span>
+              <span className="text-[10px] text-ink-muted">{data.stage === "preopen" ? "盘前复核" : "收盘初筛"}</span>
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-ink-muted">
+              {data.market?.decision_for_date ? `${data.market.decision_for_date} 交易计划` : "下一交易日计划"}
+              {" · "}依据 {data.trade_date} 收盘数据
+            </p>
+          </div>
+        </div>
+        <div className="mt-4"><GateRail models={models} /></div>
+      </div>
+
+      <div className="px-4 py-3.5">
+        {buys.length === 0 && (
+          <div className="mb-3 flex items-start gap-2 rounded-xl border border-accent/20 bg-accent-dim px-3 py-2.5">
+            <CircleMinus size={15} className="mt-0.5 shrink-0 text-accent" />
+            <p className="text-xs leading-relaxed text-ink-secondary">
+              <b className="text-ink">今天不推荐买入。</b>
+              {data.reason_codes?.length
+                ? ` ${data.reason_codes.map((code) => REASONS[code] || code).join("；")}。`
+                : " 上层环境未给出足够胜率，候选只保留用于观察。"}
+            </p>
+          </div>
+        )}
+        <div className="mb-1 flex items-center gap-1.5">
+          {buys.length ? <Check size={13} className="text-bull" /> : <CircleMinus size={13} className="text-ink-muted" />}
+          <span className="text-xs font-semibold text-ink">{buys.length ? `可执行 ${buys.length} 只` : "候选证据链"}</span>
+          <span className="text-[10px] text-ink-muted">板块在前，个股在后</span>
+        </div>
+        {candidates.length ? candidates.map((item) => <CandidateRow key={item.code} item={item} list={candidates} />) : (
+          <p className="py-5 text-center text-xs text-ink-muted">基础形态也没有命中，保持空仓。</p>
+        )}
+      </div>
+
+      <details className="border-t border-border/50 px-4 py-3 text-[10px] text-ink-muted">
+        <summary className="cursor-pointer select-none hover:text-ink-secondary">版本与审计信息</summary>
+        <div className="mt-2 space-y-1 font-mono break-all">
+          <p>run {data.run_id}</p><p>strategy {data.strategy_version}</p>
+          <p>feature {data.feature_version}</p><p>model {data.model_version}</p><p>data {data.data_version}</p>
+        </div>
+      </details>
+    </motion.section>
+  );
+}

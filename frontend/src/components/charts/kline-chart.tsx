@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from "react";
 import { chartColors } from "@/lib/tokens";
+import type { KlineSignal } from "@/lib/api";
 import * as echarts from "echarts/core";
 import { CandlestickChart, BarChart, LineChart } from "echarts/charts";
 import {
@@ -8,6 +9,7 @@ import {
   DataZoomComponent,
   DatasetComponent,
   MarkLineComponent,
+  MarkPointComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 
@@ -20,6 +22,7 @@ echarts.use([
   DataZoomComponent,
   DatasetComponent,
   MarkLineComponent,
+  MarkPointComponent,
   CanvasRenderer,
 ]);
 
@@ -46,6 +49,8 @@ interface KlineChartProps {
   data: (string | number)[][];
   period: "daily" | "weekly";
   weeklyLineMode?: "trend" | "ma";
+  /** 系统历史信号日：在对应K线下方标金点（仅日线传入，周线日期对不上） */
+  signals?: KlineSignal[];
   onCrosshairMove?: (data: KlineOverlay | null) => void;
   className?: string;
 }
@@ -86,6 +91,8 @@ const {
 } = chartColors;
 const BG_COLOR = "transparent";
 const LINE_WIDTH = 1.5;
+// 信号点用主题金（accent），与趋势线/多空线区分
+const SIGNAL_COLOR = "#e0a83c";
 
 function formatVolumeAxis(v: number): string {
   if (Math.abs(v) >= 1e8) return (v / 1e8).toFixed(1) + "\u4ebf";
@@ -131,15 +138,17 @@ function buildOption(
   raw: (string | number)[][],
   period: "daily" | "weekly",
   weeklyLineMode: "trend" | "ma",
+  signals?: KlineSignal[],
+  zoomRange?: { start: number; end: number },
 ): EChartsOption {
   const isDaily = period === "daily";
   const dates = raw.map((d) => d[0] as string);
   const dataLen = dates.length;
   const defaultVisible = isDaily ? 120 : 60;
-  const startPercent = Math.max(
-    0,
-    ((dataLen - defaultVisible) / dataLen) * 100,
-  );
+  const startPercent =
+    zoomRange?.start ??
+    Math.max(0, ((dataLen - defaultVisible) / dataLen) * 100);
+  const endPercent = zoomRange?.end ?? 100;
 
   const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
   const gridLeft = isMobile ? 40 : 60;
@@ -326,13 +335,34 @@ function buildOption(
       data: [{ yAxis: latestClose }],
       animation: false,
     },
+    // 系统历史信号日：对应K线最低价下方一枚金点
+    ...(isDaily && signals?.length
+      ? {
+          markPoint: {
+            silent: true,
+            symbol: "circle",
+            symbolSize: 5,
+            symbolOffset: [0, 10],
+            itemStyle: { color: SIGNAL_COLOR },
+            label: { show: false },
+            animation: false,
+            data: signals
+              .map((s) => {
+                const idx = dates.indexOf(s.date);
+                if (idx < 0) return null;
+                return { coord: [idx, raw[idx][3] as number] };
+              })
+              .filter(Boolean),
+          },
+        }
+      : {}),
   });
 
   series.push({
     type: "bar",
     name: "\u6210\u4ea4\u91cf",
-    xAxisIndex: isDaily ? 1 : 1,
-    yAxisIndex: isDaily ? 1 : 1,
+    xAxisIndex: 1,
+    yAxisIndex: 1,
     encode: { x: 0, y: 5 },
     barMaxWidth: 8,
     itemStyle: {
@@ -392,7 +422,7 @@ function buildOption(
         bottom: 8,
         height: 24,
         start: startPercent,
-        end: 100,
+        end: endPercent,
         borderColor: "transparent",
         backgroundColor: DATAZOOM_BG,
         fillerColor: DATAZOOM_FILL,
@@ -415,7 +445,7 @@ function buildOption(
         type: "inside",
         xAxisIndex: isDaily ? [0, 1, 2] : [0, 1],
         start: startPercent,
-        end: 100,
+        end: endPercent,
         zoomOnMouseWheel: true,
         moveOnMouseMove: true,
       },
@@ -470,6 +500,7 @@ export function KlineChart({
   data,
   period,
   weeklyLineMode = "trend",
+  signals,
   onCrosshairMove,
   className = "",
 }: KlineChartProps) {
@@ -477,9 +508,16 @@ export function KlineChart({
   const chartRef = useRef<echarts.ECharts | null>(null);
   const dataRef = useRef(data);
   const periodRef = useRef(period);
+  const weeklyLineModeRef = useRef(weeklyLineMode);
+  const signalsRef = useRef(signals);
+  const isMobileRef = useRef(
+    typeof window !== "undefined" && window.innerWidth < 640,
+  );
 
   dataRef.current = data;
   periodRef.current = period;
+  weeklyLineModeRef.current = weeklyLineMode;
+  signalsRef.current = signals;
 
   const handleAxisPointer = useCallback(
     (params: { axesInfo?: { value?: number }[] }) => {
@@ -502,44 +540,69 @@ export function KlineChart({
     [onCrosshairMove],
   );
 
+  const handlerRef = useRef(handleAxisPointer);
+  handlerRef.current = handleAxisPointer;
+
+  // Init the chart instance once. Only dispose on unmount so switching
+  // period / line mode reuses the same instance instead of re-creating it.
   useEffect(() => {
-    if (!containerRef.current || !data.length) return;
+    if (!containerRef.current) return;
 
     const container = containerRef.current;
-
-    if (chartRef.current) {
-      chartRef.current.dispose();
-      chartRef.current = null;
-    }
-
     const chart = echarts.init(container, undefined, {
       renderer: "canvas",
     });
     chartRef.current = chart;
 
-    const option = buildOption(data, period, weeklyLineMode);
-    chart.setOption(option);
-
-    chart.on(
-      "updateAxisPointer",
-      handleAxisPointer as (...args: unknown[]) => void,
-    );
+    const listener = (...args: unknown[]) => {
+      handlerRef.current(args[0] as { axesInfo?: { value?: number }[] });
+    };
+    chart.on("updateAxisPointer", listener);
 
     const observer = new ResizeObserver(() => {
       chart.resize();
+      // buildOption reads window.innerWidth for axis margins / font size,
+      // so rebuild the option when the viewport crosses the 640px breakpoint.
+      const nowMobile = window.innerWidth < 640;
+      if (nowMobile !== isMobileRef.current) {
+        isMobileRef.current = nowMobile;
+        if (dataRef.current.length) {
+          // 保留用户当前的缩放位置，全量重建不重置 dataZoom
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const dz = (chart.getOption() as any)?.dataZoom?.[0];
+          chart.setOption(
+            buildOption(
+              dataRef.current,
+              periodRef.current,
+              weeklyLineModeRef.current,
+              signalsRef.current,
+              dz && typeof dz.start === "number"
+                ? { start: dz.start, end: dz.end }
+                : undefined,
+            ),
+            true,
+          );
+        }
+      }
     });
     observer.observe(container);
 
     return () => {
       observer.disconnect();
-      chart.off(
-        "updateAxisPointer",
-        handleAxisPointer as (...args: unknown[]) => void,
-      );
+      chart.off("updateAxisPointer", listener);
       chart.dispose();
       chartRef.current = null;
     };
-  }, [data, period, weeklyLineMode, handleAxisPointer]);
+  }, []);
+
+  // Fully replace the option on data / period / line-mode / signals changes.
+  useEffect(() => {
+    if (!chartRef.current || !data.length) return;
+    chartRef.current.setOption(
+      buildOption(data, period, weeklyLineMode, signals),
+      true,
+    );
+  }, [data, period, weeklyLineMode, signals]);
 
   return <div ref={containerRef} className={`w-full ${className}`} />;
 }

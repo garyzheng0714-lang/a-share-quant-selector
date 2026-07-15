@@ -1,38 +1,11 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
+import { Compass, History } from "lucide-react";
 
+/** 两个 tab = 用户的两个问题：今天怎么办 / 过去准不准 */
 const navItems = [
-  {
-    to: "/",
-    label: "排名",
-    end: true,
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-        <path
-          d="M10 2.5l2.47 5 5.53.8-4 3.9.94 5.5L10 14.9l-4.94 2.8.94-5.5-4-3.9 5.53-.8L10 2.5z"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinejoin="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    to: "/history",
-    label: "历史",
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-        <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="1.5" />
-        <path
-          d="M10 6v4l2.5 2.5"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    ),
-  },
+  { to: "/", label: "今日", end: true, Icon: Compass },
+  { to: "/review", label: "复盘", end: false, Icon: History },
 ];
 
 export function BottomNav() {
@@ -54,13 +27,13 @@ export function BottomNav() {
             end={item.end}
             className="relative flex flex-col items-center justify-center gap-0.5"
           >
-            <span
+            <item.Icon
+              size={20}
+              strokeWidth={1.75}
               className={`transition-colors duration-150 ${
                 i === activeIndex ? "text-accent" : "text-ink-muted"
               }`}
-            >
-              {item.icon}
-            </span>
+            />
             <span
               className={`text-[10px] transition-colors duration-150 ${
                 i === activeIndex

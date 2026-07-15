@@ -39,3 +39,66 @@ export function useViewResults(viewId: number | null, limit?: number) {
     () => api.getViewResults(viewId!, limit).then((r) => r.data),
   );
 }
+
+export function useThermometer() {
+  return useSWR("thermometer", () => api.getThermometer(), { refreshInterval: 300_000 });
+}
+
+export function useSectors() {
+  return useSWR("sectors", () => api.getSectors(), { refreshInterval: 600_000 });
+}
+
+export function useSuperB1() {
+  return useSWR("super-b1", () => api.getSuperB1(), { refreshInterval: 600_000 });
+}
+
+export function useSuperB1Performance() {
+  return useSWR("super-b1-performance", () => api.getSuperB1Performance());
+}
+
+export function useQuantPick() {
+  return useSWR("quant-pick", () => api.getQuantPick(), { refreshInterval: 600_000 });
+}
+
+/** AI 点评单独拉：它要调大模型（首次可能几十秒），不能拖着选票结果一起等 */
+export function useQuantComment() {
+  return useSWR("quant-comment", () => api.getQuantComment(), {
+    refreshInterval: 0,
+    revalidateOnFocus: false,
+  });
+}
+
+export function useLatestDecision() {
+  return useSWR("latest-decision", () => api.getLatestDecision(), {
+    refreshInterval: 300_000,
+    revalidateOnFocus: true,
+  });
+}
+
+export function useFactors() {
+  // today_hits 随 16:00 预热更新，页面常开也能拿到新数字
+  return useSWR("factors", () => api.getFactors(), { refreshInterval: 600_000 });
+}
+
+/** date 为空 = 最新交易日。历史日期结果不变，关掉自动刷新省请求 */
+export function useFactorScan(strategy: string | null, date?: string) {
+  return useSWR(
+    strategy ? `factor-scan-${strategy}-${date || "latest"}` : null,
+    () => api.getFactorScan(strategy!, date),
+    { refreshInterval: date ? 0 : 600_000, revalidateOnFocus: false },
+  );
+}
+
+// useDailyPick 已随 AI 自主荐票于 2026-07-14 停用（AI 改为只点评量化选出的票，
+// 见 useQuantComment）。历史荐票记录仍可在复盘页查看 → useDailyPickHistory
+export function useDailyPickHistory() {
+  return useSWR("daily-pick-history", () => api.getDailyPickHistory());
+}
+
+export function usePerformanceSummary() {
+  return useSWR("performance-summary", () => api.getPerformanceSummary());
+}
+
+export function usePerformanceRecords(limit = 200) {
+  return useSWR(`performance-records-${limit}`, () => api.getPerformanceRecords(limit));
+}

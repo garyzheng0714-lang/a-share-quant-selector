@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 import { RootLayout } from "@/components/layout/root-layout";
 
 const basename = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
@@ -9,9 +9,12 @@ export const router = createBrowserRouter(
       path: "/",
       element: <RootLayout />,
       children: [
-        { index: true, lazy: () => import("@/pages/ranking") },
-        { path: "history", lazy: () => import("@/pages/history") },
+        { index: true, lazy: () => import("@/pages/today") },
+        { path: "review", lazy: () => import("@/pages/review") },
         { path: "stock/:code", lazy: () => import("@/pages/stock-detail") },
+        // 旧路径重定向，书签不失效
+        { path: "performance", element: <Navigate to="/review" replace /> },
+        { path: "history", element: <Navigate to="/review" replace /> },
       ],
     },
   ],

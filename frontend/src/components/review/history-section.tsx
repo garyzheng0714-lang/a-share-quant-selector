@@ -1,37 +1,29 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { PageTransition } from "@/components/layout/page-transition";
+import { ChevronRight, CalendarClock } from "lucide-react";
 import { Skeleton, Badge, CopyButton } from "@/components/ui";
 import { EmptyState } from "@/components/onboarding";
 import { useViews, useViewResults } from "@/lib/hooks";
 import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT, duration, ease } from "@/lib/tokens";
 import type { SelectionResult, SignalStock } from "@/lib/api";
 
+// 选股结果里的 market_cap 单位是「亿」（策略层已除过 1e8），与 candidate-list 同口径
 function formatMarketCap(value: number): string {
-  if (value >= 1e8) return `${(value / 1e8).toFixed(0)}亿`;
-  if (value >= 1e4) return `${(value / 1e4).toFixed(0)}万`;
-  return `${value.toFixed(0)}亿`;
+  if (!value || value <= 0) return "";
+  if (value >= 1e4) return `${(value / 1e4).toFixed(1)}万亿`;
+  return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)}亿`;
 }
 
-function ChevronIcon({ expanded }: { expanded: boolean }) {
+function ChevronToggle({ expanded }: { expanded: boolean }) {
   return (
-    <motion.svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
+    <motion.span
       animate={{ rotate: expanded ? 90 : 0 }}
       transition={{ duration: duration.fast }}
+      className="inline-flex"
     >
-      <path
-        d="M6 4l4 4-4 4"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </motion.svg>
+      <ChevronRight size={16} />
+    </motion.span>
   );
 }
 
@@ -84,9 +76,9 @@ function StockRow({
         <span
           className={`text-xs font-medium tabular-nums shrink-0 ${
             score >= 85
-              ? "text-bear"
+              ? "text-bull"
               : score >= 60
-                ? "text-accent"
+                ? "text-accent-light"
                 : "text-ink-muted"
           }`}
         >
@@ -94,21 +86,10 @@ function StockRow({
         </span>
       )}
 
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 14 14"
-        fill="none"
+      <ChevronRight
+        size={14}
         className="text-ink-muted/50 shrink-0 group-hover:text-ink-muted transition-colors"
-      >
-        <path
-          d="M5.25 3.5L8.75 7l-3.5 3.5"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+      />
     </button>
   );
 }
@@ -132,7 +113,7 @@ function DateRow({
         onClick={onToggle}
         className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 rounded-xl hover:bg-elevated transition-colors duration-150 text-left"
       >
-        <ChevronIcon expanded={expanded} />
+        <ChevronToggle expanded={expanded} />
         <span className="font-medium text-sm text-ink shrink-0">
           {result.run_date}
         </span>
@@ -176,17 +157,8 @@ function DateRow({
   );
 }
 
-function HistorySkeleton() {
-  return (
-    <div className="space-y-2">
-      {Array.from({ length: 5 }, (_, i) => (
-        <Skeleton key={i} className="h-12 w-full rounded-xl" />
-      ))}
-    </div>
-  );
-}
-
-export function Component() {
+/** 每日名单：历史每个交易日选出的完整名单（可展开） */
+export function HistorySection() {
   const { data: views } = useViews();
   const [selectedViewId, setSelectedViewId] = useState<number | null>(null);
   const { data: results, isLoading } = useViewResults(selectedViewId, 20);
@@ -204,12 +176,9 @@ export function Component() {
   };
 
   return (
-    <PageTransition>
-      <div className="max-w-3xl mx-auto px-4 sm:px-8 py-6 sm:py-10">
-        <div className="flex items-center justify-between mb-5 sm:mb-6">
-          <h1 className="text-xl sm:text-2xl font-bold tracking-[-0.03em] text-ink">
-            历史记录
-          </h1>
+    <div>
+      {views && views.length > 1 && (
+        <div className="flex justify-end mb-3">
           <div className="relative">
             <select
               value={selectedViewId ?? ""}
@@ -220,110 +189,58 @@ export function Component() {
               }}
               className="h-9 pl-3 pr-7 bg-elevated rounded-full text-xs sm:text-sm text-ink border border-border appearance-none cursor-pointer transition-all duration-150 focus:border-border-focus focus:ring-2 focus:ring-accent/10"
             >
-              {!views?.length && <option value="">加载中...</option>}
-              {views?.map((v) => (
+              {views.map((v) => (
                 <option key={v.id} value={v.id}>
                   {v.name}
                 </option>
               ))}
             </select>
-            <svg
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-ink-muted"
-              width="12"
-              height="12"
-              viewBox="0 0 14 14"
-              fill="none"
-            >
-              <path
-                d="M3.5 5.25L7 8.75l3.5-3.5"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+            <ChevronRight
+              size={12}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-ink-muted rotate-90"
+            />
           </div>
         </div>
+      )}
 
-        {isLoading ? (
-          <HistorySkeleton />
-        ) : !results?.length ? (
-          selectedViewId === null ? (
-            <EmptyState
-              icon={
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                  <rect
-                    x="3"
-                    y="3"
-                    width="18"
-                    height="18"
-                    rx="3"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                  />
-                  <path
-                    d="M9 12l2 2 4-4"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              }
-              title="请选择一个视图"
-              description="从右上角下拉菜单选择视图，查看对应的历史选股记录"
-            />
-          ) : (
-            <EmptyState
-              icon={
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                  <circle
-                    cx="12"
-                    cy="12"
-                    r="9"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                  />
-                  <path
-                    d="M12 7v5l3 3"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              }
-              title="暂无历史记录"
-              description="运行选股策略后，每次结果会自动保存在这里"
-            />
-          )
-        ) : (
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={selectedViewId}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: duration.fast }}
-              className="space-y-0.5"
-            >
-              {results.map((result) => (
-                <DateRow
-                  key={result.run_date}
-                  result={result}
-                  expanded={expandedDate === result.run_date}
-                  onToggle={() =>
-                    setExpandedDate((prev) =>
-                      prev === result.run_date ? null : result.run_date,
-                    )
-                  }
-                  onStockClick={handleStockClick}
-                />
-              ))}
-            </motion.div>
-          </AnimatePresence>
-        )}
-      </div>
-    </PageTransition>
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }, (_, i) => (
+            <Skeleton key={i} className="h-12 w-full rounded-xl" />
+          ))}
+        </div>
+      ) : !results?.length ? (
+        <EmptyState
+          icon={<CalendarClock size={24} strokeWidth={1.5} />}
+          title="暂无历史记录"
+          description="每个交易日选股后，当天的名单会自动保存在这里"
+        />
+      ) : (
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={selectedViewId}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: duration.fast }}
+            className="space-y-0.5"
+          >
+            {results.map((result) => (
+              <DateRow
+                key={result.run_date}
+                result={result}
+                expanded={expandedDate === result.run_date}
+                onToggle={() =>
+                  setExpandedDate((prev) =>
+                    prev === result.run_date ? null : result.run_date,
+                  )
+                }
+                onStockClick={handleStockClick}
+              />
+            ))}
+          </motion.div>
+        </AnimatePresence>
+      )}
+    </div>
   );
 }
