@@ -232,8 +232,10 @@ class AKShareFetcher:
     def _save_stock_names(self, stock_dict):
         """保存股票名称到本地"""
         try:
-            with open(self.stock_names_file, "w", encoding="utf-8") as f:
+            tmp = self.stock_names_file.with_suffix(f".{os.getpid()}.tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(stock_dict, f, ensure_ascii=False, indent=2)
+            tmp.replace(self.stock_names_file)
         except Exception as e:
             print(f"  保存股票名称失败: {e}")
 
@@ -971,9 +973,12 @@ class AKShareFetcher:
 
     def bootstrap_universe(self, max_stocks=None, years: int = 6, refresh_universe: bool = False) -> dict:
         """完整回补主板股票池；每只完成后写检查点，进程中断可继续。"""
+        from utils.data_freshness import expected_completed_trade_date
+
         if refresh_universe:
             self.refresh_stock_universe()
         universe = self._main_board_universe()
+        completed_cutoff = expected_completed_trade_date()
         state = self._load_bootstrap_state()
         attempts = state.setdefault("attempts", {})
         failures = state.setdefault("failures", {})
@@ -984,6 +989,14 @@ class AKShareFetcher:
             if code not in existing:
                 queue.append(code)
                 continue
+            latest = self.csv_manager.read_stock(code, nrows=1)
+            if not latest.empty and str(latest.iloc[0]["date"])[:10] > completed_cutoff:
+                complete = self.csv_manager.read_stock(code)
+                complete = complete[
+                    pd.to_datetime(complete["date"]).dt.strftime("%Y-%m-%d") <= completed_cutoff
+                ].copy()
+                if not complete.empty:
+                    self.csv_manager.write_stock(code, complete)
             rows = len(self.csv_manager.read_stock(code, nrows=220))
             if rows < 220 and code not in short_history:
                 queue.append(code)
@@ -997,6 +1010,10 @@ class AKShareFetcher:
             state["current"] = code
             attempts[code] = int(attempts.get(code, 0)) + 1
             frame = self.fetch_stock_history(code, years=years)
+            if frame is not None and not frame.empty:
+                frame = frame[
+                    pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d") <= completed_cutoff
+                ].copy()
             rows = len(frame) if frame is not None else 0
             if frame is not None and rows >= 10:
                 self.csv_manager.write_stock(code, frame)
@@ -1018,6 +1035,7 @@ class AKShareFetcher:
         coverage = self.universe_coverage(universe)
         state.update({
             "status": "complete" if coverage["remaining_count"] == 0 else "partial",
+            "completed_through_date": completed_cutoff,
             "current": None,
             "last_run_attempted": len(queue),
             "last_run_added": added,
