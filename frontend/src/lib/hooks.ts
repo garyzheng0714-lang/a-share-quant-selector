@@ -48,6 +48,18 @@ export function useSectors() {
   return useSWR("sectors", () => api.getSectors(), { refreshInterval: 600_000 });
 }
 
+export function useSectorDetail(name: string | null) {
+  return useSWR(name ? `sector-${name}` : null, () => api.getSectorDetail(name!), {
+    refreshInterval: 600_000,
+  });
+}
+
+export function useCoverage() {
+  return useSWR("data-coverage", () => api.getCoverage().then((r) => r.data), {
+    refreshInterval: 30_000,
+  });
+}
+
 export function useSuperB1() {
   return useSWR("super-b1", () => api.getSuperB1(), { refreshInterval: 600_000 });
 }
@@ -71,6 +83,13 @@ export function useQuantComment() {
 export function useLatestDecision() {
   return useSWR("latest-decision", () => api.getLatestDecision(), {
     refreshInterval: 300_000,
+    revalidateOnFocus: true,
+  });
+}
+
+export function useEvolutionStatus() {
+  return useSWR("evolution-status", () => api.getEvolutionStatus(), {
+    refreshInterval: 600_000,
     revalidateOnFocus: true,
   });
 }

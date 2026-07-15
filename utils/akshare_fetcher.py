@@ -11,6 +11,7 @@ from pathlib import Path
 import json
 import requests
 import random
+import os
 
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -186,6 +187,7 @@ class AKShareFetcher:
         self.full_data_dir = Path(data_dir)
         self.stock_names_file = Path(data_dir) / "stock_names.json"
         self._market_cap_cache: dict[str, float] = {}
+        self.bootstrap_state_file = self.full_data_dir / "universe_bootstrap.json"
 
     def _get_real_market_cap(self, stock_code: str) -> float:
         """获取真实总市值（带内存缓存）."""
@@ -895,6 +897,141 @@ class AKShareFetcher:
         if failed_list and not max_stocks:
             print(f"提示: 再次运行 init 命令可跳过失败股票，专注于成功获取的数据")
 
+    def _main_board_universe(self) -> dict:
+        from utils.market_filter import is_main_board, main_board_only
+
+        stock_dict = self._load_local_stock_names()
+        if len(stock_dict) < 3000:
+            stock_dict = self.get_all_stock_codes()
+        return {
+            code: name for code, name in stock_dict.items()
+            if not main_board_only() or is_main_board(code)
+        }
+
+    def refresh_stock_universe(self) -> dict:
+        """刷新当前A股名单；失败时保留本地名单，绝不把完整缓存降级成内置小表。"""
+        try:
+            frames = [ak.stock_sh_a_spot_em(), ak.stock_sz_a_spot_em()]
+            all_stocks = pd.concat([frame[["代码", "名称"]] for frame in frames], ignore_index=True)
+            all_stocks = all_stocks.drop_duplicates(subset=["代码"])
+            code_pattern = r"^(00|30|60|68|88)\d{4}$"
+            all_stocks = all_stocks[all_stocks["代码"].astype(str).str.match(code_pattern)]
+            excluded = ("债", "基", "ETF", "LOF", "基金", "B股", "指数", "转债", "回购")
+            mask = ~all_stocks["名称"].astype(str).apply(lambda name: any(word in name for word in excluded))
+            fresh = dict(zip(all_stocks.loc[mask, "代码"].astype(str), all_stocks.loc[mask, "名称"].astype(str)))
+            if len(fresh) >= 3000:
+                self._save_stock_names(fresh)
+                return fresh
+        except Exception as exc:
+            print(f"  刷新股票名单失败: {exc}，继续使用本地完整名单")
+        return self._load_local_stock_names()
+
+    def _load_bootstrap_state(self) -> dict:
+        if self.bootstrap_state_file.exists():
+            try:
+                return json.loads(self.bootstrap_state_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {"attempts": {}, "short_history": {}, "failures": {}}
+
+    def _save_bootstrap_state(self, state: dict) -> None:
+        state["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        tmp = self.bootstrap_state_file.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(self.bootstrap_state_file)
+
+    def universe_coverage(self, universe=None) -> dict:
+        """分别报告行情覆盖与可训练覆盖，避免把次新股误报为数据缺失。"""
+        universe = universe or self._main_board_universe()
+        state = self._load_bootstrap_state()
+        short_history = state.get("short_history") or {}
+        existing = set(self.csv_manager.list_all_stocks())
+        covered = trainable = 0
+        for code in universe:
+            if code not in existing:
+                continue
+            rows = len(self.csv_manager.read_stock(code, nrows=220))
+            covered += int(rows >= 10)
+            trainable += int(rows >= 220)
+        total = len(universe)
+        ineligible = len([c for c in short_history if c in universe])
+        eligible = max(total - ineligible, 0)
+        return {
+            "universe_count": total,
+            "covered_count": covered,
+            "coverage_ratio": round(covered / total, 4) if total else 0.0,
+            "trainable_count": trainable,
+            "trainable_eligible_count": eligible,
+            "trainable_ratio": round(trainable / eligible, 4) if eligible else 0.0,
+            "short_history_count": ineligible,
+            "remaining_count": max(total - covered, 0),
+            "failure_count": len(state.get("failures") or {}),
+            "updated_at": state.get("updated_at"),
+        }
+
+    def bootstrap_universe(self, max_stocks=None, years: int = 6, refresh_universe: bool = False) -> dict:
+        """完整回补主板股票池；每只完成后写检查点，进程中断可继续。"""
+        if refresh_universe:
+            self.refresh_stock_universe()
+        universe = self._main_board_universe()
+        state = self._load_bootstrap_state()
+        attempts = state.setdefault("attempts", {})
+        failures = state.setdefault("failures", {})
+        short_history = state.setdefault("short_history", {})
+        existing = set(self.csv_manager.list_all_stocks())
+        queue = []
+        for code in sorted(universe):
+            if code not in existing:
+                queue.append(code)
+                continue
+            rows = len(self.csv_manager.read_stock(code, nrows=220))
+            if rows < 220 and code not in short_history:
+                queue.append(code)
+        if max_stocks is not None:
+            queue = queue[:max(0, max_stocks)]
+
+        added = trainable_added = failed = 0
+        state.update({"status": "running", "universe_count": len(universe), "current": None})
+        self._save_bootstrap_state(state)
+        for index, code in enumerate(queue, start=1):
+            state["current"] = code
+            attempts[code] = int(attempts.get(code, 0)) + 1
+            frame = self.fetch_stock_history(code, years=years)
+            rows = len(frame) if frame is not None else 0
+            if frame is not None and rows >= 10:
+                self.csv_manager.write_stock(code, frame)
+                added += 1
+                trainable_added += int(rows >= 220)
+                failures.pop(code, None)
+                if rows < 220:
+                    short_history[code] = rows
+                else:
+                    short_history.pop(code, None)
+            else:
+                failed += 1
+                failures[code] = {"attempts": attempts[code], "rows": rows}
+            state["processed_this_run"] = index
+            self._save_bootstrap_state(state)
+            if index % 10 == 0:
+                time.sleep(0.1)
+
+        coverage = self.universe_coverage(universe)
+        state.update({
+            "status": "complete" if coverage["remaining_count"] == 0 else "partial",
+            "current": None,
+            "last_run_attempted": len(queue),
+            "last_run_added": added,
+            "last_run_failed": failed,
+        })
+        self._save_bootstrap_state(state)
+        return {**coverage, "attempted": len(queue), "added": added,
+                "trainable_added": trainable_added, "failed": failed,
+                "status": state["status"]}
+
+    def expand_universe(self, max_new: int = 50, years: int = 2) -> dict:
+        """兼容旧调用；新实现同样具备断点与覆盖率口径。"""
+        return self.bootstrap_universe(max_stocks=max_new, years=years)
+
     def daily_update(self, max_stocks=None):
         """
         每日增量更新 - 只获取实际需要的天数
@@ -903,7 +1040,9 @@ class AKShareFetcher:
         """
         from datetime import datetime
 
-        existing_stocks = self.csv_manager.list_all_stocks()
+        # 日更必须以完整股票名单为准。缺历史的票交给后台 bootstrap，已有文件全部增量更新。
+        universe = self._main_board_universe()
+        existing_stocks = [code for code in sorted(universe) if self.csv_manager.stock_exists(code)]
 
         if not existing_stocks:
             print("没有找到已有数据，请先执行 init")

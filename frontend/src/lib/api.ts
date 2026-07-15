@@ -187,6 +187,45 @@ export interface SectorsData {
   stocks?: number;
   hot?: SectorHot[];
   relay?: SectorRelay[];
+  ranking?: Array<SectorHot & { rank: number; total: number }>;
+}
+
+export interface SectorDetailStock {
+  rank: number;
+  code: string;
+  name: string;
+  close: number;
+  ret1: number | null;
+  ret5: number | null;
+  b1: boolean;
+  b1_signals: string[];
+  confirmation_count: number;
+  confirmations: string[];
+  action: DecisionAction;
+}
+
+export interface SectorDetailData {
+  available: boolean;
+  reason?: string;
+  trade_date?: string;
+  sector?: SectorState & { name: string };
+  stocks?: SectorDetailStock[];
+  recommended?: SectorDetailStock[];
+  total?: number;
+}
+
+export interface CoverageStatus {
+  universe_count: number;
+  covered_count: number;
+  coverage_ratio: number;
+  trainable_count: number;
+  trainable_eligible_count: number;
+  trainable_ratio: number;
+  short_history_count: number;
+  remaining_count: number;
+  failure_count: number;
+  running: boolean;
+  updated_at?: string | null;
 }
 
 /** 超级B1（知行公式独立模块）命中信号 */
@@ -448,6 +487,10 @@ export interface DecisionCandidate {
   action: DecisionAction;
   baseline: {
     signal?: string;
+    signals?: string[];
+    signal_labels?: string[];
+    confirmations?: string[];
+    confirmation_count?: number;
     close?: number | null;
     J?: number | null;
     RSI?: number | null;
@@ -497,6 +540,31 @@ export interface DecisionResponse {
     expected_date: string;
     anchor_dates?: Record<string, number>;
   };
+}
+
+export interface EvolutionStatus {
+  evolution_id: string;
+  trade_date: string;
+  status: "complete" | "failed";
+  universe_count: number;
+  covered_count: number;
+  coverage_ratio: number;
+  labels_updated: number;
+  dataset_rows: number;
+  challenger_version?: string | null;
+  promotion_status: "promoted" | "kept_champion" | "not_evaluated";
+  reason_codes: string[];
+  outcomes?: {
+    buy?: { count: number; win_rate: number | null; avg_net_ret_5: number | null };
+    observe?: { count: number; win_rate: number | null; avg_net_ret_5: number | null };
+    avoid?: { count: number; win_rate: number | null; avg_net_ret_5: number | null };
+    missed_winner_rate?: number | null;
+  };
+}
+
+export interface EvolutionResponse {
+  available: boolean;
+  data: EvolutionStatus | null;
 }
 
 export interface FactorMeta {
@@ -588,11 +656,18 @@ export const api = {
   updateData: () => request<{ success: boolean; message: string }>("/api/data/update", { method: "POST" }),
   getThermometer: () => request<ThermometerData>("/api/thermometer"),
   getSectors: () => request<SectorsData>("/api/sectors"),
+  getSectorDetail: (name: string) =>
+    request<SectorDetailData>(`/api/sectors/${encodeURIComponent(name)}`),
+  getCoverage: () => request<ApiResponse<CoverageStatus>>("/api/data/coverage"),
+  startBootstrap: () => request<{ success: boolean; started: boolean; message: string }>(
+    "/api/data/bootstrap", { method: "POST" },
+  ),
   getSuperB1: () => request<SuperB1Data>("/api/super-b1"),
   getFactors: () => request<FactorsResponse>("/api/factors"),
   getQuantPick: () => request<QuantPickResponse>("/api/quant-pick"),
   getQuantComment: () => request<QuantComment>("/api/quant-comment"),
   getLatestDecision: () => request<DecisionResponse>("/api/decision/latest"),
+  getEvolutionStatus: () => request<EvolutionResponse>("/api/decision/evolution"),
   getFactorScan: (strategy: string, date?: string) =>
     request<FactorScanResponse>(
       `/api/factor-scan?strategy=${encodeURIComponent(strategy)}${date ? `&date=${date}` : ""}`,

@@ -5,7 +5,9 @@ import logging
 
 from flask import Blueprint, jsonify, request
 
-from utils.decision_ledger import get_decision, get_latest_decision, list_models
+from utils.decision_ledger import (
+    get_decision, get_latest_decision, get_latest_evolution, list_models,
+)
 
 logger = logging.getLogger(__name__)
 decision_bp = Blueprint("decision", __name__)
@@ -32,8 +34,12 @@ def api_latest_decision():
     try:
         run = get_latest_decision(stage)
         from utils.data_freshness import local_data_status
+        from utils.decision_versions import strategy_version
         freshness = local_data_status()
-        if run and freshness["fresh"] and run.get("trade_date") != freshness["local_date"]:
+        if run and freshness["fresh"] and (
+            run.get("trade_date") != freshness["local_date"]
+            or run.get("strategy_version") != strategy_version()
+        ):
             run = None
         if run is None and stage != "preopen":
             from utils.hierarchical_decision import run_close_decision
@@ -55,6 +61,20 @@ def api_decision_detail(run_id: str):
 def api_run_close_decision():
     from utils.hierarchical_decision import run_close_decision
     return jsonify(run_close_decision())
+
+
+@decision_bp.route("/api/decision/evolution", methods=["GET"])
+def api_evolution_status():
+    latest = get_latest_evolution()
+    current = bool(latest and (latest.get("metrics") or {}).get("strategy") == "super-b1-original")
+    return jsonify({"available": current, "data": latest if current else None})
+
+
+@decision_bp.route("/api/decision/evolution", methods=["POST"])
+def api_run_evolution():
+    from utils.self_evolution import run_daily_evolution
+
+    return jsonify(run_daily_evolution())
 
 
 @decision_bp.route("/api/decision/preopen", methods=["POST"])

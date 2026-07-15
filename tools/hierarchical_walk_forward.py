@@ -20,7 +20,6 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from strategy.factor_lib import FactorContext  # noqa: E402
-from strategy.factors import FACTOR_REGISTRY  # noqa: E402
 from utils.csv_manager import CSVManager  # noqa: E402
 from utils.decision_ledger import register_model  # noqa: E402
 from utils.execution_model import evaluate_trade  # noqa: E402
@@ -123,19 +122,19 @@ def _stock_features(ctx: FactorContext) -> dict:
 
 
 def _signals_one(args) -> list[dict]:
-    code, name, frame, market, sector = args
-    meta = FACTOR_REGISTRY["cloud_stair"]
+    code, name, frame, market, sector, market_cap = args
+    from strategy.super_b1 import compute_super_b1
+
     rows = []
-    for i in range(max(180, meta["min_bars"]), len(frame) - 5):
+    hits = compute_super_b1(frame, code, market_cap=market_cap, return_history=True)
+    date_to_index = {date: i for i, date in enumerate(frame["date"])}
+    for hit in hits if isinstance(hits, list) else []:
+        date = hit["date"]
+        i = date_to_index.get(date)
+        if i is None or i >= len(frame) - 5:
+            continue
         sub = frame.iloc[:i + 1]
         ctx = FactorContext(sub)
-        try:
-            hit = meta["fn"](ctx)
-        except Exception:
-            continue
-        if not hit:
-            continue
-        date = frame.iloc[i]["date"]
         industry = frame.iloc[i]["industry"]
         if date not in market.index or (date, industry) not in sector.index:
             continue
@@ -153,6 +152,7 @@ def _signals_one(args) -> list[dict]:
         s = sector.loc[(date, industry)]
         record = {
             "date": date, "code": code, "name": name, "industry": industry,
+            "b1_signals": "|".join(hit.get("signals") or []),
             "net_return_5": float(net_return), "market_forward_5": float(market_forward),
             "excess_5": float(net_return - market_forward),
             "y_quality": int(net_return - market_forward > 0),
@@ -176,8 +176,11 @@ def build_dataset(cm: CSVManager, names: dict, industry_map: dict, limit: int = 
     if limit:
         codes = codes[:limit]
     market, sector, stock_frames = build_panels(cm, codes, industry_map)
+    cap_path = Path(cm.data_dir) / "stock_market_cap.json"
+    caps = json.loads(cap_path.read_text(encoding="utf-8")) if cap_path.exists() else {}
     tasks = [
-        (code, names.get(code, code), frame, market, sector)
+        (code, names.get(code, code), frame, market, sector,
+         ((caps.get(code) or {}).get("circ_mv") or (caps.get(code) or {}).get("total_mv") or 0))
         for code, frame in stock_frames.items()
     ]
     rows = []
@@ -346,17 +349,23 @@ def train_and_register(frame: pd.DataFrame, output: Path) -> dict:
         "thresholds": report["thresholds"], "status": report["status"],
         "metrics": report["aggregate"],
         "models": {key: model.to_dict() for key, model in models.items()},
-        "source_refs": ["local-eod-csv", "cloud_stair", "execution-model-v1"],
+        "source_refs": ["local-eod-csv", "super-b1-original", "execution-model-v1"],
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
     for key, model in models.items():
+        validation_status = report["status"].get(key, "shadow")
         register_model({
-            "model_key": key, "version": version, "status": report["status"].get(key, "shadow"),
+            # 训练通过也先进入 shadow；只有每日进化器能原子晋级整套模型。
+            "model_key": key, "version": version,
+            "status": "shadow" if validation_status == "active" else validation_status,
             "trained_as_of": trained, "train_range": "/".join(bundle["train_range"]),
             "test_range": "/".join([f["month"] for f in report["folds"][-2:]]) if report["folds"] else None,
             "feature_names": model.feature_names,
-            "params": {"threshold": report["thresholds"].get(key), "l2": model.l2},
+            "params": {
+                "threshold": report["thresholds"].get(key), "l2": model.l2,
+                "validation_status": validation_status,
+            },
             "metrics": report["aggregate"].get(key, {}), "source_refs": bundle["source_refs"],
             "artifact": model.to_dict(),
         })
@@ -382,7 +391,7 @@ def main():
     else:
         frame = pd.read_csv(dataset_path)
     if frame.empty:
-        raise SystemExit("无云阶历史信号，无法训练")
+        raise SystemExit("无B1历史信号，无法训练")
     result = train_and_register(frame, Path(args.bundle))
     Path(args.report).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"rows": len(frame), "range": [frame.date.min(), frame.date.max()],

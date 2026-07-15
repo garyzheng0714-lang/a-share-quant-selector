@@ -5,9 +5,7 @@ import { useAppStore } from "@/lib/store";
 import type { SignalStock, SuperB1Hit } from "@/lib/api";
 
 /**
- * 超级B1（知行公式）独立信号列表。
- * 通过今日页顶部的源切换进入（与策略候选并列，同一个入口承载两套体系）。
- * 与碗口候选池 / AI 荐票完全独立：缩量回调派买点，另一套体系的第二只眼。
+ * 超级B1（知行公式）原始信号列表，也是分层决策的主候选入口。
  * 无信号是常态（公式条件苛刻），空态如实说明而不是留白。
  */
 export function SuperB1Card() {
@@ -47,7 +45,7 @@ export function SuperB1Card() {
         知行超级B1公式（缩量回调派）独立扫描
         {data?.trade_date && ` · ${data.trade_date}`}
         {!isLoading && data?.available && ` · ${hits.length}只`}
-        ，与策略候选、AI 荐票互不影响
+        ，这是个股排名的B1主候选池；上层闸门只决定可执行、观察或回避
         {(data?.cap_missing ?? 0) > 0 && ` · ${data!.cap_missing} 只因缺市值数据未纳入`}
       </p>
 

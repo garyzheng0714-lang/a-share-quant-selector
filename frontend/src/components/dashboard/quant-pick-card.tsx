@@ -2,13 +2,15 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  Check, ChevronDown, CircleMinus, ExternalLink, ShieldAlert, ShieldCheck,
+  Check, ChevronDown, CircleMinus, ExternalLink, RefreshCw, ShieldAlert, ShieldCheck,
 } from "lucide-react";
 import { Skeleton, LoadError } from "@/components/ui";
-import { useLatestDecision } from "@/lib/hooks";
+import { useEvolutionStatus, useLatestDecision } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
 import { duration } from "@/lib/tokens";
-import type { DecisionAction, DecisionCandidate, DecisionModel, SignalStock } from "@/lib/api";
+import type {
+  DecisionAction, DecisionCandidate, DecisionModel, EvolutionStatus, SignalStock,
+} from "@/lib/api";
 
 const REASONS: Record<string, string> = {
   hierarchy_models_unvalidated: "市场/板块模型未通过样本外走查",
@@ -31,6 +33,54 @@ const ACTION: Record<DecisionAction, { label: string; className: string }> = {
   none: { label: "空仓", className: "bg-inset text-ink-muted" },
 };
 
+const EVOLUTION_REASONS: Record<string, string> = {
+  universe_coverage_insufficient: "股票覆盖仍不足",
+  market_walk_forward_failed: "大环境层样本外未通过",
+  sector_walk_forward_failed: "板块层样本外未通过",
+  market_average_return_nonpositive: "大环境层收益仍为负",
+  sector_average_return_nonpositive: "板块层收益仍为负",
+  evolution_exception: "本轮训练失败，已保留原模型",
+};
+
+function EvolutionStrip({ evolution }: { evolution: EvolutionStatus }) {
+  const promoted = evolution.promotion_status === "promoted";
+  const coverage = Math.max(0, Math.min(100, evolution.coverage_ratio * 100));
+  const reason = evolution.reason_codes
+    .map((code) => EVOLUTION_REASONS[code])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("；");
+  return (
+    <div className="mt-3 rounded-xl border border-border/60 bg-inset px-3 py-2.5">
+      <div className="flex items-center gap-2">
+        <motion.span
+          animate={{ rotate: promoted ? 360 : 0 }}
+          transition={{ duration: duration.slow }}
+          className={promoted ? "text-bull" : "text-ink-muted"}
+        >
+          <RefreshCw size={13} />
+        </motion.span>
+        <span className="text-[11px] font-semibold text-ink">每日进化</span>
+        <span className={`ml-auto text-[10px] font-medium ${promoted ? "text-bull" : "text-ink-muted"}`}>
+          {promoted ? "挑战模型已晋级" : "冠军模型保持不变"}
+        </span>
+      </div>
+      <div className="mt-2 h-1 overflow-hidden rounded-full bg-border/70">
+        <motion.div
+          initial={{ width: 0 }} animate={{ width: `${coverage}%` }}
+          transition={{ duration: duration.slow }}
+          className={`h-full rounded-full ${coverage >= 60 ? "bg-bull" : "bg-accent"}`}
+        />
+      </div>
+      <p className="mt-1.5 text-[10px] leading-relaxed text-ink-muted">
+        覆盖 {evolution.covered_count}/{evolution.universe_count}（{coverage.toFixed(1)}%）
+        {evolution.dataset_rows ? ` · 训练样本 ${evolution.dataset_rows}` : ""}
+        {reason ? ` · ${reason}` : ""}
+      </p>
+    </div>
+  );
+}
+
 function modelFor(models: DecisionModel[], key: string) {
   return models.find((model) => model.model_key === key);
 }
@@ -38,7 +88,7 @@ function modelFor(models: DecisionModel[], key: string) {
 function GateRail({ models }: { models: DecisionModel[] }) {
   const gates = [
     ["market", "1", "大环境"], ["sector", "2", "板块"],
-    ["risk", "3", "个股"], ["execution", "4", "执行"],
+    ["b1", "3", "B1主判"], ["execution", "4", "执行"],
   ] as const;
   const hierarchyActive = ["market", "sector", "risk"].every(
     (key) => modelFor(models, key)?.status === "active",
@@ -48,7 +98,8 @@ function GateRail({ models }: { models: DecisionModel[] }) {
       {gates.map(([key, no, label], index) => {
         const model = modelFor(models, key);
         const execution = key === "execution";
-        const passed = execution ? hierarchyActive : model?.status === "active";
+        const b1 = key === "b1";
+        const passed = b1 ? true : execution ? hierarchyActive : model?.status === "active";
         return (
           <div key={key} className="relative min-w-0">
             {index < gates.length - 1 && (
@@ -64,7 +115,8 @@ function GateRail({ models }: { models: DecisionModel[] }) {
               <span className={`text-[9px] ${passed ? "text-bull" : "text-ink-muted"}`}>
                 {execution
                   ? hierarchyActive ? "成本已计入" : "未到执行层"
-                  : model?.status === "active" ? "已验证" : model?.status === "shadow" ? "影子观察" : "未通过"}
+                  : b1 ? "候选入口"
+                  : model?.status === "active" ? "已验证" : model?.status === "shadow" ? "影子观察" : "尚未验证"}
               </span>
             </div>
           </div>
@@ -119,6 +171,8 @@ function CandidateRow({ item, list }: { item: DecisionCandidate; list: DecisionC
           <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-ink-muted">
             <span>{item.industry || "未知板块"}</span>
             {item.sector?.score != null && <span className="num">板块热度 {Math.round(item.sector.score)}</span>}
+            <span className="text-accent">B1主判</span>
+            {(item.baseline.confirmation_count ?? 0) > 0 && <span>辅助确认 {item.baseline.confirmation_count}</span>}
             {item.reason_codes[0] && <span className="text-ink-secondary">{REASONS[item.reason_codes[0]] || item.reason_codes[0]}</span>}
           </div>
         </button>
@@ -166,6 +220,7 @@ function CandidateRow({ item, list }: { item: DecisionCandidate; list: DecisionC
 
 export function QuantPickCard() {
   const { data, isLoading, error, mutate } = useLatestDecision();
+  const { data: evolutionResponse } = useEvolutionStatus();
   if (isLoading) return <Skeleton className="h-72 w-full rounded-2xl" />;
   if (error) return <LoadError label="分层决策加载失败" onRetry={() => mutate()} />;
   if (!data?.available) {
@@ -206,7 +261,7 @@ export function QuantPickCard() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-sm font-semibold text-ink">今日决策</h2>
+              <h2 className="text-sm font-semibold text-ink">B1 个股排名</h2>
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${action.className}`}>{action.label}</span>
               <span className="text-[10px] text-ink-muted">{data.stage === "preopen" ? "盘前复核" : "收盘初筛"}</span>
             </div>
@@ -217,6 +272,14 @@ export function QuantPickCard() {
           </div>
         </div>
         <div className="mt-4"><GateRail models={models} /></div>
+        <details className="mt-3 rounded-xl border border-border/60 bg-inset px-3 py-2 text-[10px] leading-relaxed text-ink-muted">
+          <summary className="min-h-6 cursor-pointer select-none text-ink-secondary">大环境和板块具体怎么判</summary>
+          <p className="mt-1.5">大环境看全市场1/5/20日收益、上涨家数占比、成交额5日对20日、跌停占比，以及等权指数相对20/60日均线。</p>
+          <p className="mt-1">板块再看相对市场强弱、板块广度、成交占比、波动分散度和有效成分股数。模型没有通过跨月份样本外验证时，显示“尚未验证”，不等同于断言市场一定会跌。</p>
+        </details>
+        {evolutionResponse?.available && evolutionResponse.data && (
+          <EvolutionStrip evolution={evolutionResponse.data} />
+        )}
       </div>
 
       <div className="px-4 py-3.5">
@@ -234,7 +297,7 @@ export function QuantPickCard() {
         <div className="mb-1 flex items-center gap-1.5">
           {buys.length ? <Check size={13} className="text-bull" /> : <CircleMinus size={13} className="text-ink-muted" />}
           <span className="text-xs font-semibold text-ink">{buys.length ? `可执行 ${buys.length} 只` : "候选证据链"}</span>
-          <span className="text-[10px] text-ink-muted">板块在前，个股在后</span>
+          <span className="text-[10px] text-ink-muted">B1主判，辅助因子不单独荐票</span>
         </div>
         {candidates.length ? candidates.map((item) => <CandidateRow key={item.code} item={item} list={candidates} />) : (
           <p className="py-5 text-center text-xs text-ink-muted">基础形态也没有命中，保持空仓。</p>

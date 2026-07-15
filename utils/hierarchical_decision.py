@@ -27,23 +27,30 @@ def _load_json(path: str) -> dict:
 
 
 def _baseline_candidates() -> tuple[str | None, list[dict]]:
+    from strategy.factors import FACTOR_REGISTRY
     from utils.factor_scan import get_factor_hits
     from utils.market_filter import is_main_board, main_board_only
-    from utils.quant_pick import CORE_FACTOR
     from utils.sector_rotation import get_sector_rotation
+    from utils.super_b1_scan import get_super_b1
 
     cm = CSVManager("data")
     names = _load_json("data/stock_names.json")
     industries = _load_json("data/stock_industry.json")
     caps = _load_json("data/stock_market_cap.json")
-    scan = get_factor_hits(cm, names, [CORE_FACTOR])
+    scan = get_super_b1(cm, names)
     if not scan.get("available"):
         return None, []
-    hits = scan["results"][CORE_FACTOR]["hits"]
+    hits = scan.get("hits") or []
     if main_board_only():
         hits = [h for h in hits if is_main_board(h.get("code", ""))]
     sectors = get_sector_rotation(cm)
     heat = sectors.get("heat_map") or {}
+    auxiliary = get_factor_hits(cm, names, list(FACTOR_REGISTRY))
+    confirmations: dict[str, list[str]] = {}
+    if auxiliary.get("available"):
+        for key, result in (auxiliary.get("results") or {}).items():
+            for item in result.get("hits") or []:
+                confirmations.setdefault(item.get("code", ""), []).append(key)
     rows = []
     for hit in hits:
         code = hit.get("code", "")
@@ -54,12 +61,17 @@ def _baseline_candidates() -> tuple[str | None, list[dict]]:
             **hit, "name": hit.get("name") or names.get(code, code), "industry": industry,
             "cap_yi": round(cap_value / 1e8, 1) if isinstance(cap_value, (int, float)) and cap_value > 0 else None,
             "sector": heat.get(industry),
+            "confirmations": confirmations.get(code, []),
         })
     return scan["trade_date"], rows
 
 
 def _active_model_bundle() -> tuple[dict, str]:
-    models = get_active_models()
+    # 候选入口已切到原版B1，旧云阶样本训练出的模型不可跨分布复用。
+    models = {
+        key: model for key, model in get_active_models().items()
+        if "super-b1-original" in (model.get("source_refs") or [])
+    }
     version = next(iter(models.values()))["version"] if models else "baseline-only"
     return models, version
 
@@ -155,7 +167,11 @@ def run_close_decision(as_of: str | None = None) -> dict:
         candidates.append({
             "code": row["code"], "name": row.get("name"), "industry": row.get("industry"),
             "action": action, "baseline": {
-                "signal": "cloud_stair", "close": row.get("close"), "J": row.get("J"),
+                "signal": "super_b1", "signals": row.get("signals") or [],
+                "signal_labels": row.get("signal_labels") or [],
+                "confirmations": row.get("confirmations") or [],
+                "confirmation_count": len(row.get("confirmations") or []),
+                "close": row.get("close"), "J": row.get("J"),
                 "RSI": row.get("RSI"), "cap_yi": row.get("cap_yi"),
             },
             "market": {"probability": market_p, "threshold": market_t},
@@ -182,6 +198,8 @@ def run_close_decision(as_of: str | None = None) -> dict:
     candidates.sort(key=lambda c: (
         {"buy": 0, "observe": 1, "avoid": 2}[c["action"]],
         -(c["sector"].get("probability") or -1),
+        -(c["sector"].get("score") or -1),
+        -(c["baseline"].get("confirmation_count") or 0),
         -(c["stock"].get("quality_probability") or -1), c["code"],
     ))
     for index, candidate in enumerate(candidates, start=1):
@@ -196,7 +214,7 @@ def run_close_decision(as_of: str | None = None) -> dict:
         "status": status, "final_action": final_action,
         "strategy_version": strategy_version(), "feature_version": FEATURE_VERSION,
         "model_version": model_version, "data_version": data_version(),
-        "source_refs": [f"local-eod:{trade_date}", "factor:cloud_stair"],
+        "source_refs": [f"local-eod:{trade_date}", "factor:super-b1-original"],
         "market": {
             "models_active": sorted(models),
             "gate_order": ["market", "sector", "stock", "execution"],

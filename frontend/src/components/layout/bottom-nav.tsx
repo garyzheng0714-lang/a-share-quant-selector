@@ -1,21 +1,17 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Compass, History } from "lucide-react";
+import { ChartNoAxesColumnIncreasing, ListOrdered } from "lucide-react";
 
-/** 两个 tab = 用户的两个问题：今天怎么办 / 过去准不准 */
+/** 顶层只保留板块与个股；板块详情属于板块分区。 */
 const navItems = [
-  { to: "/", label: "今日", end: true, Icon: Compass },
-  { to: "/review", label: "复盘", end: false, Icon: History },
+  { to: "/sectors", label: "板块", end: false, matches: ["/sectors"], Icon: ChartNoAxesColumnIncreasing },
+  { to: "/stocks", label: "个股", end: false, matches: ["/stocks", "/stock/"], Icon: ListOrdered },
 ];
 
 export function BottomNav() {
   const location = useLocation();
 
-  const activeIndex = navItems.findIndex((item) =>
-    item.end
-      ? location.pathname === item.to
-      : location.pathname.startsWith(item.to),
-  );
+  const activeIndex = navItems.findIndex((item) => item.matches.some((path) => location.pathname.startsWith(path)));
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 sm:hidden glass border-t border-border pb-[env(safe-area-inset-bottom)]">

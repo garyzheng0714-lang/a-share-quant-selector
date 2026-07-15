@@ -99,6 +99,8 @@ jobs:
                   docker compose logs --tail 80
                   exit 1
                 fi
+                curl --max-time 300 -sf -X POST http://localhost:18321/api/decision/close > /tmp/quant-decision.json
+                curl --max-time 10 -sf -X POST http://localhost:18321/api/data/bootstrap > /tmp/quant-bootstrap.json
                 echo ">>> Deploy successful with fresh data! (ready after ~${i}0s)"
                 exit 0
               fi

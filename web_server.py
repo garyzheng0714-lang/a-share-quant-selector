@@ -70,12 +70,14 @@ from views.super_b1_api import super_b1_bp  # noqa: E402
 from views.factor_api import factor_bp  # noqa: E402
 from views.quant_pick_api import quant_pick_bp  # noqa: E402
 from views.decision_api import decision_bp  # noqa: E402
+from views.universe_api import universe_bp, start_universe_bootstrap  # noqa: E402
 app.register_blueprint(perf_bp)
 app.register_blueprint(insight_bp)
 app.register_blueprint(super_b1_bp)
 app.register_blueprint(factor_bp)
 app.register_blueprint(quant_pick_bp)
 app.register_blueprint(decision_bp)
+app.register_blueprint(universe_bp)
 
 csv_manager = CSVManager("data")
 
@@ -1022,6 +1024,9 @@ def _scheduled_job():
     except Exception as e:
         logger.error("定时数据更新失败: %s", e)
 
+    # 后台持续补齐完整主板股票池；断点续跑，不阻塞当日决策。
+    start_universe_bootstrap()
+
     # 遍历所有活跃视图
     views = list_views()
     for view in views:
@@ -1083,6 +1088,20 @@ def _scheduled_job():
             logger.warning("因子预热不可用: %s", fr.get("reason"))
     except Exception as e:
         logger.error("因子预热失败: %s", e)
+
+    # 每日进化：回填所有决策结果，训练挑战模型；仅样本外与覆盖率均通过才晋级。
+    try:
+        from utils.self_evolution import run_daily_evolution
+
+        evolution = run_daily_evolution(csv_manager)
+        logger.info(
+            "每日进化: %s / %s (%s)",
+            evolution.get("status", "unavailable"),
+            evolution.get("promotion_status", "not_evaluated"),
+            evolution.get("challenger_version", evolution.get("reason")),
+        )
+    except Exception as e:
+        logger.error("每日进化失败，保留当前冠军模型: %s", e, exc_info=True)
 
     # 收盘决策：严格按市场→板块→个股→执行顺序。模型未通过走查时会自动空仓/观察。
     decision = None
@@ -1198,6 +1217,7 @@ def run_web_server(
 
     if auto_schedule and not debug:
         _start_scheduler()
+        start_universe_bootstrap()
 
     print(f"Web 服务器启动: http://{host}:{port}")
     app.run(host=host, port=port, debug=debug)
@@ -1210,6 +1230,7 @@ def create_app():
     """
     init_db()
     _start_scheduler()
+    start_universe_bootstrap()
     return app
 
 

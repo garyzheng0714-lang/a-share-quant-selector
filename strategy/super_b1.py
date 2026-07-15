@@ -113,7 +113,7 @@ MIN_BARS = 140
 
 
 def compute_super_b1(df: pd.DataFrame, code: str, params: dict = None,
-                     market_cap: float = None) -> dict:
+                     market_cap: float = None, return_history: bool = False):
     """对单只股票计算最新一根K线的超级B1信号.
 
     Args:
@@ -172,16 +172,17 @@ def compute_super_b1(df: pd.DataFrame, code: str, params: dict = None,
     双叉戟 = EVERY(长期 >= 75, 8) & (COUNT(短期 <= 50, 6) >= 2) & (COUNT(短期 <= 20, 7) >= 1)
     红肥绿瘦 = (COUNT(C >= O, 15) > 7) | (COUNT(C > REF(C, 1), 11) > 5)
 
-    # {定义大绿棒和缩量条件}（VDAY 只在最新一根评估，取标量）
-    vday = int(HHVBARS_LAST(V, 40).iloc[-1])
-    i_v = len(d) - 1 - vday          # 40日最大量那天的下标
-    c_v = C.iloc[i_v]
-    o_v = O.iloc[i_v]
-    # 无前一日数据时该比较按 TDX 无效值语义视为 False（只剩 c>=o 一条路）
-    c_v_prev = C.iloc[i_v - 1] if i_v >= 1 else np.nan
-    不是大绿棒 = bool((not np.isnan(c_v_prev)) and c_v >= c_v_prev) or bool(c_v >= o_v)
-    大绿棒离得远 = (vday >= 15) and (not 不是大绿棒)
-    大绿棒条件 = 不是大绿棒 or 大绿棒离得远
+    # 逐日计算40日最大量K线是否为大绿棒。这样同一份公式既能用于今日扫描，
+    # 也能一次向量化产出历史B1样本，避免逐日重复滚动计算。
+    vdays = HHVBARS_LAST(V, 40).fillna(0).astype(int)
+    big_green_ok = []
+    for i, vday in enumerate(vdays):
+        i_v = max(0, i - int(vday))
+        c_v, o_v = C.iloc[i_v], O.iloc[i_v]
+        c_v_prev = C.iloc[i_v - 1] if i_v >= 1 else np.nan
+        not_big_green = bool((not np.isnan(c_v_prev)) and c_v >= c_v_prev) or bool(c_v >= o_v)
+        big_green_ok.append(not_big_green or ((vday >= 15) and not not_big_green))
+    大绿棒条件 = pd.Series(big_green_ok, index=d.index)
 
     缩量 = (V < HHV(V, 20) * 0.416) | (V < HHV(V, 50) / 3)
     回踩缩量 = (V < HHV(V, 20) * 0.45) | (V < HHV(V, 50) / 3)
@@ -299,8 +300,7 @@ def compute_super_b1(df: pd.DataFrame, code: str, params: dict = None,
         & (近期振幅 >= 11.9) & (远期振幅 >= 19.5)
     )
 
-    # 原文逐条核对：7 个 B 条件全部包含 (不是大绿棒 OR 大绿棒离得远)，
-    # 该项是最新一根的标量，故统一在此并入，不逐条重复。
+    # 原文逐条核对：7 个 B 条件全部包含 (不是大绿棒 OR 大绿棒离得远)。
     all_signals = {
         "超卖缩量拐头B": 超卖缩量拐头B,
         "超卖缩量B": 超卖缩量B,
@@ -310,10 +310,29 @@ def compute_super_b1(df: pd.DataFrame, code: str, params: dict = None,
         "回踩超级B": 回踩超级B,
         "回踩黄线B": 回踩黄线B,
     }
-    fired = [
-        name for name, series in all_signals.items()
-        if 大绿棒条件 and bool(series.iloc[-1])
-    ]
+    if return_history:
+        rows = []
+        if not 流通市值满足:
+            return rows
+        for i in range(MIN_BARS - 1, len(d)):
+            fired_at = [
+                name for name, series in all_signals.items()
+                if bool(大绿棒条件.iloc[i]) and bool(series.iloc[i])
+            ]
+            if fired_at:
+                rows.append({
+                    "signals": fired_at,
+                    "signal_labels": [SIGNAL_LABELS.get(s, s) for s in fired_at],
+                    "close": round(float(C.iloc[i]), 2),
+                    "J": round(float(J.iloc[i]), 2),
+                    "RSI": round(float(RSI.iloc[i]), 2),
+                    "market_cap_yi": round(market_cap / 1e8, 2),
+                    "date": str(d["date"].iloc[i])[:10],
+                })
+        return rows
+
+    fired = [name for name, series in all_signals.items()
+             if bool(大绿棒条件.iloc[-1]) and bool(series.iloc[-1])]
 
     if not fired or not 流通市值满足:
         return None

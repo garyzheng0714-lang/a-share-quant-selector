@@ -3,8 +3,8 @@ import { NavLink, useLocation, Link } from "react-router-dom";
 import { useState, useRef } from "react";
 
 const navItems = [
-  { to: "/", label: "今日", end: true },
-  { to: "/review", label: "复盘" },
+  { to: "/sectors", label: "板块", end: false, matches: ["/sectors"] },
+  { to: "/stocks", label: "个股", end: false, matches: ["/stocks", "/stock/"] },
 ];
 
 export function NavBar() {
@@ -25,11 +25,7 @@ export function NavBar() {
     }
   });
 
-  const activeIndex = navItems.findIndex((item) =>
-    item.end
-      ? location.pathname === item.to
-      : location.pathname.startsWith(item.to),
-  );
+  const activeIndex = navItems.findIndex((item) => item.matches.some((path) => location.pathname.startsWith(path)));
 
   return (
     <motion.header
@@ -38,7 +34,7 @@ export function NavBar() {
       transition={{ type: "spring", damping: 30, stiffness: 300 }}
     >
       <nav className="flex items-center h-11 px-2 gap-1">
-        <Link to="/" className="px-3 text-sm font-semibold tracking-tight shrink-0 hover:opacity-80 transition-opacity">
+        <Link to="/sectors" className="px-3 text-sm font-semibold tracking-tight shrink-0 hover:opacity-80 transition-opacity">
           <span className="text-accent">QS</span>
           <span className="text-ink">elect</span>
         </Link>
@@ -48,9 +44,9 @@ export function NavBar() {
               key={item.to}
               to={item.to}
               end={item.end}
-              className={({ isActive }) =>
+              className={() =>
                 `relative px-3 py-1.5 text-[13px] font-medium tracking-[0.02em] uppercase whitespace-nowrap rounded-xl transition-colors duration-150 ${
-                  isActive
+                  i === activeIndex
                     ? "text-ink"
                     : "text-ink-muted hover:text-ink-secondary"
                 }`

@@ -3,7 +3,10 @@ import unittest
 from pathlib import Path
 
 import views.view_manager as view_manager
-from utils.decision_ledger import get_latest_decision, save_decision_run
+from utils.decision_ledger import (
+    get_active_models, get_latest_decision, promote_model_bundle,
+    register_model, save_decision_run,
+)
 
 
 class DecisionLedgerTest(unittest.TestCase):
@@ -33,6 +36,25 @@ class DecisionLedgerTest(unittest.TestCase):
         saved = get_latest_decision("close")
         self.assertEqual(saved["source_refs"], ["eod:2026-01-05"])
         self.assertEqual(saved["candidates"][0]["baseline"]["signal"], "cloud_stair")
+
+    def test_model_bundle_promotion_is_atomic(self):
+        def register(key, version, status):
+            register_model({
+                "model_key": key, "version": version, "status": status,
+                "trained_as_of": "2026-01-05T16:00:00+08:00",
+                "feature_names": [], "params": {}, "metrics": {},
+                "source_refs": [], "artifact": {},
+            })
+
+        for key in ("market", "sector"):
+            register(key, "champion", "active")
+            register(key, "challenger", "shadow")
+        result = promote_model_bundle(
+            "challenger", {"market": "active", "sector": "active"}
+        )
+        self.assertTrue(result["promoted"])
+        active = get_active_models()
+        self.assertEqual({item["version"] for item in active.values()}, {"challenger"})
 
 
 if __name__ == "__main__":

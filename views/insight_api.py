@@ -28,10 +28,91 @@ def api_sectors():
     try:
         from utils.csv_manager import CSVManager
         from utils.sector_rotation import get_sector_rotation
-        return jsonify(get_sector_rotation(CSVManager("data")))
+        result = get_sector_rotation(CSVManager("data"))
+        if result.get("available"):
+            ranking = []
+            for name, item in sorted((result.get("heat_map") or {}).items(),
+                                     key=lambda pair: pair[1].get("rank", 9999)):
+                delta = item.get("delta3", 0)
+                ranking.append({"name": name, **item,
+                                "trend": "up" if delta >= 8 else ("down" if delta <= -8 else "flat")})
+            result = {**result, "ranking": ranking}
+        return jsonify(result)
     except Exception as e:
         logger.error("板块轮动获取失败: %s", e)
         return jsonify({"available": False, "reason": "板块数据暂不可用"}), 500
+
+
+@insight_bp.route("/api/sectors/<path:sector_name>", methods=["GET"])
+def api_sector_detail(sector_name):
+    """板块详情：板块状态、成分股排名、B1主判和辅助确认。"""
+    try:
+        import json
+        from pathlib import Path
+
+        from strategy.factors import FACTOR_REGISTRY
+        from utils.csv_manager import CSVManager
+        from utils.decision_ledger import get_latest_decision
+        from utils.factor_scan import get_factor_hits
+        from utils.market_filter import is_main_board
+        from utils.sector_rotation import get_sector_rotation
+        from utils.super_b1_scan import get_super_b1
+
+        cm = CSVManager("data")
+        names = json.loads(Path("data/stock_names.json").read_text(encoding="utf-8"))
+        industries = json.loads(Path("data/stock_industry.json").read_text(encoding="utf-8"))
+        members = sorted(code for code, industry in industries.items()
+                         if industry == sector_name and is_main_board(code))
+        if not members:
+            return jsonify({"available": False, "reason": "板块不存在"}), 404
+
+        sectors = get_sector_rotation(cm)
+        state = (sectors.get("heat_map") or {}).get(sector_name)
+        b1 = get_super_b1(cm, names)
+        b1_map = {row["code"]: row for row in b1.get("hits") or []}
+        factors = get_factor_hits(cm, names, list(FACTOR_REGISTRY))
+        confirmations: dict[str, list[str]] = {}
+        if factors.get("available"):
+            for key, payload in (factors.get("results") or {}).items():
+                for row in payload.get("hits") or []:
+                    confirmations.setdefault(row.get("code", ""), []).append(key)
+        decision = get_latest_decision("preopen") or get_latest_decision("close") or {}
+        actions = {row["code"]: row for row in decision.get("candidates") or []}
+
+        stocks = []
+        for code in members:
+            frame = cm.read_stock(code, nrows=6)
+            if frame.empty:
+                continue
+            close = float(frame.iloc[0]["close"])
+            ret1 = (close / float(frame.iloc[1]["close"]) - 1) * 100 if len(frame) > 1 else None
+            ret5 = (close / float(frame.iloc[-1]["close"]) - 1) * 100 if len(frame) > 5 else None
+            hit = b1_map.get(code)
+            aux = confirmations.get(code, [])
+            action = actions.get(code, {}).get("action", "observe" if hit else "none")
+            stocks.append({
+                "code": code, "name": names.get(code, code), "close": round(close, 2),
+                "ret1": round(ret1, 2) if ret1 is not None else None,
+                "ret5": round(ret5, 2) if ret5 is not None else None,
+                "b1": bool(hit), "b1_signals": (hit or {}).get("signal_labels") or [],
+                "confirmation_count": len(aux), "confirmations": aux,
+                "action": action,
+            })
+        stocks.sort(key=lambda row: (
+            not row["b1"], {"buy": 0, "observe": 1, "avoid": 2, "none": 3}.get(row["action"], 4),
+            -row["confirmation_count"], -(row["ret5"] if row["ret5"] is not None else -999), row["code"],
+        ))
+        for rank, row in enumerate(stocks, start=1):
+            row["rank"] = rank
+        return jsonify({
+            "available": True, "trade_date": sectors.get("trade_date"),
+            "sector": {"name": sector_name, **(state or {})},
+            "stocks": stocks, "recommended": [row for row in stocks if row["b1"]],
+            "total": len(stocks),
+        })
+    except Exception as e:
+        logger.error("板块详情获取失败: %s", e, exc_info=True)
+        return jsonify({"available": False, "reason": "板块详情暂不可用"}), 500
 
 
 @insight_bp.route("/api/daily-pick", methods=["GET"])
