@@ -3,8 +3,8 @@ import { NavLink, useLocation, Link } from "react-router-dom";
 import { useState, useRef } from "react";
 
 const navItems = [
-  { to: "/", label: "排名", end: true },
-  { to: "/history", label: "历史" },
+  { to: "/", label: "今日", end: true },
+  { to: "/review", label: "复盘" },
 ];
 
 export function NavBar() {

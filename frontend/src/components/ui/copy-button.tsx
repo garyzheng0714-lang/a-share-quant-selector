@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { Copy, Check } from "lucide-react";
 
 interface CopyButtonProps {
   text: string;
@@ -22,6 +23,7 @@ export function CopyButton({ text, className = "" }: CopyButtonProps) {
   return (
     <button
       onClick={handleCopy}
+      aria-label="复制代码"
       className={`inline-flex items-center justify-center shrink-0 rounded transition-colors ${
         copied
           ? "text-bear"
@@ -30,14 +32,9 @@ export function CopyButton({ text, className = "" }: CopyButtonProps) {
       title="复制代码"
     >
       {copied ? (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
+        <Check size={14} strokeWidth={2.5} />
       ) : (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-        </svg>
+        <Copy size={14} strokeWidth={2} />
       )}
     </button>
   );

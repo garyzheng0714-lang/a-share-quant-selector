@@ -24,3 +24,18 @@ schedule:
 update:
   lookback_days: 10
   skip_failed: true
+
+# 大模型配置（仅用于有证据的事件分类与决策解释，可选；不参与自由荐股或排序）
+# 1. 到 https://platform.claude.com 申请 API Key
+# 2. 填入下方（或改用环境变量 ANTHROPIC_API_KEY）
+# 3. 不配置时荐票功能自动停用，其他功能不受影响
+llm:
+  api_key: ""              # sk-ant-...
+  model: "claude-opus-4-8" # 默认即可
+
+# 分层决策：市场 → 板块 → 个股 → 执行
+# 紧急回退也可设置 DECISION_HIERARCHY_ENABLED=false，无需修改文件。
+decision:
+  enabled: true
+  strict_unvalidated_gate: true  # 市场/板块模型未通过走查时，只观察、不荐买
+  preopen_event_check: true      # 08:45 复核隔夜公告；数据源失败则降级为观察

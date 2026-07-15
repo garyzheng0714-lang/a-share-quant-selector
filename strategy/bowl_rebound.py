@@ -29,6 +29,17 @@
    - 靠近短期趋势线：价格距离知行短期趋势线 ±short_pct% 范围内
 
 9. 选股信号 = 异动 AND 趋势线在上 AND J值低位 AND (回落碗中 OR 靠近多空线 OR 靠近短期趋势线)
+
+10. 额外硬性闸门（在 select_stocks 中逐条否决，此前文档未记录）：
+    - 天量阳线闸门：回溯窗口(M天)内成交量最大的那一天必须是阳线(close>=open)，
+      否则淘汰。语义 = 窗口内的"天量"必须是放量上攻，而不是放量出货
+      （放量冲高回落 / 放量下跌）。
+    - 极端波动过滤：最近30天 J 值绝对值的均值若过高(> J_ABS_MEAN_MAX)，
+      视为极端波动 / 急跌形态，淘汰。
+    - 周线四线闸门（用户明确要求，默认开启 weekly_gate=True，与 config/strategy_params.yaml 一致）：
+      要求周线 MA5/10/20/60 多头排列且全部上翘，否则淘汰。
+      口径：包含"进行中的当前周"（周一/周二运行时当前周只走了1-2天，MA5 与上翘判断会随交易日推进变化，
+      属实时口径，贴合手工看盘——用户 2026-07-11 确认保留此口径）。
 """
 import pandas as pd
 import sys
@@ -37,9 +48,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from strategy.base_strategy import BaseStrategy
 from utils.technical import (
-    MA, EMA, LLV, HHV, REF, EXIST,
+    MA, EMA, LLV, HHV, REF,
     KDJ, calculate_zhixing_trend
 )
+
+
+# 最近30天 J 值绝对均值的上限：超过视为极端波动 / 急跌形态，直接淘汰
+J_ABS_MEAN_MAX = 80
 
 
 class BowlReboundStrategy(BaseStrategy):
@@ -57,7 +72,8 @@ class BowlReboundStrategy(BaseStrategy):
             'M1': 14,            # MA周期1 (多空线)
             'M2': 28,            # MA周期2 (多空线)
             'M3': 57,            # MA周期3 (多空线)
-            'M4': 114            # MA周期4 (多空线)
+            'M4': 114,           # MA周期4 (多空线)
+            'weekly_gate': True  # 周线四线闸门(MA5/10/20/60多头排列且上翘)，用户要求默认开启，与 YAML 一致
         }
         
         # 合并用户参数
@@ -83,7 +99,13 @@ class BowlReboundStrategy(BaseStrategy):
         )
         result['short_term_trend'] = trend_df['short_term_trend']
         result['bull_bear_line'] = trend_df['bull_bear_line']
-        
+
+        # 次新股闸门（用户 2026-07-11 选定）：多空线含 MA114，上市不足 M4(114)个交易日时
+        # MA114 用不足天数凑合算会失真，故整只票的多空线判为无效(NaN)。NaN 会让下方
+        # trend_above / 回落碗中 / 靠近多空线 全部不成立 → 该次新股不发这些依赖多空线的信号。
+        if len(result) < self.params['M4']:
+            result['bull_bear_line'] = float('nan')
+
         # 2. 上升趋势
         result['trend_above'] = result['short_term_trend'] > result['bull_bear_line']
         
@@ -124,8 +146,8 @@ class BowlReboundStrategy(BaseStrategy):
         # 阳线：收盘价 > 开盘价
         result['positive_candle'] = result['close'] > result['open']
         
-        # 总市值达标（优先从实时数据获取）
-        result['market_cap_ok'] = self._check_market_cap_realtime(result)
+        # 总市值达标
+        result['market_cap_ok'] = result['market_cap'] > self.params['CAP']
         
         # 关键K线 = 放量 AND 阳线 AND 市值达标
         result['key_candle'] = (
@@ -134,64 +156,11 @@ class BowlReboundStrategy(BaseStrategy):
             result['market_cap_ok']
         )
         
-        # 6. 异动 = EXIST(关键K线, M)
-        from utils.technical import EXIST
-        result['abnormal'] = EXIST(result['key_candle'], self.params['M'])
-        
-        # 7. J值低位
+        # 6. J值低位
         result['j_low'] = result['J'] <= self.params['J_VAL']
         
         return result
-
-    def _check_market_cap_realtime(self, df) -> pd.Series:
-        """
-        检查总市值是否达标
-        优先从CSV数据获取，如果异常则从实时数据获取
-        """
-        import akshare as ak
-
-        # 尝试从CSV数据获取
-        if 'market_cap' in df.columns:
-            # 检查数据是否合理（单位应该是元）
-            sample_cap = df['market_cap'].dropna().iloc[-1] if not df['market_cap'].dropna().empty else 0
-
-            # 如果市值在合理范围（10亿到1000亿之间），使用CSV数据
-            if 1e9 < sample_cap < 1e11:
-                return df['market_cap'] > self.params['CAP']
-
-        # 从实时数据获取总市值
-        try:
-            # 从股票代码推断市场
-            stock_code = str(df['code'].iloc[0]) if 'code' in df.columns else None
-
-            if stock_code:
-                # 获取实时数据
-                spot_df = ak.stock_individual_info_em(symbol=stock_code)
-                if not spot_df.empty:
-                    # 查找总市值
-                    total_cap_row = spot_df[spot_df['item'] == '总市值']
-                    if not total_cap_row.empty:
-                        total_cap = total_cap_row['value'].values[0]
-                        # 转换为数字（可能是字符串）
-                        if isinstance(total_cap, str):
-                            # 处理"33.19亿"格式
-                            if '亿' in total_cap:
-                                total_cap = float(total_cap.replace('亿', '')) * 1e8
-                            else:
-                                total_cap = float(total_cap)
-
-                        # 创建 Series
-                        return pd.Series([total_cap > self.params['CAP']] * len(df), index=df.index)
-        except Exception as e:
-            # 如果实时获取失败，尝试用收盘价估算
-            if 'close' in df.columns:
-                # 假设总股本2亿股，估算市值
-                estimated_cap = df['close'] * 2e8  # 粗略估计
-                return estimated_cap > self.params['CAP']
-
-        # 默认返回True（不过滤）
-        return pd.Series([True] * len(df), index=df.index)
-
+    
     def select_stocks(self, df, stock_name='') -> list:
         """
         选股逻辑 - 基于最新一天的数据进行筛选
@@ -205,11 +174,9 @@ class BowlReboundStrategy(BaseStrategy):
             invalid_keywords = ['退', '未知', '退市', '已退']
             if any(kw in stock_name for kw in invalid_keywords):
                 return []
-
-            # 过滤 ST/*ST 股票
             if stock_name.startswith('ST') or stock_name.startswith('*ST'):
                 return []
-
+        
         # 获取最新一天的数据
         latest = df.iloc[0]
         latest_date = latest['date']
@@ -218,9 +185,11 @@ class BowlReboundStrategy(BaseStrategy):
         if latest['volume'] <= 0 or pd.isna(latest['close']):
             return []
         
-        # 过滤数据异常的股票
+        # 过滤极端波动 / 急跌形态：最近30天 J 值绝对值的均值过高，
+        # 说明 KDJ 长期在超买超卖极端区剧烈摆动（暴涨暴跌 / 急跌），
+        # 不是碗口反弹应有的温和形态，淘汰
         recent_df = df.head(30)
-        if recent_df['J'].abs().mean() > 80:
+        if recent_df['J'].abs().mean() > J_ABS_MEAN_MAX:
             return []
         
         # ========== 核心条件检查 ==========
@@ -233,24 +202,29 @@ class BowlReboundStrategy(BaseStrategy):
         if not latest['j_low']:
             return []
         
-        # 3. 异动条件：在M天内存在放量阳线
+        # 3. 天量阳线闸门（此前文档未记录的隐藏规则）：
+        #    回溯窗口(M天)内成交量最大的那一天必须是阳线(close>=open)，否则淘汰。
+        #    语义 = 窗口内的"天量"必须是放量上攻，而不是放量出货
+        #    （放量冲高回落 / 放量下跌）。
         lookback_df = df.head(self.params['M'])
-
-        # 剔除：如果回顾期内最大成交量的一天是阴线（最大量是阴量）
         max_volume_idx = lookback_df['volume'].idxmax()
         max_volume_row = lookback_df.loc[max_volume_idx]
         if max_volume_row['close'] < max_volume_row['open']:
-            # 最大成交量那天是阴线，剔除
             return []
 
-        key_candles = lookback_df[
-            (lookback_df['key_candle'] == True) &
-            (lookback_df['close'] > lookback_df['open'])
-        ]
-
+        # key_candle 已包含"阳线(close>open)"条件，此处无需重复判断
+        key_candles = lookback_df[lookback_df['key_candle'] == True]
+        
         if key_candles.empty:
             return []
-        
+
+        # 4. 周线四线闸门：MA5/10/20/60 多头排列且全部上翘（放最后，重采样开销较大）
+        if self.params.get('weekly_gate', False):
+            from utils.technical import weekly_four_ma_bullish
+            gate_ok, _ = weekly_four_ma_bullish(df)
+            if not gate_ok:
+                return []
+
         # ========== 分类标记（按优先级） ==========
         
         reasons = []

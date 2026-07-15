@@ -1,10 +1,10 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageTransition } from "@/components/layout/page-transition";
 import { KlineChart, type KlineOverlay } from "@/components/charts/kline-chart";
 import { CopyButton } from "@/components/ui";
-import { useKline } from "@/lib/hooks";
+import { useKline, useStockProfile } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
 import { chartColors, ease } from "@/lib/tokens";
 
@@ -28,7 +28,16 @@ export function Component() {
   const stockNavIndex = useAppStore((s) => s.stockNavIndex);
   const setStockNavIndex = useAppStore((s) => s.setStockNavIndex);
 
+  const [profileOpen, setProfileOpen] = useState(false);
+  // 联动列表当前项：只在切换股票时滚动到可见——内联 callback ref 会在每次
+  // 重渲染（如鼠标划过K线触发 overlay 更新）都执行 scrollIntoView，
+  // 用户手动滚列表会被不停拽回（review 确认的交互缺陷）
+  const activeNavItemRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    activeNavItemRef.current?.scrollIntoView({ block: "nearest" });
+  }, [stockNavIndex]);
   const { data: klineData, isLoading } = useKline(code ?? null, period);
+  const { data: profile, isLoading: profileLoading } = useStockProfile(code ?? null);
 
   const currentStock = stockNavList[stockNavIndex];
   const stockName = klineData?.name ?? currentStock?.name ?? "";
@@ -126,7 +135,52 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="h-[calc(100vh-48px)] flex flex-col">
+      <div className="h-[calc(100vh-48px)] flex">
+        {/* 桌面联动列表：从候选/因子/超级B1列表进来时，左侧保留整份名单，
+            点一只切一只（知弈策行"翻牌式复盘"），不用回退页面 */}
+        {hasNav && (
+          <aside className="hidden lg:flex w-56 shrink-0 flex-col border-r border-border bg-surface">
+            <div className="px-3 py-2 border-b border-border/60 text-[11px] text-ink-muted">
+              候选名单 · {stockNavList.length}只
+            </div>
+            <div className="flex-1 overflow-y-auto py-1">
+              {stockNavList.map((s, i) => (
+                <button
+                  key={s.code}
+                  ref={i === stockNavIndex ? activeNavItemRef : undefined}
+                  onClick={() => {
+                    setStockNavIndex(i);
+                    navigate(`/stock/${s.code}`, { replace: true });
+                  }}
+                  className={`w-full px-3 py-2 text-left transition-colors duration-100 ${
+                    i === stockNavIndex
+                      ? "bg-accent/10 border-l-2 border-accent"
+                      : "hover:bg-elevated border-l-2 border-transparent"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className={`text-xs font-medium truncate ${i === stockNavIndex ? "text-accent" : "text-ink"}`}>
+                      {s.name || s.code}
+                    </span>
+                    <span className="ml-auto text-[11px] text-ink-secondary tabular-nums shrink-0">
+                      {s.close ? s.close.toFixed(2) : ""}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="font-mono text-[10px] text-ink-muted">{s.code}</span>
+                    {s.industry && (
+                      <span className="text-[10px] text-ink-muted/70 truncate min-w-0">
+                        {s.industry}
+                      </span>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </aside>
+        )}
+
+        <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         <div className="px-3 sm:px-6 py-2 sm:py-3 border-b border-border bg-surface">
           <div className="flex items-center justify-between gap-2">
@@ -151,6 +205,23 @@ export function Component() {
                 <span className="text-sm text-ink-secondary truncate hidden sm:block">
                   {stockName}
                 </span>
+                {profileLoading ? (
+                  <div className="hidden sm:flex items-center gap-1.5">
+                    <span className="inline-block w-12 h-4 rounded bg-elevated animate-pulse" />
+                    <span className="inline-block w-10 h-4 rounded bg-elevated animate-pulse" />
+                  </div>
+                ) : profile?.industry ? (
+                  <div className="hidden sm:flex items-center gap-1.5">
+                    <span className="px-1.5 py-0.5 text-[10px] rounded bg-accent/10 text-accent leading-tight">
+                      {profile.industry}
+                    </span>
+                    {profile.board && (
+                      <span className="px-1.5 py-0.5 text-[10px] rounded bg-elevated text-ink-muted leading-tight">
+                        {profile.board}
+                      </span>
+                    )}
+                  </div>
+                ) : null}
                 {hasNav && (
                   <span className="text-[10px] text-ink-muted tabular-nums shrink-0">
                     {stockNavIndex + 1}/{stockNavList.length}
@@ -213,9 +284,18 @@ export function Component() {
           {/* Mobile: second row with name + price */}
           {!isLoading && (
             <div className="flex items-center justify-between mt-1.5 sm:hidden">
-              <span className="text-xs text-ink-secondary truncate">
-                {stockName}
-              </span>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="text-xs text-ink-secondary truncate">
+                  {stockName}
+                </span>
+                {profileLoading ? (
+                  <span className="inline-block w-10 h-3.5 rounded bg-elevated animate-pulse shrink-0" />
+                ) : profile?.industry ? (
+                  <span className="px-1 py-px text-[9px] rounded bg-accent/10 text-accent leading-tight shrink-0">
+                    {profile.industry}
+                  </span>
+                ) : null}
+              </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span
                   className={`text-sm font-mono font-semibold ${isBull ? "text-bull" : "text-bear"}`}
@@ -232,6 +312,50 @@ export function Component() {
             </div>
           )}
         </div>
+
+        {/* Company info panel */}
+        {profile && (
+          <div className="bg-surface border-b border-border">
+            <button
+              onClick={() => setProfileOpen((v) => !v)}
+              className="w-full px-3 py-2 flex items-center gap-1 text-xs text-ink-secondary hover:text-ink transition-colors"
+            >
+              <span>公司信息</span>
+              <motion.span
+                animate={{ rotate: profileOpen ? 90 : 0 }}
+                transition={{ duration: 0.15 }}
+                className="text-[10px]"
+              >
+                ▸
+              </motion.span>
+            </button>
+            <AnimatePresence initial={false}>
+              {profileOpen && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                  className="overflow-hidden"
+                >
+                  <div className="px-3 pb-2.5 space-y-1.5">
+                    {profile.business && (
+                      <p className="text-xs text-ink-secondary leading-relaxed break-all">
+                        <span className="text-ink-muted">主营业务：</span>
+                        {profile.business}
+                      </p>
+                    )}
+                    {profile.listing_date && (
+                      <p className="text-xs text-ink-muted">
+                        上市日期：{profile.listing_date}
+                      </p>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
 
         {/* Chart area */}
         <div className="flex-1 relative min-h-0">
@@ -312,10 +436,19 @@ export function Component() {
                   data={klineData.data}
                   period={period}
                   weeklyLineMode={weeklyLineMode}
+                  signals={period === "daily" ? klineData.signals : undefined}
                   onCrosshairMove={handleCrosshairMove}
                   className="h-full"
                 />
               </div>
+
+              {/* 信号点图例：金点 = 系统历史上选出过这只票的日子 */}
+              {period === "daily" && (klineData.signals?.length ?? 0) > 0 && (
+                <div className="absolute bottom-9 left-3 sm:left-5 z-10 text-[10px] text-ink-muted pointer-events-none">
+                  <span className="text-accent">●</span> 系统历史信号{" "}
+                  {klineData.signals!.length} 次
+                </div>
+              )}
 
               {/* Floating side nav buttons */}
               {hasNav && (
@@ -429,6 +562,7 @@ export function Component() {
           )}
         </div>
 
+        </div>
       </div>
     </PageTransition>
   );

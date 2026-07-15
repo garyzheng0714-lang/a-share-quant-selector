@@ -7,3 +7,12 @@ export { Input } from "./input";
 export { ProgressBar } from "./progress-bar";
 export { AnimatedNumber } from "./animated-number";
 export { CopyButton } from "./copy-button";
+export { LoadError } from "./load-error";
+export {
+  StrengthBar,
+  Gauge,
+  ConfidenceMeter,
+  DeltaArrow,
+  SectionLabel,
+  toneForScore,
+} from "./data-viz";

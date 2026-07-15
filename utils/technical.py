@@ -159,6 +159,74 @@ def KDJ(df, n=9, m1=3, m2=3):
     return result
 
 
+def weekly_four_ma_bullish(df, periods=(5, 10, 20, 60)):
+    """
+    周线四均线闸门：多头排列 且 全部上翘
+
+    用户交易体系的前置条件：先看周线 MA5/MA10/MA20/MA60，
+    - "理好的"：MA5 > MA10 > MA20 > MA60（多头排列）
+    - "往上翘"：四条线本周值均高于上周值
+    两者同时满足才继续看日线。
+
+    重要口径 —— 包含"进行中的当前周"：
+        日线用 resample('W').last() 聚合成周线，每周取"该周最后一个交易日"的收盘价。
+        最新一周即使还没走完（周中运行时是"本周至今"的收盘价），也会作为一个独立的
+        周数据点参与均线与上翘判断。含义：
+        - 闸门结论会随本周交易日推进而变（同一只票，周一和周五跑可能结论不同）。
+        - 用的是"本周至今"而非"上周已收官"的数据，属于实时口径而非滞后口径。
+        后续若要改成"只用已收官的完整周"，需在此处调整（会改变选股结果，非本函数职责）。
+
+    两条已知边界（2026-07-12 审核发现，属既有口径、记录备查不改行为）：
+        1. 隐含数据门槛：需要至少 61 个非空周（约 300 个交易日）历史，否则按
+           insufficient_data 淘汰。上市 114~300 个交易日的股票虽过了次新股闸门
+           （多空线 M4=114），也会被本闸门拦住——weekly_gate 开启时等同把次新股
+           观察期拉长到约 15 个月，宁严勿松。
+        2. 停牌周语义：resample('W') 聚合后整周无交易的周被 dropna 删除，长期停牌
+           股复牌后的"上翘"比较的是复牌周 vs 停牌前最后一周（可能相隔数月）。停牌
+           本身就是重大风险信号，此类票极少且应人工复核，不做特殊处理。
+
+    参数:
+        df: 日线数据，需含 date/close 列（倒序或正序均可自动识别）
+        periods: 周线均线周期，默认 (5, 10, 20, 60)
+
+    返回:
+        (passed: bool, detail: dict)
+        detail 含各均线最新值和分项判断结果，便于展示/排查
+    """
+    need_weeks = max(periods) + 1  # 最长均线 + 上一周（判断上翘用）
+
+    data = df[['date', 'close']].copy()
+    data['date'] = pd.to_datetime(data['date'])
+    if len(data) > 1 and data['date'].iloc[0] > data['date'].iloc[-1]:
+        data = data.iloc[::-1]
+
+    # 日线重采样为周线（取每周最后一个交易日收盘价，包含进行中的当前周）
+    weekly_close = data.set_index('date')['close'].resample('W').last().dropna()
+
+    if len(weekly_close) < need_weeks:
+        return False, {'reason': 'insufficient_data', 'weeks': len(weekly_close)}
+
+    last_vals, prev_vals = {}, {}
+    for p in periods:
+        ma = weekly_close.rolling(window=p).mean()
+        last_vals[p] = ma.iloc[-1]
+        prev_vals[p] = ma.iloc[-2]
+
+    ordered = sorted(periods)
+    aligned = all(
+        last_vals[ordered[i]] > last_vals[ordered[i + 1]]
+        for i in range(len(ordered) - 1)
+    )
+    rising = all(last_vals[p] > prev_vals[p] for p in periods)
+
+    detail = {
+        'aligned': aligned,
+        'rising': rising,
+        'ma_values': {f'MA{p}': round(float(last_vals[p]), 3) for p in periods},
+    }
+    return aligned and rising, detail
+
+
 def calculate_zhixing_trend(df, m1=14, m2=28, m3=57, m4=114):
     """
     计算知行趋势线指标

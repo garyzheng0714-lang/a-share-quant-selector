@@ -1,30 +1,31 @@
 @import "tailwindcss";
 
+/* 暗夜交易台：纯黑画布 + 中性炭卡面 + 琥珀金 accent + 红涨绿跌（A股语义） */
 @theme {
   --color-canvas: #000000;
-  --color-surface: #28242e;
-  --color-elevated: #19161d;
-  --color-surface-hover: #312c38;
-  --color-inset: rgba(255, 255, 255, 0.03);
+  --color-surface: #161618;
+  --color-elevated: #1f1f23;
+  --color-surface-hover: #222226;
+  --color-inset: rgba(255, 255, 255, 0.04);
 
-  --color-ink: #fafafa;
-  --color-ink-secondary: #c1bec6;
-  --color-ink-muted: #938f9b;
-  --color-ink-inverse: #000000;
+  --color-ink: #f5f5f4;
+  --color-ink-secondary: #c4c2bd;
+  --color-ink-muted: #8d8b85;
+  --color-ink-inverse: #0a0a0a;
 
-  --color-accent: #9046ff;
-  --color-accent-hover: #7c3aed;
-  --color-accent-dim: oklch(0.5 0.15 285 / 0.12);
-  --color-accent-light: #c6a0ff;
+  --color-accent: #e0a83c;
+  --color-accent-hover: #edbc5e;
+  --color-accent-dim: rgba(224, 168, 60, 0.12);
+  --color-accent-light: #edc785;
 
   --color-bull: #ef4444;
   --color-bear: #22c55e;
   --color-bull-dim: oklch(0.55 0.18 25 / 0.12);
   --color-bear-dim: oklch(0.6 0.14 155 / 0.12);
 
-  --color-border: #352f3d;
+  --color-border: #2a2a2e;
   --color-border-hover: rgba(255, 255, 255, 0.18);
-  --color-border-focus: #9046ff;
+  --color-border-focus: #e0a83c;
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
@@ -45,7 +46,7 @@
   }
 
   ::selection {
-    background-color: rgba(144, 70, 255, 0.25);
+    background-color: rgba(224, 168, 60, 0.25);
   }
 
   :focus-visible {
@@ -72,7 +73,7 @@
 @layer components {
   .glass {
     backdrop-filter: blur(20px) saturate(1.4);
-    background: rgba(10, 8, 18, 0.82);
+    background: rgba(10, 10, 12, 0.82);
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
 
@@ -88,15 +89,34 @@
 
   .glass-elevated {
     backdrop-filter: blur(16px) saturate(1.3);
-    background: rgba(144, 70, 255, 0.06);
+    background: rgba(224, 168, 60, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
   }
 
   .nav-island {
-    background: rgba(25, 25, 25, 0.6);
-    backdrop-filter: blur(4px);
-    border: 1px solid #352f3d;
+    background: rgba(22, 22, 24, 0.7);
+    backdrop-filter: blur(8px);
+    border: 1px solid #2a2a2e;
     border-radius: 18px;
+  }
+
+  /* 现代金融 App 卡片：柔和大圆角 + 顶部微高光边，比裸 bg-surface 更有精致质感 */
+  .card-modern {
+    background: linear-gradient(180deg, #1a1a1d 0%, #161618 100%);
+    border: 1px solid #26262b;
+    border-radius: 20px;
+  }
+  .card-hero {
+    background:
+      radial-gradient(120% 80% at 100% 0%, rgba(224, 168, 60, 0.08), transparent 60%),
+      linear-gradient(180deg, #1c1a17 0%, #161618 55%);
+    border: 1px solid rgba(224, 168, 60, 0.28);
+    border-radius: 24px;
+  }
+  /* 数字强调：等宽 + 收紧字距，用于所有价格/分数/收益 */
+  .num {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
   }
 
   .mask-fade-x {

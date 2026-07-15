@@ -2,6 +2,7 @@
 CSV 数据管理工具
 """
 import os
+import re
 import pandas as pd
 from pathlib import Path
 
@@ -75,7 +76,9 @@ class CSVManager:
         stocks = []
         for csv_file in self.data_dir.rglob("*.csv"):
             stock_code = csv_file.stem
-            stocks.append(stock_code)
+            # data 下还会有训练集、回测结果等 CSV，不能把它们当股票代码请求行情。
+            if re.fullmatch(r"\d{6}", stock_code):
+                stocks.append(stock_code)
         return sorted(stocks)
     
     def get_stock_count(self):

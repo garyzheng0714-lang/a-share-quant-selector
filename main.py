@@ -208,27 +208,33 @@ class QuantSystem:
         indicators_dict = {}  # 只保存入选股票的数据
         category_count = {'bowl_center': 0, 'near_duokong': 0, 'near_short_trend': 0}
         
+        # 板块过滤：只保留有交易权限的板块（默认沪深主板）
+        from utils.market_filter import is_main_board, main_board_only
+        mb_only = main_board_only()
+        if mb_only:
+            before = len(stock_codes)
+            stock_codes = [c for c in stock_codes if is_main_board(c)]
+            print(f"板块过滤：只保留沪深主板 {len(stock_codes)} 只（筛掉 {before - len(stock_codes)} 只创业板/科创板/北交所）")
+
         # 限制处理数量
         process_codes = stock_codes[:max_stocks] if max_stocks else stock_codes
-        
+
         for strategy_name, strategy in self.registry.strategies.items():
             print(f"\n执行策略: {strategy_name}")
             signals = []
             valid_count = 0
             invalid_count = 0
-            
+
             for i, code in enumerate(process_codes, 1):
                 # 读取单只股票
                 df = self.csv_manager.read_stock(code)
                 name = stock_names.get(code, '未知')
-                
+
                 # 过滤
                 invalid_keywords = ['退', '未知', '退市', '已退']
                 if any(kw in name for kw in invalid_keywords):
                     invalid_count += 1
                     continue
-
-                # 过滤 ST/*ST 股票
                 if name.startswith('ST') or name.startswith('*ST'):
                     invalid_count += 1
                     continue
@@ -298,6 +304,68 @@ class QuantSystem:
         
         return results, stock_names
     
+    def _persist_and_track(self, results, stock_names, matched=None):
+        """选股结果落库到默认视图 + 战绩回填（自学习闭环的数据入口）.
+
+        CLI 跑的选股此前只发钉钉不留档，战绩无从追踪；
+        此方法把结果写入 views.db 的 results 表（与 Web 路径同一张表），
+        并顺手用最新行情回填历史记录的后续表现。
+        """
+        from datetime import datetime
+        try:
+            from views import view_manager
+            from utils.performance_tracker import update_performance
+
+            view_manager.init_db()
+            views = view_manager.list_views()
+            default_view = next(
+                (v for v in views if v['name'] == '默认策略'),
+                views[0] if views else None
+            )
+            if default_view is None:
+                return
+
+            # B1 匹配分数索引（--b1-match 时才有）
+            sim_map = {}
+            for m in (matched or []):
+                sim_map[m['stock_code']] = m.get('similarity_score')
+
+            stocks = []
+            for strategy_name, signals in results.items():
+                for sig in signals:
+                    for s in sig.get('signals', []):
+                        stocks.append({
+                            'code': sig['code'],
+                            'name': sig.get('name', stock_names.get(sig['code'], '未知')),
+                            'strategy': strategy_name,
+                            'category': s.get('category'),
+                            'close': s.get('close'),
+                            'J': s.get('J'),
+                            'volume_ratio': s.get('volume_ratio'),
+                            'market_cap': s.get('market_cap'),
+                            'similarity_score': sim_map.get(sig['code']),
+                        })
+
+            run_date = datetime.now().strftime('%Y-%m-%d')
+            view_manager.save_result(default_view['id'], run_date, stocks)
+            print(f"\n💾 选股结果已存档：{len(stocks)} 只（{run_date}，视图「{default_view['name']}」）")
+
+            stats = update_performance(self.csv_manager)
+            print(f"📊 战绩回填：新增 {stats['synced']} 条追踪，更新 {stats['updated']} 条")
+
+            # AI 每日荐票（未配置 Key 自动跳过；当日已生成则复用）
+            from utils.daily_pick import generate_daily_pick, get_api_key
+            if get_api_key():
+                pick_result = generate_daily_pick()
+                if pick_result.get("available"):
+                    p = pick_result["pick"]
+                    label = "建议观望" if p.get("skipped") else f"推荐 {p.get('name')}({p.get('code')})"
+                    print(f"🤖 AI 荐票：{label}")
+                else:
+                    print(f"🤖 AI 荐票跳过：{pick_result.get('reason')}")
+        except Exception as e:
+            print(f"⚠️ 选股结果存档/战绩回填失败: {e}")
+
     def run_full(self, category='all', max_stocks=None):
         """完整流程：更新 + 选股 + 通知（带K线图）
         :param max_stocks: 限制处理的股票数量（用于快速测试）
@@ -330,6 +398,10 @@ class QuantSystem:
                 params=self.registry.strategies.get('BowlReboundStrategy', {}).params if self.registry.strategies else {},
                 send_text_first=True
             )
+
+        # 4. 存档 + 战绩回填（快测模式不存档，避免部分扫描结果覆盖全量记录）
+        if not max_stocks:
+            self._persist_and_track(results, stock_names)
 
         return results
     
@@ -515,7 +587,15 @@ class QuantSystem:
             print("✓ 通知发送完成")
         else:
             print("\n⚠️ 没有匹配结果，跳过通知")
-        
+
+        # 4. 存档 + 战绩回填（快测模式不存档，避免部分扫描结果覆盖全量记录）
+        if not max_stocks:
+            self._persist_and_track(
+                match_result.get('results', {}),
+                match_result.get('stock_names', {}),
+                matched=match_result.get('matched'),
+            )
+
         return match_result
     
     def run_schedule(self):
@@ -592,9 +672,23 @@ B1完美图形匹配:
 
     parser.add_argument(
         'command',
-        choices=['init', 'update', 'run', 'web'],
+        choices=['init', 'update', 'run', 'web', 'track', 'backtest'],
         nargs='?',
-        help='要执行的命令: init(初始化数据), update(更新数据), run(执行选股), web(启动Web服务器)'
+        help='要执行的命令: init(初始化数据), update(更新数据), run(执行选股), web(启动Web服务器), track(回填并查看选股战绩), backtest(历史回测)'
+    )
+
+    parser.add_argument(
+        '--start',
+        type=str,
+        default=None,
+        help='回测起始日期 YYYY-MM-DD（backtest 命令用，默认两年前）'
+    )
+
+    parser.add_argument(
+        '--end',
+        type=str,
+        default=None,
+        help='回测结束日期 YYYY-MM-DD（backtest 命令用，默认今天）'
     )
 
     parser.add_argument(
@@ -702,6 +796,60 @@ B1完美图形匹配:
             # 原有选股流程（不带B1匹配）
             quant.run_full(category=args.category, max_stocks=args.max_stocks)
     
+    elif args.command == 'track':
+        # 回填战绩并打印摘要
+        from utils.performance_tracker import update_performance, get_summary, print_summary
+        stats = update_performance(quant.csv_manager)
+        print(f"✓ 回填完成: 新增 {stats['synced']} 条追踪, 更新 {stats['updated']} 条\n")
+        print_summary(get_summary())
+
+    elif args.command == 'backtest':
+        # 历史回测：回放"过去每天跑选股"
+        import json
+        import pandas as pd
+        from datetime import datetime, timedelta
+        from utils.backtest_engine import run_backtest, format_report
+
+        start = args.start or (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+        end = args.end or datetime.now().strftime('%Y-%m-%d')
+
+        # 股票名字只用本地缓存，不碰网络（避免卡死）
+        names_file = Path('data/stock_names.json')
+        stock_names = json.loads(names_file.read_text(encoding='utf-8')) if names_file.exists() else {}
+
+        # 自动检测数据是否缺市值（缺则跳过市值条件并在报告注明）
+        ignore_cap = False
+        sample_codes = quant.csv_manager.list_all_stocks()[:5]
+        if sample_codes:
+            caps = [quant.csv_manager.read_stock(c, nrows=5).get('market_cap', pd.Series([0])).max()
+                    for c in sample_codes]
+            ignore_cap = all((c or 0) <= 0 for c in caps)
+            if ignore_cap:
+                print("⚠️ 本地数据缺市值字段，本次回测跳过市值门槛条件（报告中已注明）")
+
+        strategy_params = {}
+        params_file = Path('config/strategy_params.yaml')
+        if params_file.exists():
+            import yaml
+            strategy_params = (yaml.safe_load(params_file.read_text(encoding='utf-8')) or {}).get('BowlReboundStrategy', {})
+
+        print(f"🔬 历史回测: {start} ~ {end}")
+        signals, summary = run_backtest(
+            quant.csv_manager, stock_names, start, end,
+            strategy_params, ignore_cap=ignore_cap, max_stocks=args.max_stocks,
+        )
+
+        report = format_report(summary)
+        out_dir = Path('data/backtest')
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        report_path = out_dir / f'backtest_{stamp}.md'
+        report_path.write_text(report, encoding='utf-8')
+        pd.DataFrame(signals).to_csv(out_dir / f'signals_{stamp}.csv', index=False)
+
+        print("\n" + report)
+        print(f"\n💾 报告已存: {report_path}")
+
     elif args.command == 'web':
         # 启动Web服务器
         from web_server import run_web_server
