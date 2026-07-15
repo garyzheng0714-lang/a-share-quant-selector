@@ -3,6 +3,7 @@ CSV 数据管理工具
 """
 import os
 import re
+import threading
 import pandas as pd
 from pathlib import Path
 
@@ -56,8 +57,10 @@ class CSVManager:
         # 确保目录存在
         path.parent.mkdir(parents=True, exist_ok=True)
         
-        # 写入CSV
-        df.to_csv(path, index=False)
+        # 原子替换，避免后台全量回补与前台扫描并发时读到半截 CSV。
+        tmp = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
+        df.to_csv(tmp, index=False)
+        tmp.replace(path)
         return path
     
     def update_stock(self, stock_code, new_df):

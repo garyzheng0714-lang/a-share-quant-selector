@@ -68,6 +68,24 @@ class UniverseExpansionTest(unittest.TestCase):
             self.assertEqual(result["trainable_eligible_count"], 0)
             self.assertEqual(result["short_history_count"], 1)
 
+    @patch("utils.data_freshness.expected_completed_trade_date", return_value="2026-07-14")
+    def test_bootstrap_drops_unfinished_intraday_bar(self, _cutoff):
+        with tempfile.TemporaryDirectory() as tmp:
+            fetcher = AKShareFetcher(tmp)
+            fetcher.get_all_stock_codes = lambda: {"600000": "浦发银行"}
+            history = self._history(220)
+            history["date"] = pd.date_range(end="2026-07-14", periods=220, freq="B")
+            unfinished = history.iloc[[-1]].copy()
+            unfinished["date"] = pd.Timestamp("2026-07-15")
+            fetcher.fetch_stock_history = lambda code, years: pd.concat(
+                [history, unfinished], ignore_index=True,
+            )
+
+            result = fetcher.bootstrap_universe()
+            saved = fetcher.csv_manager.read_stock("600000")
+            self.assertEqual(result["trainable_count"], 1)
+            self.assertEqual(str(saved.iloc[0]["date"])[:10], "2026-07-14")
+
 
 if __name__ == "__main__":
     unittest.main()
