@@ -229,6 +229,17 @@ export interface CoverageStatus {
 }
 
 /** 超级B1（知行公式独立模块）命中信号 */
+export interface WeeklyFourLineState {
+  passed?: boolean;
+  aligned?: boolean;
+  rising?: boolean;
+  rising_count?: number;
+  directions?: Partial<Record<"MA5" | "MA10" | "MA20" | "MA60", boolean>>;
+  ma_values?: Partial<Record<"MA5" | "MA10" | "MA20" | "MA60", number>>;
+  reason?: string;
+  weeks?: number;
+}
+
 export interface SuperB1Hit {
   code: string;
   name: string;
@@ -239,6 +250,7 @@ export interface SuperB1Hit {
   market_cap_yi: number;
   signals: string[];
   signal_labels: string[];
+  weekly?: WeeklyFourLineState;
   /** 所属行业板块（展示层由后端附带） */
   industry?: string;
 }
@@ -499,6 +511,7 @@ export interface DecisionCandidate {
     J?: number | null;
     RSI?: number | null;
     cap_yi?: number | null;
+    weekly?: WeeklyFourLineState | null;
   };
   market: { probability?: number | null; threshold?: number | null };
   sector: SectorState & { probability?: number | null; threshold?: number | null };

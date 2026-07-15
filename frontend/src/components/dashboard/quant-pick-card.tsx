@@ -50,6 +50,12 @@ function CandidateRow({ item, list }: { item: DecisionCandidate; list: DecisionC
   const setStockNav = useAppStore((state) => state.setStockNav);
   const action = ACTION[item.action];
   const signal = item.baseline.signal_labels?.[0] ?? "B1";
+  const weekly = item.baseline.weekly;
+  const weeklyLines = (["MA5", "MA10", "MA20", "MA60"] as const).map((line) => ({
+    line,
+    rising: weekly?.directions?.[line],
+  }));
+  const hasWeeklyDirections = weeklyLines.every(({ rising }) => rising != null);
 
   return (
     <button
@@ -57,22 +63,33 @@ function CandidateRow({ item, list }: { item: DecisionCandidate; list: DecisionC
         setStockNav(toNav(list), list.findIndex((stock) => stock.code === item.code));
         navigate(`/stock/${item.code}`);
       }}
-      className="grid min-h-[74px] w-full grid-cols-[1fr_auto] items-center gap-4 px-5 py-3.5 text-left transition-colors duration-200 hover:bg-surface-hover active:bg-inset"
+      className="grid min-h-[112px] w-full grid-cols-[1fr_auto] items-start gap-3 px-5 py-4 text-left transition-colors duration-200 hover:bg-surface-hover active:bg-inset"
     >
       <span className="min-w-0">
         <span className="flex items-baseline gap-2">
           <span className="truncate text-base font-semibold tracking-[-0.01em] text-ink">{item.name}</span>
           <span className="font-mono text-[11px] text-ink-muted">{item.code}</span>
         </span>
-        <span className="mt-1.5 flex min-w-0 items-center gap-2 text-xs text-ink-muted">
+        <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <span><span className="text-ink-muted">收盘 </span><span className="num font-medium text-ink">{item.baseline.close?.toFixed(2) ?? "--"}</span></span>
+          <span><span className="text-ink-muted">J </span><span className="num font-medium text-ink">{item.baseline.J?.toFixed(2) ?? "--"}</span></span>
+          <span><span className="text-ink-muted">板块 </span><span className="num text-ink-secondary">{item.sector?.score != null ? `${Math.round(item.sector.score)} 分` : "--"}</span></span>
+        </span>
+        <span className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+          <span className="text-ink-muted">周线至今</span>
+          {hasWeeklyDirections ? weeklyLines.map(({ line, rising }) => (
+            <span key={line} className={rising ? "text-bull" : "text-bear"}>{line}{rising ? "↑" : "↓"}</span>
+          )) : <span className="text-ink-secondary">历史数据不足</span>}
+          {hasWeeklyDirections && <span className="text-ink-secondary">{weekly?.rising_count ?? 0}/4 向上</span>}
+          {hasWeeklyDirections && <span className={weekly?.aligned ? "text-bull" : "text-ink-muted"}>{weekly?.aligned ? "多头排列" : "未多头"}</span>}
+        </span>
+        <span className="mt-2 flex min-w-0 items-center gap-2 text-xs text-ink-muted">
           <span className="truncate">{item.industry || "未知板块"}</span>
-          {item.sector?.score != null && <span className="num shrink-0">{Math.round(item.sector.score)} 分</span>}
           <span className="shrink-0 text-ink-secondary">{signal}</span>
         </span>
       </span>
-      <span className="text-right">
-        <span className="num block text-base font-medium text-ink">{item.baseline.close?.toFixed(2) ?? "-"}</span>
-        <span className={`mt-1 block text-xs font-medium ${action.className}`}>{action.label}</span>
+      <span className={`mt-0.5 rounded-full border border-current/25 px-2 py-1 text-xs font-medium ${action.className}`}>
+        {action.label}
       </span>
     </button>
   );
