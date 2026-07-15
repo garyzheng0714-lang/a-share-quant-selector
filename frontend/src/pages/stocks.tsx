@@ -1,43 +1,55 @@
-import { Database, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { Database, SlidersHorizontal, Target } from "lucide-react";
 import { PageTransition } from "@/components/layout/page-transition";
 import { QuantPickCard } from "@/components/dashboard/quant-pick-card";
 import { SuperB1Card } from "@/components/today/super-b1-card";
 import { FactorWorkbench } from "@/components/today/factor-workbench";
 import { useCoverage } from "@/lib/hooks";
 
+type View = "decision" | "research";
+
 export function Component() {
+  const [view, setView] = useState<View>("decision");
   const { data: coverage } = useCoverage();
+
   return (
     <PageTransition>
-      <div className="mx-auto max-w-3xl px-4 py-6 lg:px-8 lg:py-10">
+      <div className="mx-auto max-w-4xl px-4 py-5 sm:px-6 sm:py-8">
         <header className="mb-5">
-          <p className="text-xs font-medium text-accent">B1 主判</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-ink">个股决策排名</h1>
-          <p className="mt-2 text-sm leading-relaxed text-ink-muted">排序固定遵守：大环境 → 板块 → B1形态 → 辅助确认 → 风险否决。</p>
+          <h1 className="text-2xl font-semibold tracking-[-0.04em] text-ink">个股</h1>
+          <p className="mt-1 text-sm text-ink-muted">B1 找机会，上层环境决定是否出手</p>
         </header>
-        {coverage && (
-          <div className="mb-4 rounded-2xl border border-border bg-surface px-4 py-3">
-            <div className="flex items-center gap-2 text-xs text-ink-secondary">
-              {coverage.running ? <RefreshCw size={14} className="animate-spin text-accent" /> : <Database size={14} className="text-ink-muted" />}
-              <span>全量数据底座</span><span className="ml-auto num">{(coverage.coverage_ratio * 100).toFixed(1)}%</span>
+
+        <div className="mb-5 grid grid-cols-2 rounded-[12px] bg-inset p-1" aria-label="个股视图">
+          <button onClick={() => setView("decision")} className={`flex min-h-10 items-center justify-center gap-2 rounded-[9px] text-sm font-medium transition-colors active:scale-[0.99] ${view === "decision" ? "bg-elevated text-ink shadow-card" : "text-ink-muted hover:text-ink-secondary"}`}><Target size={15} />今日决策</button>
+          <button onClick={() => setView("research")} className={`flex min-h-10 items-center justify-center gap-2 rounded-[9px] text-sm font-medium transition-colors active:scale-[0.99] ${view === "research" ? "bg-elevated text-ink shadow-card" : "text-ink-muted hover:text-ink-secondary"}`}><SlidersHorizontal size={15} />策略因子</button>
+        </div>
+
+        {view === "decision" ? (
+          <div className="view-enter">
+            <QuantPickCard />
+            <section className="mt-6">
+              <div className="mb-3 flex items-end justify-between gap-3">
+                <div><h2 className="text-base font-semibold text-ink">B1 候选池</h2><p className="mt-1 text-xs text-ink-muted">先看前 8 只，需要时再展开全部</p></div>
+              </div>
+              <SuperB1Card initialLimit={8} />
+            </section>
+            {coverage && (
+              <details className="mt-5 rounded-[12px] border border-border bg-surface px-4 py-3 text-[11px] text-ink-muted">
+                <summary className="flex cursor-pointer list-none items-center gap-2 hover:text-ink-secondary"><Database size={13} />数据底座 {coverage.covered_count}/{coverage.universe_count}</summary>
+                <p className="mt-2 pl-5 leading-relaxed">可训练 {coverage.trainable_count}/{coverage.trainable_eligible_count}，次新股 {coverage.short_history_count} 只单列。{coverage.running ? `后台仍在补齐 ${coverage.remaining_count} 只。` : "当前回补任务已结束。"}</p>
+              </details>
+            )}
+          </div>
+        ) : (
+          <section className="view-enter">
+            <div className="mb-4">
+              <h2 className="text-base font-semibold text-ink">策略因子研究</h2>
+              <p className="mt-1 text-xs text-ink-muted">28 个因子只做辅助验证，不覆盖 B1 主判。</p>
             </div>
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-inset"><div className="h-full rounded-full bg-accent transition-[width] duration-300" style={{ width: `${coverage.coverage_ratio * 100}%` }} /></div>
-            <p className="mt-2 text-[10px] leading-relaxed text-ink-muted">行情 {coverage.covered_count}/{coverage.universe_count} · 可训练 {coverage.trainable_count}/{coverage.trainable_eligible_count} · 次新股 {coverage.short_history_count} 只单列，不冒充缺数</p>
-          </div>
+            <FactorWorkbench />
+          </section>
         )}
-        <QuantPickCard />
-        <section className="mt-5">
-          <h2 className="mb-3 text-sm font-semibold text-ink">B1 原始命中池</h2>
-          <SuperB1Card />
-        </section>
-        <section className="mt-8 border-t border-border pt-6">
-          <div className="mb-4">
-            <p className="text-[11px] font-medium text-accent">辅助研究 · 不替代B1主判</p>
-            <h2 className="mt-1 text-lg font-semibold text-ink">策略因子选股</h2>
-            <p className="mt-1 text-xs leading-relaxed text-ink-muted">原有 28 个策略因子、历史日期切换、行业分组和个股明细全部保留。</p>
-          </div>
-          <FactorWorkbench />
-        </section>
       </div>
     </PageTransition>
   );

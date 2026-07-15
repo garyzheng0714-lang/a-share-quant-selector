@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Skeleton, LoadError } from "@/components/ui";
 import { useSuperB1 } from "@/lib/hooks";
@@ -8,7 +10,8 @@ import type { SignalStock, SuperB1Hit } from "@/lib/api";
  * 超级B1（知行公式）原始信号列表，也是分层决策的主候选入口。
  * 无信号是常态（公式条件苛刻），空态如实说明而不是留白。
  */
-export function SuperB1Card() {
+export function SuperB1Card({ initialLimit }: { initialLimit?: number } = {}) {
+  const [showAll, setShowAll] = useState(false);
   const { data, isLoading, error, mutate } = useSuperB1();
   const navigate = useNavigate();
   const setStockNav = useAppStore((s) => s.setStockNav);
@@ -38,14 +41,15 @@ export function SuperB1Card() {
   }
 
   const hits: SuperB1Hit[] = data?.hits ?? [];
+  const visibleHits = initialLimit && !showAll ? hits.slice(0, initialLimit) : hits;
 
   return (
     <section data-testid="super-b1">
-      <p className="text-[11px] text-ink-muted leading-relaxed mb-3">
-        知行超级B1公式（缩量回调派）独立扫描
-        {data?.trade_date && ` · ${data.trade_date}`}
-        {!isLoading && data?.available && ` · ${hits.length}只`}
-        ，这是个股排名的B1主候选池；上层闸门只决定可执行、观察或回避
+      <p className="mb-3 text-[11px] leading-relaxed text-ink-muted">
+        知行超级B1独立扫描
+        {data?.trade_date && ` / ${data.trade_date}`}
+        {!isLoading && data?.available && ` / ${hits.length}只`}
+        。上层闸门只决定可执行、观察或回避
         {(data?.cap_missing ?? 0) > 0 && ` · ${data!.cap_missing} 只因缺市值数据未纳入`}
       </p>
 
@@ -57,12 +61,12 @@ export function SuperB1Card() {
         </p>
       ) : hits.length === 0 ? (
         <p className="text-xs text-ink-muted leading-relaxed py-2">
-          今日全市场无超级B1信号——该公式条件苛刻，多数交易日为空是正常现象。
+          今日全市场无超级B1信号。该公式条件苛刻，多数交易日为空是正常现象。
         </p>
       ) : (
         <div className="card-modern px-1 py-1">
-          <div className="divide-y divide-border/40">
-            {hits.map((h) => (
+          <div className="reveal-list divide-y divide-border/40">
+            {visibleHits.map((h) => (
               <button
                 key={h.code}
                 onClick={() => openStock(hits, h.code)}
@@ -104,6 +108,12 @@ export function SuperB1Card() {
               </button>
             ))}
           </div>
+          {initialLimit && hits.length > initialLimit && (
+            <button onClick={() => setShowAll((value) => !value)} className="flex w-full items-center justify-center gap-2 border-t border-border px-3 py-3 text-xs font-medium text-accent hover:bg-surface-hover active:bg-inset">
+              {showAll ? "收起" : `查看全部 ${hits.length} 只`}
+              <ChevronDown size={14} className={`transition-transform ${showAll ? "rotate-180" : ""}`} />
+            </button>
+          )}
         </div>
       )}
     </section>
