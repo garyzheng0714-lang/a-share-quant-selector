@@ -420,6 +420,10 @@ export interface SectorState {
   stage: string;
   rank: number;
   total: number;
+  relative_strength?: number;
+  turn_ratio?: number;
+  breadth?: number;
+  breadth_ma10?: number;
 }
 
 /** 量化今日一票：今天买什么 / 明天盯什么（纯规则，无模型主观发挥） */

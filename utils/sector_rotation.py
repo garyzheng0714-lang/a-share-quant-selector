@@ -9,6 +9,7 @@
 ⚠️ CSV 的 amount 列全为 0，成交额用 close×volume×100 近似；
    占比型指标（行业额÷全市场额）分子分母同为近似，系统偏差抵消。
 """
+import hashlib
 import json
 import logging
 import threading
@@ -67,6 +68,14 @@ def _load_universe() -> dict:
             continue
         out[code] = industry
     return out
+
+
+def _universe_fingerprint(universe=None) -> str:
+    """行业成分映射指纹；映射变化时旧板块榜不能继续命中缓存。"""
+    current = universe if universe is not None else _load_universe()
+    payload = json.dumps(sorted(current.items()), ensure_ascii=False,
+                         separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:16]
 
 
 def _panel_one(csv_manager, code: str, industry: str):
@@ -347,6 +356,10 @@ def compute_sector_rotation(csv_manager) -> dict:
             "stage": _stage(row["heat"]),
             "rank": i,
             "total": total,
+            "relative_strength": round(float(row["rs"]), 1),
+            "turn_ratio": round(float(row["turn_ratio"]), 2),
+            "breadth": round(float(row["breadth"]), 1),
+            "breadth_ma10": round(float(row["ma10r"]), 1),
         }
 
     result = {
@@ -359,6 +372,7 @@ def compute_sector_rotation(csv_manager) -> dict:
         "hot": hot,
         "relay": relay,
         "heat_map": heat_map,
+        "universe_fingerprint": _universe_fingerprint(universe),
     }
     logger.info("板块轮动计算完成: %s 行业 / %s 只票 / %.1fs",
                 result["industries"], result["stocks"], result["elapsed_sec"])
@@ -377,6 +391,8 @@ def _read_valid_cache(csv_manager):
     if not cached.get("available") or not cached.get("heat_map"):
         return None
     if cached.get("trade_date") != _latest_data_date(csv_manager):
+        return None
+    if cached.get("universe_fingerprint") != _universe_fingerprint():
         return None
     return cached
 

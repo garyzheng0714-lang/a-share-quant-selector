@@ -6,15 +6,16 @@ import type { SectorHot, SectorRelay } from "@/lib/api";
 /** 最热行：名称 + 强度条 + 分数 + 趋势箭头 */
 function HotRow({ item }: { item: SectorHot }) {
   return (
-    <div className="flex items-center gap-2.5 py-1.5">
-      <div className="w-24 sm:w-28 shrink-0 flex items-center gap-1.5 min-w-0">
-        <span className="text-[13px] text-ink truncate">{item.name}</span>
+    <div className="grid grid-cols-[96px_1fr_30px_44px] items-center gap-2.5 py-2 sm:grid-cols-[112px_1fr_30px_44px]">
+      <div className="min-w-0">
+        <span className="block truncate text-[13px] text-ink">{item.name}</span>
+        <span className="mt-0.5 block truncate text-[9px] text-ink-muted">MA10 {item.breadth_ma10 ?? "—"}% · 资金 {item.turn_ratio ?? "—"}x</span>
       </div>
       <StrengthBar value={item.score} className="flex-1 min-w-0" height={6} />
       <span className="text-[13px] font-semibold num text-ink w-7 text-right shrink-0">
         {Math.round(item.score)}
       </span>
-      <span className="w-10 shrink-0 flex justify-end">
+      <span className="flex justify-end">
         <DeltaArrow trend={item.trend} value={item.delta3} />
       </span>
     </div>

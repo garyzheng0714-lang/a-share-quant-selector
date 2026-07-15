@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { ChevronRight, CircleGauge, Database, TrendingDown, TrendingUp } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { PageTransition } from "@/components/layout/page-transition";
+import { SectorRotationCard } from "@/components/dashboard/sector-rotation-card";
 import { LoadError, Skeleton } from "@/components/ui";
 import { useCoverage, useSectors, useSuperB1, useThermometer } from "@/lib/hooks";
 
@@ -61,6 +62,12 @@ export function Component() {
             <span>可训练 <b className="num text-ink-secondary">{coverage.trainable_count}/{coverage.trainable_eligible_count}</b></span>
             <span>{coverage.running ? `后台补齐中，剩余 ${coverage.remaining_count} 只` : "全量回补待命"}</span>
           </div>
+        )}
+
+        {data?.available && (
+          <section className="mb-5" aria-label="板块风向明细">
+            <SectorRotationCard />
+          </section>
         )}
 
         {!data?.available || ranking.length === 0 ? (

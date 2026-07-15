@@ -2,6 +2,7 @@ import { Database, RefreshCw } from "lucide-react";
 import { PageTransition } from "@/components/layout/page-transition";
 import { QuantPickCard } from "@/components/dashboard/quant-pick-card";
 import { SuperB1Card } from "@/components/today/super-b1-card";
+import { FactorWorkbench } from "@/components/today/factor-workbench";
 import { useCoverage } from "@/lib/hooks";
 
 export function Component() {
@@ -28,6 +29,14 @@ export function Component() {
         <section className="mt-5">
           <h2 className="mb-3 text-sm font-semibold text-ink">B1 原始命中池</h2>
           <SuperB1Card />
+        </section>
+        <section className="mt-8 border-t border-border pt-6">
+          <div className="mb-4">
+            <p className="text-[11px] font-medium text-accent">辅助研究 · 不替代B1主判</p>
+            <h2 className="mt-1 text-lg font-semibold text-ink">策略因子选股</h2>
+            <p className="mt-1 text-xs leading-relaxed text-ink-muted">原有 28 个策略因子、历史日期切换、行业分组和个股明细全部保留。</p>
+          </div>
+          <FactorWorkbench />
         </section>
       </div>
     </PageTransition>
