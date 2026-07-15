@@ -15,7 +15,7 @@ from pathlib import Path
 
 def _load_yaml_config():
     """从YAML配置文件加载B1PatternMatch配置"""
-    config_path = Path("/root/quant-csv/config/strategy_params.yaml")
+    config_path = Path(__file__).parent.parent / "config" / "strategy_params.yaml"
     
     if not config_path.exists():
         return {}
@@ -114,7 +114,16 @@ B1_PERFECT_CASES = [
         "breakout_date": "2025-07-11",
         "lookback_days": 25,
         "tags": ["中小板", "医药"],
-        "description": "价格接近短期趋势线+缩量+顶部未放量",
+        "description": "价格��近短期趋势线+缩量+顶部未放量",
+    },
+    {
+        "id": "case_011",
+        "name": "航天发展",
+        "code": "000547",
+        "breakout_date": "2025-11-12",
+        "lookback_days": 25,
+        "tags": ["主板", "军工"],
+        "description": "航天军工+量能异动+趋势突破",
     },
     {
         "id": "case_011",
