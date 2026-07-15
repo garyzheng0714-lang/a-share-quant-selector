@@ -275,6 +275,20 @@ def get_factor_hits(csv_manager, stock_names: dict, strategies: list,
     return {"available": True, "trade_date": trade_date, "results": results}
 
 
+def read_cached_factor_hits(csv_manager, strategies: list) -> dict:
+    """只读最新因子缓存；板块详情不能因辅助因子缺失而触发全市场扫描。"""
+    trade_date = _latest_data_date(csv_manager)
+    if not trade_date:
+        return {"available": False, "reason": "无法确定交易日"}
+    cache = _load_cache(trade_date)
+    results = {key: cache[key] for key in strategies if key in cache}
+    return {
+        "available": bool(results),
+        "trade_date": trade_date,
+        "results": results,
+    }
+
+
 def prewarm_all(csv_manager, stock_names: dict) -> dict:
     """16:00 定时任务预热：全部策略一次算完（一次IO跑28策略）."""
     from strategy.factors import FACTOR_REGISTRY

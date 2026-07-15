@@ -39,6 +39,12 @@ export function Component() {
   const state = data?.sector;
   const stocks = data?.stocks ?? [];
   const recommended = data?.recommended ?? [];
+  const metrics = [
+    { label: "相对强度", value: state?.relative_strength, hint: "5/10/20日相对全市场" },
+    { label: "资金升温", value: state?.turn_ratio, hint: "近3日成交占比 ÷ 20日" },
+    { label: "上涨广度", value: state?.breadth, hint: "上涨、站上MA10与新高合成" },
+    { label: "MA10广度", value: state?.breadth_ma10, hint: "板块内站上10日线比例" },
+  ];
 
   return (
     <PageTransition>
@@ -48,6 +54,20 @@ export function Component() {
           <div><p className="text-xs text-accent">第 {state?.rank ?? "—"} / {state?.total ?? "—"}</p><h1 className="mt-1 text-2xl font-semibold text-ink">{sectorName}</h1></div>
           <div className="ml-auto text-right"><p className="num text-3xl font-semibold text-ink">{state?.score != null ? Math.round(state.score) : "—"}</p><p className="text-[11px] text-ink-muted">板块热度 · {state?.stage ?? "未评级"}</p></div>
         </header>
+
+        <section className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="板块判断明细">
+          {metrics.map((metric) => (
+            <div key={metric.label} className="rounded-xl border border-border bg-surface px-3 py-3">
+              <p className="text-[10px] text-ink-muted">{metric.label}</p>
+              <p className="mt-1 num text-lg font-semibold text-ink">{metric.value == null ? "—" : metric.value.toFixed(metric.label === "资金升温" ? 2 : 1)}</p>
+              <p className="mt-1 text-[9px] leading-relaxed text-ink-muted">{metric.hint}</p>
+            </div>
+          ))}
+        </section>
+
+        <div className="mb-4 rounded-xl border border-border/70 bg-inset px-3 py-2 text-[11px] leading-relaxed text-ink-muted">
+          3日热度变化 <span className={state && state.delta3 >= 0 ? "num text-bull" : "num text-bear"}>{state?.delta3 == null ? "—" : `${state.delta3 > 0 ? "+" : ""}${state.delta3.toFixed(1)}`}</span>。热度由相对强度、资金占比、上涨广度与持续性共同计算，并扣除龙头过度集中惩罚。
+        </div>
 
         <section className="mb-4 rounded-2xl border border-border bg-surface p-4">
           <div className="flex items-center gap-2">
