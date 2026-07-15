@@ -7,17 +7,16 @@ import { useCoverage, useSectors, useSuperB1, useThermometer } from "@/lib/hooks
 import type { SectorsData } from "@/lib/api";
 
 type RankingItem = NonNullable<SectorsData["ranking"]>[number];
-type FocusItem = { name: string; score: number; label: "主线" | "接力" };
+type FocusItem = { name: string; label: "主线" | "接力" };
 
 function FocusRow({ item, index, b1, onOpen }: { item: FocusItem; index: number; b1: number; onOpen: () => void }) {
   return (
-    <button onClick={onOpen} className="grid min-h-16 w-full grid-cols-[28px_1fr_auto_18px] items-center gap-3 px-4 text-left transition-colors hover:bg-surface-hover active:bg-inset">
+    <button onClick={onOpen} className="grid min-h-16 w-full grid-cols-[28px_1fr_18px] items-center gap-3 px-4 text-left transition-colors hover:bg-surface-hover active:bg-inset">
       <span className={`num text-sm font-semibold ${index < 3 ? "text-accent" : "text-ink-muted"}`}>{index + 1}</span>
       <span className="min-w-0">
         <span className="block truncate text-[15px] font-semibold text-ink">{item.name}</span>
         <span className="mt-1 block text-[11px] text-ink-muted">{item.label}{b1 > 0 ? `，B1 ${b1} 只` : ""}</span>
       </span>
-      <span className="num text-lg font-semibold text-ink">{Math.round(item.score)}</span>
       <ChevronRight size={15} className="text-ink-muted" />
     </button>
   );
@@ -50,9 +49,9 @@ export function Component() {
 
   const data = sectors.data;
   const ranking = data?.ranking ?? [];
-  const leaders: FocusItem[] = (data?.hot ?? []).slice(0, 3).map((item) => ({ name: item.name, score: item.score, label: "主线" }));
+  const leaders: FocusItem[] = (data?.hot ?? []).slice(0, 3).map((item) => ({ name: item.name, label: "主线" }));
   const leaderNames = new Set(leaders.map((item) => item.name));
-  const relays: FocusItem[] = (data?.relay ?? []).filter((item) => !leaderNames.has(item.name)).slice(0, 2).map((item) => ({ name: item.name, score: item.score, label: "接力" }));
+  const relays: FocusItem[] = (data?.relay ?? []).filter((item) => !leaderNames.has(item.name)).slice(0, 2).map((item) => ({ name: item.name, label: "接力" }));
   const focus = [...leaders, ...relays];
   const b1Counts = (b1?.hits ?? []).reduce<Record<string, number>>((out, row) => {
     if (row.industry) out[row.industry] = (out[row.industry] ?? 0) + 1;
@@ -90,7 +89,6 @@ export function Component() {
         <section className="overflow-hidden card-modern">
           <div className="flex items-center justify-between px-4 py-3">
             <h2 className="text-sm font-semibold text-ink">今天先看</h2>
-            <span className="text-[10px] text-ink-muted">强度</span>
           </div>
           {data?.available && focus.length ? (
             <div className="divide-y divide-border/60">{focus.map((item, index) => <FocusRow key={`${item.label}-${item.name}`} item={item} index={index} b1={b1Counts[item.name] ?? 0} onOpen={() => openSector(item.name)} />)}</div>
