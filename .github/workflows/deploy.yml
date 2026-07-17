@@ -8,7 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
@@ -16,7 +16,7 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          command_timeout: 20m
+          command_timeout: 35m
           script: |
             set -e
             DEPLOY_DIR="/opt/a-share-quant"
@@ -94,15 +94,18 @@ jobs:
             for i in $(seq 1 12); do
               if curl -sf http://localhost:18321/api/stats > /dev/null 2>&1; then
                 echo ">>> Service ready; refreshing completed market data..."
-                if ! curl --max-time 900 -sf -X POST http://localhost:18321/api/data/update > /tmp/quant-data-update.json; then
+                if ! curl --max-time 1200 -sf -X POST http://localhost:18321/api/data/update > /tmp/quant-data-update.json; then
                   echo ">>> Data refresh failed; refusing to publish stale recommendations"
                   cat /tmp/quant-data-update.json 2>/dev/null || true
                   docker compose logs --tail 80
                   exit 1
                 fi
-                curl --max-time 300 -sf -X POST http://localhost:18321/api/decision/close > /tmp/quant-decision.json
+                echo ">>> Market data refresh complete; generating close decision..."
+                curl --max-time 1200 -sf -X POST http://localhost:18321/api/decision/close > /tmp/quant-decision.json
+                echo ">>> Close decision complete; starting background bootstrap..."
                 curl --max-time 10 -sf -X POST http://localhost:18321/api/data/bootstrap > /tmp/quant-bootstrap.json
-                curl --max-time 180 -sf http://localhost:18321/api/sectors > /tmp/quant-sectors.json
+                echo ">>> Bootstrap accepted; rebuilding sector cache..."
+                curl --max-time 600 -sf http://localhost:18321/api/sectors > /tmp/quant-sectors.json
                 echo ">>> Deploy successful with fresh data! (ready after ~${i}0s)"
                 exit 0
               fi
