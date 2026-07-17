@@ -1,159 +1,134 @@
-# a-share-quant-selector
+# A 股量化研究与分层决策系统
 
-![类型](https://img.shields.io/badge/%E7%B1%BB%E5%9E%8B-%E9%87%8F%E5%8C%96%E5%B7%A5%E5%85%B7-dc2626)
-![技术栈](https://img.shields.io/badge/%E6%8A%80%E6%9C%AF%E6%A0%88-Python%20%2B%20Flask%20%2B%20React-2563eb)
-![状态](https://img.shields.io/badge/%E7%8A%B6%E6%80%81-%E7%A0%94%E7%A9%B6%E5%B7%A5%E5%85%B7-16a34a)
-![README](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-111827)
+基于 Python、AkShare、Flask、SQLite 和 React 的个人 A 股研究工具。它负责行情更新、规则候选生成、版本化分层决策、盘前事件复核、模拟盘、样本外复盘与可视化。
 
-基于 Python、AkShare 和 React 的 A 股量化选股系统，支持本地数据更新、策略筛选、图形匹配、通知和 Web 管理界面。
+> 本项目只用于研究和自动化分析，不构成投资建议，也不承诺收益。模型、回测和页面提示都不能替代独立判断。
 
-## 仓库定位
+## 当前状态
 
-- 分类：量化工具 / A 股研究 / 策略筛选与可视化。
-- 服务对象：需要自动更新 A 股数据、运行选股策略、查看历史结果和管理策略参数的个人研究工作流。
-- 风险说明：本项目仅用于研究和自动化分析，不构成任何投资建议。
+- GitHub Actions 只在 `main` push 后自动部署到 `/opt/a-share-quant`；以线上健康检查和 Git SHA 判断实际发布状态。
+- 每日任务会处理前一交易日的模拟委托、更新净值与对账、回填标签、登记 shadow 挑战策略，再生成当日收盘决策和 AI 留痕。
+- 每日任务无权自动替换生产策略；完整策略必须作为一个原子 policy 通过样本外证据、统计功效和人工批准后才能发布。
+- `config/config.yaml` 仍存在历史跟踪风险。不要打印或提交其中的真实凭证；安全处置见 [已知限制](docs/known-limitations.md)。
 
-## 功能概览
+## 决策链路
 
-- 从 AkShare 获取 A 股历史数据，并保存到本地 `data/`。
-- 支持首次全量抓取和每日增量更新。
-- 内置碗口反弹策略，结合趋势线、多空线、放量阳线和 KDJ 低位筛选。
-- 支持 B1 图形相似度匹配，按趋势结构、量能、价格形态和 KDJ 相似度排序。
-- 支持回落碗中、靠近多空线、靠近短期趋势线等结果分类。
-- 可生成 K 线图和技术指标图。
-- 支持钉钉群机器人通知。
-- Flask API 提供排行榜、历史结果、股票详情、多视图参数管理和异步任务。
-- React 19 + ECharts 前端用于 Web 管理。
-- 提供 Dockerfile、Docker Compose 和 GitHub Actions workflow。
+```mermaid
+flowchart LR
+    A["AkShare 日线与参考快照"] --> B["Super B1 纯规则候选"]
+    B --> C["T 日 15:00 收盘决策"]
+    C --> D["周线 / 市场 / 板块 / 个股风险分层"]
+    D --> E["T+1 08:45 公告风险复核"]
+    E --> F["buy / observe / avoid"]
+    F --> G["版本化决策账本"]
+    F --> H["LLM 只解释，不改动作"]
+    F --> I["A 股规则模拟盘"]
+    I --> J["成交 / 持仓 / 现金 / 净值 / 对账"]
+    J --> K["每日样本外复盘与 shadow 挑战策略"]
+    K --> L["完整 policy 人工审核发布"]
+```
 
-## 技术栈
+关键边界：
 
-- 后端：Python 3.11+、Flask、gunicorn、APScheduler。
-- 数据与计算：AkShare、pandas、NumPy、SciPy、fastdtw、orjson。
-- 图表与图片：matplotlib、Pillow。
-- 前端：React 19、TypeScript、Vite、Tailwind CSS、ECharts、SWR、Zustand、React Router。
-- 部署：Docker multi-stage build、Docker Compose。
+- 本地行情不新鲜时，收盘决策拒绝生成。
+- 规则 baseline 使用 Super B1；周线四均线默认只做 shadow 记录。
+- 未经 point-in-time 快照与 purged walk-forward 验证的市场/板块/风险/质量完整 policy 不能 active；不允许逐层拼接生产策略。
+- `strict_unvalidated_gate=true` 时，没有已验证的 market 模型只输出 `observe`。
+- 多只候选在没有已验证质量模型时不伪造精确 top-1；超过 3 只会降级观察。
+- 盘前复核只使用截止时点已公开的公告；来源缺失时降级观察。
+- LLM 只做结构化公告标签、候选解释和可审计留痕，没有自由排序权；无合格候选或未配置时也会记录 `not_called`/`abstained` 原因。
+- 模拟盘遵守 100 股整数手、T+1、涨跌停不可成交、佣金/印花税/过户费与滑点；缺行情时延期，不制造成交。
+
+完整方法与证据边界见 [模型治理](docs/model-governance.md)。
+
+## 产品界面
+
+React 前端当前路由：
+
+- `/sectors`：默认入口，单页板块工作台；在同一页完成排名、趋势、指标、候选、证据和系统状态查看；
+- `/stocks`：当前候选与决策；
+- `/review`：历史结果、战绩、策略因子、板块和模型复盘；
+- `/stock/:code`：个股资料、日/周 K 与历史信号。
+
+旧 `/today`、`/performance`、`/history` 会重定向到当前页面。视觉规范见 [DESIGN.md](DESIGN.md)。
 
 ## 快速开始
 
-安装 Python 依赖：
+建议使用 Python 3.11+ 与 Node.js 22：
 
 ```bash
-pip3 install -r requirements.txt
-```
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
-创建运行配置：
-
-```bash
 cp config/config.yaml.template config/config.yaml
-```
-
-根据需要编辑 `config/config.yaml`，例如钉钉 webhook、数据目录和调度时间。
-
-初始化本地股票数据：
-
-```bash
 python3 main.py init
-```
-
-执行更新、选股和通知完整流程：
-
-```bash
-python3 main.py run
-```
-
-启动 Web 服务：
-
-```bash
 python3 main.py web
 ```
 
-Flask 服务默认监听 `5000`。
-
-## 常用命令
-
-| 命令 | 说明 |
-| --- | --- |
-| `python3 main.py init` | 首次全量抓取历史数据 |
-| `python3 main.py update` | 每日增量更新 |
-| `python3 main.py select` | 仅执行选股 |
-| `python3 main.py run` | 更新数据、选股并发送通知 |
-| `python3 main.py run --max-stocks 500` | 快速测试前 500 只股票 |
-| `python3 main.py run --category bowl_center` | 按分类筛选 |
-| `python3 main.py run --b1-match` | 启用 B1 图形匹配 |
-| `python3 main.py schedule` | 启动定时调度 |
-| `python3 main.py web` | 启动 Web API/UI |
-| `python3 main.py --version` | 输出版本信息 |
-
-## 前端开发
+另开终端运行前端：
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
-npm run build
 ```
 
-Docker 构建会先构建前端，并把 `frontend/dist` 复制进 Python 应用镜像。
+Flask 默认监听 `0.0.0.0:5000`。项目没有应用层登录或 CSRF 防护，本地开发与生产都必须用防火墙、反向代理或私网限制访问，不能把端口直接暴露给不可信网络。
 
-## 配置
+## CLI
 
-主配置文件：
+`main.py` 当前只接受以下命令：
 
-```text
-config/config.yaml
-```
-
-可从 `config/config.yaml.template` 创建。常见配置项：
-
-| 配置 | 说明 |
+| 命令 | 作用 |
 | --- | --- |
-| `data_dir` | 本地股票数据目录 |
-| `dingtalk.webhook_url` | 钉钉机器人 webhook |
-| `dingtalk.secret` | 钉钉签名密钥 |
-| `schedule.time` | 每日定时运行时间 |
-| `update.lookback_days` | 增量更新回看天数 |
+| `python3 main.py init` | 初始化历史行情 |
+| `python3 main.py update` | 更新本地行情 |
+| `python3 main.py run` | 更新、运行既有选股流程并记录结果 |
+| `python3 main.py track` | 回填并查看历史战绩 |
+| `python3 main.py backtest` | 运行历史回测 |
+| `python3 main.py web` | 启动 Flask、调度器与前端静态服务 |
 
-策略参数文件：
+旧文档中的 `select` 与 `schedule` 已不是合法 CLI 命令。
 
-```text
-config/strategy_params.yaml
-```
-
-重点参数包括：
-
-- `BowlReboundStrategy`：成交量倍数、回看天数、市值门槛、KDJ 阈值和趋势线距离。
-- `B1PatternMatch`：最小相似度、回看天数、维度权重、匹配容忍度和返回数量。
-
-## 项目结构
-
-```text
-.
-├── main.py                   # CLI 入口
-├── web_server.py             # Flask API 与前端静态服务
-├── strategy/                 # 策略注册、碗口反弹和 B1 图形匹配
-├── utils/                    # AkShare 拉取、CSV、图表和钉钉通知
-├── views/                    # SQLite 视图和结果管理
-├── frontend/                 # React Web UI
-├── config/                   # 运行配置和策略参数
-├── B1_PATTERN_MATCH.md       # B1 匹配说明
-├── Dockerfile
-└── docker-compose.yml
-```
-
-## Docker
-
-使用 Docker Compose 构建并运行：
+## 验证
 
 ```bash
-docker compose up -d --build
+python3 -m pytest -q
+
+cd frontend
+npm run lint
+npm run build
+
+cd ..
+git diff --check
 ```
 
-当前 `docker-compose.yml` 将宿主机 `18321` 映射到容器 `5000`，并用 `quant-data` volume 保存生成数据。
+验证基线以本次 `pytest`、前端 lint 和生产构建的实际输出为准。ECharts chunk 仍可能超过 Vite 500 kB 警告阈值。
 
-## 注意事项
+测试不得调用真实通知、LLM 或生产部署。涉及行情、公告和回测的结论还必须核对 as-of 时点、历史证券宇宙、交易成本与成交可执行性。
 
-- 市场数据保存在运行时 `data/` 目录。
-- 钉钉 webhook 和签名密钥应保存在本地配置或部署环境中。
-- `B1_PATTERN_MATCH.md` 记录了 B1 历史案例、特征维度和相似度计算说明。
-- 输出结果用于研究参考，不应直接作为交易依据。
+## 配置与数据
+
+- `config/config.yaml.template`：运行配置模板；真实 `config.yaml` 不应被 Git 跟踪。
+- `config/strategy_params.yaml`：传统策略与 B1 参数。
+- `data/`：行情、参考快照、回测产物与主 `views.db`；属于运行数据，不进入 Git。
+- `views/views.db`：不是运行数据库；正确位置是 `data/views.db`。
+- LLM 可使用 Ark 或 Anthropic；未配置凭证时解释功能停用，不影响规则决策。
+
+## 部署
+
+Docker Compose 将容器 5000 映射到宿主机 18321，并用 volume 持久化 `data/`。GitHub workflow 在 `main` 更新后拉取代码、构建容器、检查 `/api/stats`，再更新行情并生成收盘决策；常驻服务的 APScheduler 负责每日模拟盘、复盘、AI 留痕与盘前委托。
+
+生产操作、回滚与数据保全见 [运维手册](docs/operator-runbook.md)。`deploy.sh` 包含 SSH、`rsync --delete` 与远端重建动作，只能在明确授权并完成备份核对后手动执行。
+
+## 文档
+
+- [开发记忆](CLAUDE.md)
+- [文档索引](docs/INDEX.md)
+- [系统架构](docs/architecture.md)
+- [模型治理](docs/model-governance.md)
+- [运维手册](docs/operator-runbook.md)
+- [已知限制](docs/known-limitations.md)
+- [设计规范](DESIGN.md)
+- [B1 图形匹配参考](B1_PATTERN_MATCH.md)

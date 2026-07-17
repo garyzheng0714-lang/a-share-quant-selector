@@ -35,6 +35,7 @@ SERIES_DAYS = 6      # 热度序列长度（今天 + 回看，用于 Δ3 与持�
 MIN_MEMBERS = 8      # 行业有效成分股下限，太小的行业噪声大
 MIN_ROWS = 47        # 个股最少完整行数（次新股跳过）
 TOP_N = 8
+SECTOR_CACHE_VERSION = 2
 
 _lock = threading.Lock()
 
@@ -360,12 +361,18 @@ def compute_sector_rotation(csv_manager) -> dict:
             "turn_ratio": round(float(row["turn_ratio"]), 2),
             "breadth": round(float(row["breadth"]), 1),
             "breadth_ma10": round(float(row["ma10r"]), 1),
+            "heat_series": [
+                round(float(heats[date].loc[name, "heat"]), 1)
+                for date in series_dates
+            ],
         }
 
     result = {
         "available": True,
         "trade_date": latest,
         "computed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "cache_version": SECTOR_CACHE_VERSION,
+        "series_dates": series_dates,
         "elapsed_sec": round(time.time() - t0, 1),
         "stocks": int(panel[panel["date"] == latest].shape[0]),
         "industries": int(len(ok_inds)),
@@ -388,7 +395,11 @@ def _read_valid_cache(csv_manager):
             cached = json.load(f)
     except Exception:
         return None
-    if not cached.get("available") or not cached.get("heat_map"):
+    if (
+        not cached.get("available")
+        or not cached.get("heat_map")
+        or cached.get("cache_version") != SECTOR_CACHE_VERSION
+    ):
         return None
     if cached.get("trade_date") != _latest_data_date(csv_manager):
         return None

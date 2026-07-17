@@ -19,7 +19,8 @@ class BinaryLogit:
         self.constant_probability: float | None = None
 
     def _matrix(self, frame, fit: bool = False) -> np.ndarray:
-        x = frame[self.feature_names].to_numpy(dtype=float)
+        # pandas Copy-on-Write 会返回只读视图；后续清洗需要自己的可写数组。
+        x = frame[self.feature_names].to_numpy(dtype=float, copy=True)
         x[~np.isfinite(x)] = np.nan
         if fit:
             med = np.nanmedian(x, axis=0)

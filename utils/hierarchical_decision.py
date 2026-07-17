@@ -13,7 +13,8 @@ from strategy.factor_lib import FactorContext
 from utils.csv_manager import CSVManager
 from utils.decision_config import get_decision_config
 from utils.decision_ledger import (
-    get_active_models, get_latest_decision, list_models, save_decision_run,
+    get_active_models, get_active_policy_models, get_latest_decision, list_models,
+    save_decision_run,
 )
 from utils.decision_versions import (
     FEATURE_VERSION, VALIDATED_MODEL_SOURCE_REFS, data_version, strategy_version,
@@ -71,16 +72,14 @@ def _baseline_candidates() -> tuple[str | None, list[dict]]:
 
 
 def _active_model_bundle() -> tuple[dict, str]:
-    # 旧候选分布或未经时点快照/purge 验证的模型不可上线复用。
-    models = {
-        key: model for key, model in get_active_models().items()
-        if VALIDATED_MODEL_SOURCE_REFS.issubset(set(model.get("source_refs") or []))
-    }
-    version = (
-        "|".join(f"{key}@{models[key]['version']}" for key in sorted(models))
-        if models else "baseline-only"
+    models, policy_version = get_active_policy_models()
+    if not models:
+        return {}, "baseline-only"
+    valid = all(
+        VALIDATED_MODEL_SOURCE_REFS.issubset(set(model.get("source_refs") or []))
+        for model in models.values()
     )
-    return models, version
+    return (models, policy_version) if valid else ({}, "baseline-only")
 
 
 def _layer_modes(models: dict, weekly_gate_mode: str) -> dict[str, str]:

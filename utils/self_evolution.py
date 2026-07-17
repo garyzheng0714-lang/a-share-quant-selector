@@ -10,9 +10,8 @@ import pandas as pd
 from utils.csv_manager import CSVManager
 from utils.data_freshness import local_data_status
 from utils.decision_ledger import (
-    get_active_models,
+    get_active_policy_models,
     list_pending_outcome_candidates,
-    promote_model_bundle,
     save_evolution_run,
     upsert_decision_outcome,
 )
@@ -25,7 +24,9 @@ logger = logging.getLogger(__name__)
 MIN_OOS_MONTHS = 6
 MIN_OOS_SAMPLES = 80
 MIN_UNIVERSE_COVERAGE = 0.60
-MIN_REFERENCE_MONTHS = 16
+MIN_REFERENCE_MONTHS = 21
+MIN_SIGNAL_MONTHS = 21
+PIT_CONTRACT_VERSION = "pit-reference-v1"
 
 
 def update_decision_outcomes(csv_manager: CSVManager) -> dict:
@@ -133,6 +134,18 @@ def run_daily_evolution(csv_manager: CSVManager | None = None) -> dict:
     industries = json.loads(Path("data/stock_industry.json").read_text(encoding="utf-8"))
     coverage = _coverage(csv_manager, names)
     labels = update_decision_outcomes(csv_manager)
+    try:
+        from utils.paper_trading import get_paper_status
+
+        paper_status = get_paper_status(manager=csv_manager)
+    except Exception as exc:
+        logger.warning("模拟账户状态读取失败: %s", exc)
+        paper_status = {"established": False, "reason": "paper_status_unavailable"}
+    research_context = {
+        "strategy": "super-b1-original",
+        "labels": labels,
+        "paper_track_record": paper_status,
+    }
     base_run = {
         "trade_date": freshness["local_date"],
         "data_version": data_version(),
@@ -147,7 +160,7 @@ def run_daily_evolution(csv_manager: CSVManager | None = None) -> dict:
             "promotion_status": "kept_champion",
             "reason_codes": ["universe_coverage_insufficient"],
             "metrics": {
-                "strategy": "super-b1-original", "labels": labels,
+                **research_context,
                 "training_status": "skipped_data_gate",
                 "minimum_coverage": MIN_UNIVERSE_COVERAGE,
                 "reference_snapshot": reference_snapshot,
@@ -165,7 +178,7 @@ def run_daily_evolution(csv_manager: CSVManager | None = None) -> dict:
             "promotion_status": "kept_champion",
             "reason_codes": ["reference_history_insufficient"],
             "metrics": {
-                "strategy": "super-b1-original", "labels": labels,
+                **research_context,
                 "training_status": "skipped_reference_history",
                 "reference_months": len(snapshot_months),
                 "minimum_reference_months": MIN_REFERENCE_MONTHS,
@@ -183,7 +196,25 @@ def run_daily_evolution(csv_manager: CSVManager | None = None) -> dict:
             run = {
                 **base_run, "status": "failed", "promotion_status": "kept_champion",
                 "reason_codes": ["training_dataset_empty"],
-                "metrics": {"strategy": "super-b1-original", "labels": labels},
+                "metrics": research_context,
+            }
+            run["evolution_id"] = save_evolution_run(run)
+            return {"available": True, **run}
+
+        signal_months = sorted({str(value)[:7] for value in frame["date"]})
+        if len(signal_months) < MIN_SIGNAL_MONTHS:
+            run = {
+                **base_run, "status": "complete", "dataset_rows": len(frame),
+                "promotion_status": "kept_champion",
+                "reason_codes": ["signal_history_insufficient"],
+                "metrics": {
+                    **research_context,
+                    "training_status": "skipped_signal_history",
+                    "signal_months": len(signal_months),
+                    "minimum_signal_months": MIN_SIGNAL_MONTHS,
+                    "pit_contract_version": PIT_CONTRACT_VERSION,
+                    "reference_snapshot": reference_snapshot,
+                },
             }
             run["evolution_id"] = save_evolution_run(run)
             return {"available": True, **run}
@@ -195,36 +226,36 @@ def run_daily_evolution(csv_manager: CSVManager | None = None) -> dict:
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         version = result["bundle"]["version"]
+        active_models, _ = get_active_policy_models()
         champions = {
-            key: model for key, model in get_active_models().items()
+            key: model for key, model in active_models.items()
             if VALIDATED_MODEL_SOURCE_REFS.issubset(set(model.get("source_refs") or []))
         }
         reasons_by_layer = _promotion_reasons(result, coverage, champions)
-        eligible_status = {
-            key: "active" if not reasons_by_layer.get(key) else "shadow"
-            for key in ("market", "sector", "risk", "quality")
-        }
         reasons = sorted({reason for values in reasons_by_layer.values() for reason in values})
-        promotion = (
-            promote_model_bundle(version, eligible_status)
-            if not reasons_by_layer.get("market")
-            else {"promoted": False, "reason": "market_promotion_gate_failed"}
-        )
+        # 日任务只登记 shadow 研究结果。生产策略只能在独立的发布窗口中切换。
+        release = {
+            "released": False,
+            "state": "forward_observation_required",
+            "reason": "release_review_required",
+        }
+        reasons = sorted(set([*reasons, "release_review_required"]))
         run = {
             **base_run,
             "status": "complete",
             "dataset_rows": len(frame),
             "challenger_version": version,
-            "promotion_status": "promoted" if promotion["promoted"] else "kept_champion",
-            "reason_codes": reasons or [],
+            "promotion_status": "shadow_registered",
+            "reason_codes": reasons,
             "metrics": {
-                "strategy": "super-b1-original",
-                "labels": labels,
+                **research_context,
                 "reference_snapshot": reference_snapshot,
+                "pit_contract_version": PIT_CONTRACT_VERSION,
+                "signal_months": len(signal_months),
                 "validation_status": result["status"],
                 "promotion_reasons_by_layer": reasons_by_layer,
                 "aggregate": result["aggregate"],
-                "promotion": promotion,
+                "release": release,
             },
         }
         run["evolution_id"] = save_evolution_run(run)
@@ -234,7 +265,7 @@ def run_daily_evolution(csv_manager: CSVManager | None = None) -> dict:
         run = {
             **base_run, "status": "failed", "promotion_status": "kept_champion",
             "reason_codes": ["evolution_exception"],
-            "metrics": {"strategy": "super-b1-original", "labels": labels, "error": str(exc)},
+            "metrics": {**research_context, "error": str(exc)},
         }
         run["evolution_id"] = save_evolution_run(run)
         return {"available": True, **run}

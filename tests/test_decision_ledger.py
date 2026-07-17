@@ -5,8 +5,11 @@ from pathlib import Path
 
 import views.view_manager as view_manager
 from utils.decision_ledger import (
-    DECISION_RUNS_SCHEMA, get_active_models, get_decision, get_latest_decision,
-    init_decision_ledger, promote_model_bundle, register_model, save_decision_run,
+    DECISION_RUNS_SCHEMA, activate_policy, get_active_models, get_active_policy_models,
+    get_decision, get_latest_ai_decision_run, get_latest_decision, get_latest_evolution,
+    init_decision_ledger,
+    promote_model_bundle, register_model, register_policy_candidate, save_decision_run,
+    save_ai_decision_run, save_event_evidence, save_evolution_run,
 )
 
 
@@ -38,24 +41,39 @@ class DecisionLedgerTest(unittest.TestCase):
         self.assertEqual(saved["source_refs"], ["eod:2026-01-05"])
         self.assertEqual(saved["candidates"][0]["baseline"]["signal"], "cloud_stair")
 
-    def test_model_bundle_promotion_is_atomic(self):
+    def test_complete_policy_release_is_atomic(self):
         def register(key, version, status):
             register_model({
                 "model_key": key, "version": version, "status": status,
                 "trained_as_of": "2026-01-05T16:00:00+08:00",
                 "feature_names": [], "params": {}, "metrics": {},
-                "source_refs": [], "artifact": {},
+                "source_refs": [
+                    "super-b1-original", "point-in-time-reference-snapshots-v1",
+                    "purged-walk-forward-v2",
+                ],
+                "artifact": {},
             })
 
-        for key in ("market", "sector"):
-            register(key, "champion", "active")
+        for key in ("market", "sector", "risk", "quality"):
             register(key, "challenger", "shadow")
-        result = promote_model_bundle(
-            "challenger", {"market": "active", "sector": "active"}
-        )
-        self.assertTrue(result["promoted"])
-        active = get_active_models()
-        self.assertEqual({item["version"] for item in active.values()}, {"challenger"})
+        register_policy_candidate({
+            "policy_version": "challenger", "trained_as_of": "2026-01-05T16:00:00+08:00",
+            "component_versions": {key: "challenger" for key in
+                                   ("market", "sector", "risk", "quality")},
+            "source_refs": [
+                "super-b1-original", "point-in-time-reference-snapshots-v1",
+                "purged-walk-forward-v2",
+            ],
+        })
+        result = activate_policy("challenger", {
+            "forward_observation_complete": True, "power_analysis_passed": True,
+            "atomic_policy_evaluated": True, "operator_approved": True,
+        })
+
+        self.assertTrue(result["activated"])
+        active, version = get_active_policy_models()
+        self.assertEqual(version, "challenger")
+        self.assertEqual(set(active), {"market", "sector", "risk", "quality"})
 
     def test_runs_are_append_only_across_model_versions(self):
         base = {
@@ -77,6 +95,45 @@ class DecisionLedgerTest(unittest.TestCase):
         self.assertEqual(get_decision(second)["model_version"], "m2")
         self.assertEqual(get_latest_decision("close")["model_version"], "m2")
 
+    def test_same_day_evolution_attempts_are_append_only(self):
+        base = {
+            "trade_date": "2026-01-05", "data_version": "d1",
+            "universe_count": 100, "covered_count": 80, "coverage_ratio": 0.8,
+            "labels_updated": 0, "dataset_rows": 0,
+            "promotion_status": "not_eligible", "reason_codes": [], "metrics": {},
+        }
+
+        first = save_evolution_run({**base, "status": "failed"})
+        second = save_evolution_run({**base, "status": "complete"})
+
+        self.assertNotEqual(first, second)
+        self.assertEqual(get_latest_evolution()["evolution_id"], second)
+        with sqlite3.connect(view_manager.DB_PATH) as conn:
+            self.assertEqual(conn.execute("SELECT count(*) FROM evolution_runs").fetchone()[0], 2)
+
+    def test_ai_attempts_and_event_fetches_are_append_only(self):
+        ai = {
+            "trade_date": "2026-01-05", "decision_run_id": "run-1",
+            "as_of": "2026-01-05T16:00:00+08:00", "status": "not_called",
+            "role": "explanation", "input_hash": "hash-1",
+            "reason_codes": ["no_approved_candidates"],
+        }
+        first_ai = save_ai_decision_run(ai)
+        second_ai = save_ai_decision_run(ai)
+        event = {
+            "event_id": "event-1", "code": "600000", "source": "test",
+            "published_at": "2026-01-05T10:00:00+08:00", "title": "公告",
+            "text_hash": "text-1", "fetched_at": "2026-01-05T10:01:00+08:00",
+        }
+        save_event_evidence(event)
+        save_event_evidence({**event, "fetched_at": "2026-01-05T10:02:00+08:00"})
+
+        self.assertNotEqual(first_ai, second_ai)
+        self.assertEqual(get_latest_ai_decision_run()["ai_run_id"], second_ai)
+        with sqlite3.connect(view_manager.DB_PATH) as conn:
+            self.assertEqual(conn.execute("SELECT count(*) FROM ai_decision_runs").fetchone()[0], 2)
+            self.assertEqual(conn.execute("SELECT count(*) FROM event_evidence").fetchone()[0], 2)
+
     def test_reregistering_same_model_does_not_demote_active_champion(self):
         payload = {
             "model_key": "market", "version": "champion", "status": "active",
@@ -89,45 +146,48 @@ class DecisionLedgerTest(unittest.TestCase):
 
         self.assertEqual(get_active_models()["market"]["version"], "champion")
 
-    def test_independent_layer_promotion_keeps_other_champion(self):
-        def register(key, version, status):
-            register_model({
-                "model_key": key, "version": version, "status": status,
-                "trained_as_of": "2026-01-05T16:00:00+08:00",
-                "feature_names": [], "params": {}, "metrics": {},
-                "source_refs": [], "artifact": {},
+    def test_partial_policy_cannot_be_registered(self):
+        with self.assertRaisesRegex(ValueError, "完整策略缺少组件"):
+            register_policy_candidate({
+                "policy_version": "partial", "trained_as_of": "2026-01-05",
+                "component_versions": {"market": "m1"},
             })
 
-        register("market", "old-market", "active")
-        register("sector", "old-sector", "active")
-        register("market", "new-market", "shadow")
-        result = promote_model_bundle("new-market", {"market": "active"})
+    def test_release_requires_forward_and_operator_evidence(self):
+        result = activate_policy("missing", {"operator_approved": True})
 
-        self.assertTrue(result["promoted"])
-        active = get_active_models()
-        self.assertEqual(active["market"]["version"], "new-market")
-        self.assertEqual(active["sector"]["version"], "old-sector")
+        self.assertFalse(result["activated"])
+        self.assertEqual(result["reason"], "release_evidence_incomplete")
 
-    def test_missing_optional_challenger_does_not_demote_its_champion(self):
-        payload = {
+    def test_release_rejects_policy_with_unregistered_components(self):
+        register_policy_candidate({
+            "policy_version": "missing-models",
             "trained_as_of": "2026-01-05T16:00:00+08:00",
-            "feature_names": [], "params": {}, "metrics": {},
-            "source_refs": [], "artifact": {},
-        }
-        register_model({
-            **payload, "model_key": "sector", "version": "old-sector", "status": "active",
-        })
-        register_model({
-            **payload, "model_key": "market", "version": "new", "status": "shadow",
+            "component_versions": {
+                key: "missing" for key in ("market", "sector", "risk", "quality")
+            },
+            "source_refs": [
+                "super-b1-original", "point-in-time-reference-snapshots-v1",
+                "purged-walk-forward-v2",
+            ],
         })
 
-        result = promote_model_bundle("new", {"market": "active", "sector": "active"})
+        result = activate_policy("missing-models", {
+            "forward_observation_complete": True,
+            "power_analysis_passed": True,
+            "atomic_policy_evaluated": True,
+            "operator_approved": True,
+        })
 
-        self.assertTrue(result["promoted"])
-        self.assertEqual(result["missing_optional_layers"], ["sector"])
-        active = get_active_models()
-        self.assertEqual(active["market"]["version"], "new")
-        self.assertEqual(active["sector"]["version"], "old-sector")
+        self.assertFalse(result["activated"])
+        self.assertEqual(result["reason"], "policy_components_not_releaseable")
+        self.assertEqual(len(result["components"]), 4)
+
+    def test_legacy_layer_promotion_is_disabled(self):
+        result = promote_model_bundle("new", {"market": "active"})
+
+        self.assertFalse(result["promoted"])
+        self.assertEqual(result["reason"], "legacy_layer_promotion_disabled")
 
     def test_old_unique_schema_migrates_with_children_intact(self):
         init_decision_ledger()

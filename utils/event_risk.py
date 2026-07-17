@@ -110,14 +110,16 @@ def _call_event_llm(events: list[dict]) -> dict:
     """LLM 只做引用式标签与否决，不获得排序权。"""
     from utils.daily_pick import (
         DEFAULT_ANTHROPIC_MODEL, DEFAULT_ARK_BASE_URL, _extract_json,
-        _load_llm_config, get_api_key,
+        _get_llm_provider, _load_llm_config, get_api_key,
     )
 
-    api_key = get_api_key()
+    cfg = _load_llm_config()
+    provider = _get_llm_provider(cfg)
+    if provider is None:
+        return {"available": False, "reason": "llm_provider_invalid", "decisions": []}
+    api_key = get_api_key(cfg)
     if not api_key or not events:
         return {"available": False, "reason": "llm_unconfigured_or_no_events", "decisions": []}
-    cfg = _load_llm_config()
-    provider = (cfg.get("provider") or "ark").lower()
     compact = [{
         "event_id": e["event_id"], "code": e["code"], "published_at": e["published_at"],
         "title": e["title"], "source_url": e.get("source_url"),

@@ -94,6 +94,13 @@ export function useEvolutionStatus() {
   });
 }
 
+export function useSystemStatus() {
+  return useSWR("decision-system-status", () => api.getSystemStatus(), {
+    refreshInterval: 60_000,
+    revalidateOnFocus: true,
+  });
+}
+
 export function useFactors() {
   // today_hits 随 16:00 预热更新，页面常开也能拿到新数字
   return useSWR("factors", () => api.getFactors(), { refreshInterval: 600_000 });

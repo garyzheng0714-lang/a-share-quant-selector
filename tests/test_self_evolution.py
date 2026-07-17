@@ -104,6 +104,60 @@ class SelfEvolutionTest(unittest.TestCase):
         self.assertEqual(result["metrics"]["training_status"], "skipped_reference_history")
         self.assertEqual(result["dataset_rows"], 0)
 
+    def test_daily_training_registers_shadow_but_never_promotes(self):
+        manager = CSVManager(Path(self.tmp.name) / "data")
+        frame = pd.DataFrame({
+            "date": [f"202{year}-{month:02d}-05" for year in (4, 5)
+                     for month in range(1, 13)],
+            "code": ["600000"] * 24,
+        })
+        report = {
+            "bundle": {"version": "challenger-1"},
+            "status": {key: "active" for key in ("market", "sector", "risk", "quality")},
+            "aggregate": {key: {"n": 100, "months": 6, "avg": 1.0, "cvar10": -2.0}
+                          for key in ("market", "sector", "risk", "quality")},
+        }
+        with ExitStack() as stack:
+            stack.enter_context(patch("utils.self_evolution.local_data_status", return_value={
+                "fresh": True, "local_date": "2026-07-14", "expected_date": "2026-07-14",
+            }))
+            stack.enter_context(patch(
+                "utils.self_evolution.Path.read_text", side_effect=['{"600000":"银行"}',
+                                                                    '{"600000":"银行"}'],
+            ))
+            stack.enter_context(patch("utils.self_evolution._coverage", return_value={
+                "universe_count": 100, "covered_count": 80, "coverage_ratio": 0.8,
+            }))
+            stack.enter_context(patch("utils.self_evolution.update_decision_outcomes", return_value={
+                "updated": 0, "complete": 0, "pending": 0, "missing_data": 0,
+            }))
+            stack.enter_context(patch("utils.self_evolution.data_version", return_value="d1"))
+            stack.enter_context(patch("utils.self_evolution.save_evolution_run", return_value="e1"))
+            stack.enter_context(patch(
+                "utils.reference_snapshots.capture_reference_snapshot",
+                return_value={"available": True, "as_of": "2026-07-14"},
+            ))
+            stack.enter_context(patch(
+                "utils.reference_snapshots.load_reference_snapshots",
+                return_value={f"202{year}-{month:02d}-01": {} for year in (4, 5)
+                              for month in range(1, 13)},
+            ))
+            stack.enter_context(patch(
+                "tools.hierarchical_walk_forward.build_dataset", return_value=frame,
+            ))
+            stack.enter_context(patch(
+                "tools.hierarchical_walk_forward.train_and_register", return_value=report,
+            ))
+            stack.enter_context(patch("pandas.DataFrame.to_csv"))
+            stack.enter_context(patch("pathlib.Path.write_text"))
+            promote = stack.enter_context(patch("utils.decision_ledger.promote_model_bundle"))
+
+            result = run_daily_evolution(manager)
+
+        promote.assert_not_called()
+        self.assertEqual(result["promotion_status"], "shadow_registered")
+        self.assertIn("release_review_required", result["reason_codes"])
+
 
 if __name__ == "__main__":
     unittest.main()

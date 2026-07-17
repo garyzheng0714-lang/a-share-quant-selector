@@ -1035,6 +1035,7 @@ def api_stop_scheduler():
 def _scheduled_job():
     """定时执行的选股任务."""
     logger.info("定时任务开始执行")
+    freshness = None
 
     # 先更新数据
     try:
@@ -1055,6 +1056,20 @@ def _scheduled_job():
 
     # 后台持续补齐完整主板股票池；断点续跑，不阻塞当日决策。
     start_universe_bootstrap()
+
+    # 模拟账户先处理盘前已登记的委托，再按收盘价盯市和对账。
+    if freshness and freshness.get("fresh") and freshness.get("local_date"):
+        try:
+            from utils.paper_trading import run_daily_paper_cycle
+
+            paper = run_daily_paper_cycle(freshness["local_date"], csv_manager)
+            logger.info(
+                "模拟账户: 成交尝试 %d，净值 %.2f，对账 %s",
+                len(paper["fills"]), paper["nav"]["total_equity"],
+                "通过" if paper["reconciliation"]["balanced"] else "失败",
+            )
+        except Exception as e:
+            logger.error("模拟账户日结失败: %s", e, exc_info=True)
 
     # 遍历所有活跃视图
     views = list_views()
@@ -1118,7 +1133,7 @@ def _scheduled_job():
     except Exception as e:
         logger.error("因子预热失败: %s", e)
 
-    # 每日进化：回填所有决策结果，训练挑战模型；仅样本外与覆盖率均通过才晋级。
+    # 每日进化：只回填结果并登记 shadow 挑战者；无权切换生产策略。
     try:
         from utils.self_evolution import run_daily_evolution
 
@@ -1145,29 +1160,12 @@ def _scheduled_job():
     except Exception as e:
         logger.error("分层收盘决策失败: %s", e, exc_info=True)
 
-    # AI 点评量化选出的票（预热，供主页秒开）。
-    # 注意：AI 自主荐票（generate_daily_pick）已于 2026-07-14 停用——它和量化版
-    # 推的票不一样，主页上两个「今日一票」互相打架。现在 AI 只解释、不挑票。
+    # AI 每日留痕：有合格池则解释，没有合格池也记录未调用原因。
     try:
-        from utils.daily_pick import generate_quant_comment, get_api_key
-        if get_api_key() and decision and decision.get("available"):
-            rows = []
-            for item in decision.get("candidates", []):
-                if item.get("action") != "buy":
-                    continue
-                base = item.get("baseline") or {}
-                rows.append({
-                    "code": item["code"], "name": item.get("name"),
-                    "industry": item.get("industry"), "sector": item.get("sector"),
-                    "close": base.get("close"), "J": base.get("J"), "RSI": base.get("RSI"),
-                })
-            if rows:
-                r = generate_quant_comment(
-                    decision["trade_date"], rows, decision_run_id=decision.get("run_id"),
-                )
-                logger.info("AI 点评: %s", "成功" if r.get("available") else r.get("reason"))
-            else:
-                logger.info("AI 点评跳过: 当前没有通过复核的候选")
+        from utils.ai_decision import run_ai_decision
+
+        ai_run = run_ai_decision(decision)
+        logger.info("AI 决策状态: %s (%s)", ai_run["status"], ai_run["ai_run_id"])
     except Exception as e:
         logger.error("AI 点评失败: %s", e)
 
@@ -1180,6 +1178,11 @@ def _scheduled_preopen_job():
         from utils.hierarchical_decision import run_preopen_decision
 
         result = run_preopen_decision()
+        if result.get("available"):
+            from utils.paper_trading import queue_orders_from_decision
+
+            queued = queue_orders_from_decision(result)
+            logger.info("模拟委托: %d 笔 (%s)", queued["queued"], queued.get("reason", "ready"))
         logger.info(
             "盘前事件复核: %s (%s)",
             result.get("final_action", "unavailable"), result.get("run_id", result.get("reason")),
@@ -1245,6 +1248,8 @@ def run_web_server(
         auto_schedule: 是否自动启动调度器
     """
     init_db()
+    from utils.paper_trading import ensure_default_account
+    ensure_default_account()
 
     if auto_schedule and not debug:
         _start_scheduler()
@@ -1260,6 +1265,8 @@ def create_app():
     Usage: gunicorn -b 0.0.0.0:5000 web_server:create_app()
     """
     init_db()
+    from utils.paper_trading import ensure_default_account
+    ensure_default_account()
     _start_scheduler()
     start_universe_bootstrap()
     return app

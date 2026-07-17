@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 import orjson
 
@@ -32,6 +33,44 @@ DECISION_RUNS_SCHEMA = """
         reason_codes_json TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+    )
+"""
+
+EVOLUTION_RUNS_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS evolution_runs (
+        evolution_id TEXT PRIMARY KEY,
+        trade_date TEXT NOT NULL,
+        status TEXT NOT NULL,
+        data_version TEXT NOT NULL,
+        universe_count INTEGER NOT NULL,
+        covered_count INTEGER NOT NULL,
+        coverage_ratio REAL NOT NULL,
+        labels_updated INTEGER NOT NULL DEFAULT 0,
+        dataset_rows INTEGER NOT NULL DEFAULT 0,
+        challenger_version TEXT,
+        promotion_status TEXT NOT NULL,
+        reason_codes_json TEXT NOT NULL,
+        metrics_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+"""
+
+POLICY_REQUIRED_COMPONENTS = frozenset({"market", "sector", "risk", "quality"})
+
+EVENT_EVIDENCE_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS event_evidence (
+        evidence_id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        source TEXT NOT NULL,
+        source_url TEXT,
+        published_at TEXT NOT NULL,
+        title TEXT NOT NULL,
+        text_hash TEXT NOT NULL,
+        raw_ref TEXT,
+        fetched_at TEXT NOT NULL,
+        payload_json TEXT NOT NULL
     )
 """
 
@@ -162,9 +201,62 @@ def _migrate_append_only_runs(conn) -> None:
         raise RuntimeError(f"决策账本迁移后外键校验失败: {len(violations)}")
 
 
+def _migrate_append_only_evolution_runs(conn) -> None:
+    """移除旧版演进表的同日唯一约束，让失败和重跑都永久保留。"""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'evolution_runs'"
+    ).fetchone()
+    if row is None:
+        return
+    normalized = "".join((row["sql"] or "").lower().split())
+    if "trade_datetextnotnullunique" not in normalized:
+        return
+
+    conn.execute("DROP TABLE IF EXISTS evolution_runs_append_migration")
+    conn.execute(
+        EVOLUTION_RUNS_SCHEMA.replace("evolution_runs", "evolution_runs_append_migration")
+    )
+    conn.execute("""
+        INSERT INTO evolution_runs_append_migration
+        SELECT evolution_id, trade_date, status, data_version, universe_count,
+               covered_count, coverage_ratio, labels_updated, dataset_rows,
+               challenger_version, promotion_status, reason_codes_json,
+               metrics_json, created_at, updated_at
+        FROM evolution_runs
+    """)
+    conn.execute("DROP TABLE evolution_runs")
+    conn.execute(
+        "ALTER TABLE evolution_runs_append_migration RENAME TO evolution_runs"
+    )
+
+
+def _migrate_append_only_event_evidence(conn) -> None:
+    columns = conn.execute("PRAGMA table_info(event_evidence)").fetchall()
+    if not columns or any(row["name"] == "evidence_id" for row in columns):
+        return
+    conn.execute("DROP TABLE IF EXISTS event_evidence_append_migration")
+    conn.execute(
+        EVENT_EVIDENCE_SCHEMA.replace("event_evidence", "event_evidence_append_migration")
+    )
+    conn.execute("""
+        INSERT INTO event_evidence_append_migration
+          (evidence_id, event_id, code, source, source_url, published_at, title,
+           text_hash, raw_ref, fetched_at, payload_json)
+        SELECT event_id, event_id, code, source, source_url, published_at, title,
+               text_hash, raw_ref, fetched_at, payload_json
+        FROM event_evidence
+    """)
+    conn.execute("DROP TABLE event_evidence")
+    conn.execute(
+        "ALTER TABLE event_evidence_append_migration RENAME TO event_evidence"
+    )
+
+
 def init_decision_ledger() -> None:
     with _get_conn() as conn:
         _migrate_append_only_runs(conn)
+        _migrate_append_only_evolution_runs(conn)
+        _migrate_append_only_event_evidence(conn)
         conn.execute(DECISION_RUNS_SCHEMA)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS decision_candidates (
@@ -188,20 +280,7 @@ def init_decision_ledger() -> None:
                 FOREIGN KEY(run_id) REFERENCES decision_runs(run_id) ON DELETE CASCADE
             )
         """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS event_evidence (
-                event_id TEXT PRIMARY KEY,
-                code TEXT NOT NULL,
-                source TEXT NOT NULL,
-                source_url TEXT,
-                published_at TEXT NOT NULL,
-                title TEXT NOT NULL,
-                text_hash TEXT NOT NULL,
-                raw_ref TEXT,
-                fetched_at TEXT NOT NULL,
-                payload_json TEXT NOT NULL
-            )
-        """)
+        conn.execute(EVENT_EVIDENCE_SCHEMA)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS model_registry (
                 model_key TEXT NOT NULL,
@@ -217,6 +296,49 @@ def init_decision_ledger() -> None:
                 artifact_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 PRIMARY KEY(model_key, version)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS policy_registry (
+                policy_version TEXT PRIMARY KEY,
+                research_status TEXT NOT NULL CHECK(research_status IN ('shadow', 'rejected')),
+                trained_as_of TEXT NOT NULL,
+                train_range TEXT,
+                test_range TEXT,
+                component_versions_json TEXT NOT NULL,
+                metrics_json TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                source_refs_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS policy_release_events (
+                release_id TEXT PRIMARY KEY,
+                policy_version TEXT NOT NULL,
+                action TEXT NOT NULL CHECK(action IN ('proposed', 'activated', 'rejected', 'rolled_back')),
+                target_policy_version TEXT,
+                evidence_json TEXT NOT NULL,
+                reason_codes_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(policy_version) REFERENCES policy_registry(policy_version)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ai_decision_runs (
+                ai_run_id TEXT PRIMARY KEY,
+                trade_date TEXT NOT NULL,
+                decision_run_id TEXT,
+                as_of TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN
+                    ('not_called', 'abstained', 'explained', 'shadow_ranked', 'failed')),
+                role TEXT NOT NULL,
+                model TEXT,
+                prompt_version TEXT,
+                input_hash TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                reason_codes_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
             )
         """)
         conn.execute("""
@@ -240,30 +362,21 @@ def init_decision_ledger() -> None:
                 FOREIGN KEY(run_id) REFERENCES decision_runs(run_id) ON DELETE CASCADE
             )
         """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS evolution_runs (
-                evolution_id TEXT PRIMARY KEY,
-                trade_date TEXT NOT NULL UNIQUE,
-                status TEXT NOT NULL,
-                data_version TEXT NOT NULL,
-                universe_count INTEGER NOT NULL,
-                covered_count INTEGER NOT NULL,
-                coverage_ratio REAL NOT NULL,
-                labels_updated INTEGER NOT NULL DEFAULT 0,
-                dataset_rows INTEGER NOT NULL DEFAULT 0,
-                challenger_version TEXT,
-                promotion_status TEXT NOT NULL,
-                reason_codes_json TEXT NOT NULL,
-                metrics_json TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
+        conn.execute(EVOLUTION_RUNS_SCHEMA)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_decision_runs_date ON decision_runs(trade_date, stage)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_candidates_run_rank ON decision_candidates(run_id, rank_no)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_event_code_time ON event_evidence(code, published_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_event_id ON event_evidence(event_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_status ON decision_outcomes(status, trade_date)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_evolution_date ON evolution_runs(trade_date)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_policy_release_time "
+            "ON policy_release_events(created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ai_run_date "
+            "ON ai_decision_runs(trade_date, created_at)"
+        )
 
 
 def make_run_id(run: dict, candidates: list[dict]) -> str:
@@ -368,18 +481,50 @@ def save_event_evidence(event: dict) -> None:
     with _get_conn() as conn:
         conn.execute("""
             INSERT INTO event_evidence
-              (event_id, code, source, source_url, published_at, title, text_hash,
-               raw_ref, fetched_at, payload_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(event_id) DO UPDATE SET
-              source_url=excluded.source_url, title=excluded.title,
-              text_hash=excluded.text_hash, raw_ref=excluded.raw_ref,
-              fetched_at=excluded.fetched_at, payload_json=excluded.payload_json
+              (evidence_id, event_id, code, source, source_url, published_at,
+               title, text_hash, raw_ref, fetched_at, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            event["event_id"], event["code"], event["source"], event.get("source_url"),
+            event.get("evidence_id") or uuid4().hex[:24], event["event_id"],
+            event["code"], event["source"], event.get("source_url"),
             event["published_at"], event["title"], event["text_hash"],
             event.get("raw_ref"), event["fetched_at"], _json(event),
         ))
+
+
+def save_ai_decision_run(run: dict) -> str:
+    init_decision_ledger()
+    now = datetime.now().astimezone().isoformat(timespec="microseconds")
+    ai_run_id = run.get("ai_run_id") or uuid4().hex[:24]
+    with _get_conn() as conn:
+        conn.execute("""
+            INSERT INTO ai_decision_runs
+              (ai_run_id, trade_date, decision_run_id, as_of, status, role,
+               model, prompt_version, input_hash, payload_json,
+               reason_codes_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            ai_run_id, run["trade_date"], run.get("decision_run_id"),
+            run.get("as_of", now), run["status"], run.get("role", "explanation"),
+            run.get("model"), run.get("prompt_version"), run["input_hash"],
+            _json(run.get("payload", {})), _json(run.get("reason_codes", [])), now,
+        ))
+    return ai_run_id
+
+
+def get_latest_ai_decision_run() -> dict | None:
+    init_decision_ledger()
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM ai_decision_runs "
+            "ORDER BY trade_date DESC, created_at DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+    if row is None:
+        return None
+    item = dict(row)
+    item["payload"] = _loads(item.pop("payload_json"), {})
+    item["reason_codes"] = _loads(item.pop("reason_codes_json"), [])
+    return item
 
 
 def register_model(model: dict) -> None:
@@ -401,38 +546,138 @@ def register_model(model: dict) -> None:
         ))
 
 
+def register_policy_candidate(policy: dict) -> None:
+    """登记一个不可拆分的完整策略候选；登记本身永远不会改变生产策略。"""
+    components = policy.get("component_versions") or {}
+    missing = POLICY_REQUIRED_COMPONENTS - set(components)
+    if missing:
+        raise ValueError(f"完整策略缺少组件: {sorted(missing)}")
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    init_decision_ledger()
+    with _get_conn() as conn:
+        conn.execute("""
+            INSERT OR IGNORE INTO policy_registry
+              (policy_version, research_status, trained_as_of, train_range, test_range,
+               component_versions_json, metrics_json, evidence_json,
+               source_refs_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            policy["policy_version"], policy.get("research_status", "shadow"),
+            policy["trained_as_of"], policy.get("train_range"), policy.get("test_range"),
+            _json(components), _json(policy.get("metrics", {})),
+            _json(policy.get("evidence", {})), _json(policy.get("source_refs", [])), now,
+        ))
+
+
+def activate_policy(policy_version: str, evidence: dict) -> dict:
+    """在独立发布窗口激活完整策略；缺任何预注册证据都拒绝。"""
+    required = {
+        "forward_observation_complete", "power_analysis_passed",
+        "atomic_policy_evaluated", "operator_approved",
+    }
+    missing = sorted(key for key in required if evidence.get(key) is not True)
+    if missing:
+        return {"activated": False, "reason": "release_evidence_incomplete", "missing": missing}
+    init_decision_ledger()
+    now = datetime.now().astimezone().isoformat(timespec="microseconds")
+    release_id = uuid4().hex[:24]
+    with _get_conn() as conn:
+        candidate = conn.execute(
+            "SELECT * FROM policy_registry WHERE policy_version = ?", (policy_version,)
+        ).fetchone()
+        if candidate is None:
+            return {"activated": False, "reason": "policy_not_registered"}
+        source_refs = set(_loads(candidate["source_refs_json"], []))
+        from utils.decision_versions import VALIDATED_MODEL_SOURCE_REFS
+        if not VALIDATED_MODEL_SOURCE_REFS.issubset(source_refs):
+            return {"activated": False, "reason": "point_in_time_evidence_missing"}
+        components = _loads(candidate["component_versions_json"], {})
+        unavailable = []
+        for key in sorted(POLICY_REQUIRED_COMPONENTS):
+            row = conn.execute(
+                "SELECT status, source_refs_json FROM model_registry "
+                "WHERE model_key = ? AND version = ?",
+                (key, components.get(key)),
+            ).fetchone()
+            if row is None:
+                unavailable.append(f"{key}:missing")
+                continue
+            model_refs = set(_loads(row["source_refs_json"], []))
+            if row["status"] == "rejected":
+                unavailable.append(f"{key}:rejected")
+            elif not VALIDATED_MODEL_SOURCE_REFS.issubset(model_refs):
+                unavailable.append(f"{key}:evidence_missing")
+        if unavailable:
+            return {
+                "activated": False,
+                "reason": "policy_components_not_releaseable",
+                "components": unavailable,
+            }
+        conn.execute("""
+            INSERT INTO policy_release_events
+              (release_id, policy_version, action, target_policy_version,
+               evidence_json, reason_codes_json, created_at)
+            VALUES (?, ?, 'activated', ?, ?, '[]', ?)
+        """, (release_id, policy_version, policy_version, _json(evidence), now))
+    return {"activated": True, "release_id": release_id, "policy_version": policy_version}
+
+
+def get_active_policy() -> dict | None:
+    init_decision_ledger()
+    with _get_conn() as conn:
+        release = conn.execute("""
+            SELECT * FROM policy_release_events
+            WHERE action IN ('activated', 'rolled_back')
+            ORDER BY created_at DESC, rowid DESC LIMIT 1
+        """).fetchone()
+        if release is None:
+            return None
+        target = release["target_policy_version"] or release["policy_version"]
+        row = conn.execute(
+            "SELECT * FROM policy_registry WHERE policy_version = ?", (target,)
+        ).fetchone()
+    if row is None:
+        return None
+    item = dict(row)
+    for key, fallback in (
+        ("component_versions_json", {}), ("metrics_json", {}),
+        ("evidence_json", {}), ("source_refs_json", []),
+    ):
+        item[key.removesuffix("_json")] = _loads(item.pop(key), fallback)
+    item["release_id"] = release["release_id"]
+    item["released_at"] = release["created_at"]
+    return item
+
+
+def get_active_policy_models() -> tuple[dict[str, dict], str]:
+    policy = get_active_policy()
+    if not policy:
+        return {}, "baseline-only"
+    models = {}
+    with _get_conn() as conn:
+        for key, version in policy["component_versions"].items():
+            row = conn.execute(
+                "SELECT * FROM model_registry WHERE model_key = ? AND version = ?",
+                (key, version),
+            ).fetchone()
+            if row is None:
+                return {}, "baseline-only"
+            item = dict(row)
+            for field, fallback in (
+                ("feature_names_json", []), ("params_json", {}), ("metrics_json", {}),
+                ("source_refs_json", []), ("artifact_json", {}),
+            ):
+                item[field.removesuffix("_json")] = _loads(item.pop(field), fallback)
+            models[key] = item
+    if POLICY_REQUIRED_COMPONENTS - set(models):
+        return {}, "baseline-only"
+    return models, policy["policy_version"]
+
+
 def promote_model_bundle(version: str, validation_status: dict[str, str],
                          required: tuple[str, ...] = ("market",)) -> dict:
-    """逐层原子晋级；未通过的层继续保留各自原冠军。"""
-    init_decision_ledger()
-    if not all(validation_status.get(key) == "active" for key in required):
-        return {"promoted": False, "reason": "required_layers_not_validated"}
-    requested_active = sorted(
-        key for key, status in validation_status.items() if status == "active"
-    )
-    with _get_conn() as conn:
-        rows = conn.execute(
-            "SELECT model_key FROM model_registry WHERE version = ?", (version,)
-        ).fetchall()
-        registered = {row["model_key"] for row in rows}
-        if not set(required).issubset(registered):
-            return {"promoted": False, "reason": "bundle_incomplete"}
-        active_keys = [key for key in requested_active if key in registered]
-        for key in active_keys:
-            conn.execute(
-                "UPDATE model_registry SET status = 'shadow' "
-                "WHERE model_key = ? AND status = 'active'",
-                (key,),
-            )
-            conn.execute(
-                "UPDATE model_registry SET status = 'active' "
-                "WHERE version = ? AND model_key = ?",
-                (version, key),
-            )
-    return {
-        "promoted": True, "version": version, "model_keys": active_keys,
-        "missing_optional_layers": sorted(set(requested_active) - registered),
-    }
+    """兼容入口：逐层晋级已被禁用，发布必须走 activate_policy。"""
+    return {"promoted": False, "reason": "legacy_layer_promotion_disabled"}
 
 
 def list_pending_outcome_candidates() -> list[dict]:
@@ -505,9 +750,7 @@ def outcome_summary() -> dict:
 def save_evolution_run(run: dict) -> str:
     init_decision_ledger()
     now = datetime.now().astimezone().isoformat(timespec="seconds")
-    evolution_id = run.get("evolution_id") or hashlib.sha256(
-        f"{run['trade_date']}|{run['data_version']}".encode()
-    ).hexdigest()[:24]
+    evolution_id = run.get("evolution_id") or uuid4().hex[:24]
     with _get_conn() as conn:
         conn.execute("""
             INSERT INTO evolution_runs
@@ -516,15 +759,6 @@ def save_evolution_run(run: dict) -> str:
                challenger_version, promotion_status, reason_codes_json,
                metrics_json, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(trade_date) DO UPDATE SET
-              evolution_id=excluded.evolution_id, status=excluded.status,
-              data_version=excluded.data_version, universe_count=excluded.universe_count,
-              covered_count=excluded.covered_count, coverage_ratio=excluded.coverage_ratio,
-              labels_updated=excluded.labels_updated, dataset_rows=excluded.dataset_rows,
-              challenger_version=excluded.challenger_version,
-              promotion_status=excluded.promotion_status,
-              reason_codes_json=excluded.reason_codes_json,
-              metrics_json=excluded.metrics_json, updated_at=excluded.updated_at
         """, (
             evolution_id, run["trade_date"], run["status"], run["data_version"],
             run["universe_count"], run["covered_count"], run["coverage_ratio"],
@@ -539,7 +773,8 @@ def get_latest_evolution() -> dict | None:
     init_decision_ledger()
     with _get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM evolution_runs ORDER BY trade_date DESC, updated_at DESC LIMIT 1"
+            "SELECT * FROM evolution_runs "
+            "ORDER BY trade_date DESC, created_at DESC, rowid DESC LIMIT 1"
         ).fetchone()
     if row is None:
         return None

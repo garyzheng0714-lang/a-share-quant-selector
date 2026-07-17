@@ -60,25 +60,14 @@ class HierarchicalDecisionTest(unittest.TestCase):
         self.assertIn("weekly_four_ma_shadow_fail", result["candidates"][0]["reason_codes"])
         self.assertEqual(result["market"]["layer_modes"]["weekly_four_ma"], "shadow")
 
-    @patch("utils.hierarchical_decision.get_active_models")
-    def test_legacy_active_model_is_excluded_from_online_bundle(self, active_models):
-        active_models.return_value = {
-            "market": {
-                "version": "legacy", "source_refs": ["super-b1-original"],
-            },
-            "sector": {
-                "version": "validated", "source_refs": [
-                    "super-b1-original", "point-in-time-reference-snapshots-v1",
-                    "purged-walk-forward-v2",
-                ],
-            },
-        }
+    @patch("utils.hierarchical_decision.get_active_policy_models")
+    def test_no_released_atomic_policy_means_baseline_only(self, active_policy):
+        active_policy.return_value = ({}, "baseline-only")
 
         models, version = _active_model_bundle()
 
-        self.assertNotIn("market", models)
-        self.assertIn("sector", models)
-        self.assertEqual(version, "sector@validated")
+        self.assertEqual(models, {})
+        self.assertEqual(version, "baseline-only")
 
     @patch("utils.hierarchical_decision._predict")
     @patch("utils.hierarchical_decision._live_feature_rows")
