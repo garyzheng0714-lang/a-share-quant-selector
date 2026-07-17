@@ -353,16 +353,6 @@ class QuantSystem:
             stats = update_performance(self.csv_manager)
             print(f"📊 战绩回填：新增 {stats['synced']} 条追踪，更新 {stats['updated']} 条")
 
-            # AI 每日荐票（未配置 Key 自动跳过；当日已生成则复用）
-            from utils.daily_pick import generate_daily_pick, get_api_key
-            if get_api_key():
-                pick_result = generate_daily_pick()
-                if pick_result.get("available"):
-                    p = pick_result["pick"]
-                    label = "建议观望" if p.get("skipped") else f"推荐 {p.get('name')}({p.get('code')})"
-                    print(f"🤖 AI 荐票：{label}")
-                else:
-                    print(f"🤖 AI 荐票跳过：{pick_result.get('reason')}")
         except Exception as e:
             print(f"⚠️ 选股结果存档/战绩回填失败: {e}")
 

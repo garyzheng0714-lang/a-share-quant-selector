@@ -14,5 +14,4 @@ export {
   ConfidenceMeter,
   DeltaArrow,
   SectionLabel,
-  toneForScore,
 } from "./data-viz";

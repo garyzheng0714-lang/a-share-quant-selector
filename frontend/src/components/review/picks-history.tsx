@@ -78,7 +78,7 @@ function PickRow({ pick, onClick }: { pick: DailyPick; onClick: () => void }) {
   );
 }
 
-/** AI 荐票记录：每天那一票推得准不准——用户真实盈亏的对应物 */
+/** 旧版 AI 自主荐股只读档案；新策略不会继续写入。 */
 export function PicksHistory() {
   const { data, isLoading } = useDailyPickHistory();
   const navigate = useNavigate();
@@ -100,8 +100,8 @@ export function PicksHistory() {
     return (
       <EmptyState
         icon={<Bot size={24} strokeWidth={1.5} />}
-        title="还没有荐票记录"
-        description="AI 每个交易日 16:00 推荐一次，记录会在这里累积"
+        title="旧版 AI 档案为空"
+        description="自主荐股已经停用，后续策略决策不会写入这里"
       />
     );
   }
@@ -121,7 +121,7 @@ export function PicksHistory() {
       {judged.length > 0 && (
         <div className="grid grid-cols-3 gap-2 mb-4">
           <div className="card-modern px-3.5 py-3 flex flex-col justify-center">
-            <div className="text-xs text-ink-muted mb-1">已推荐</div>
+            <div className="text-xs text-ink-muted mb-1">历史推荐</div>
             <div>
               <span className="text-xl font-bold num text-ink">
                 {picks.filter((p) => !p.skipped).length}
@@ -171,7 +171,7 @@ export function PicksHistory() {
         ))}
       </div>
       <p className="text-[11px] text-ink-muted leading-relaxed mt-3">
-        收益按「推荐次日开盘价买入」模拟计算，与实盘成交价会有差异。
+        这里仅保留旧版 AI 自主荐股记录。该入口已停用，收益为历史模拟值。
       </p>
     </div>
   );

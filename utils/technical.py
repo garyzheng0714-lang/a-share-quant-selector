@@ -200,8 +200,10 @@ def weekly_four_ma_bullish(df, periods=(5, 10, 20, 60)):
     if len(data) > 1 and data['date'].iloc[0] > data['date'].iloc[-1]:
         data = data.iloc[::-1]
 
-    # 日线重采样为周线（取每周最后一个交易日收盘价，包含进行中的当前周）
-    weekly_close = data.set_index('date')['close'].resample('W').last().dropna()
+    # 统一以周五作为周线标签；进行中的一周仍使用截至当前交易日的收盘价。
+    weekly_close = data.set_index('date')['close'].resample('W-FRI').last().dropna()
+    as_of = data['date'].iloc[-1]
+    week_end = weekly_close.index[-1]
 
     if len(weekly_close) < need_weeks:
         return False, {'reason': 'insufficient_data', 'weeks': len(weekly_close)}
@@ -230,6 +232,9 @@ def weekly_four_ma_bullish(df, periods=(5, 10, 20, 60)):
         'rising_count': rising_count,
         'directions': directions,
         'ma_values': {f'MA{p}': round(float(last_vals[p]), 3) for p in periods},
+        'as_of': as_of.strftime('%Y-%m-%d'),
+        'week_end': week_end.strftime('%Y-%m-%d'),
+        'current_week_partial': bool(as_of.normalize() < week_end.normalize()),
     }
     return aligned and rising, detail
 

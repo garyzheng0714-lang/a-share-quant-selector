@@ -155,12 +155,9 @@ def api_get_daily_pick():
 
 @insight_bp.route("/api/daily-pick", methods=["POST"])
 def api_generate_daily_pick():
-    """基于最新选股结果生成今日推荐（已有当日推荐则复用，body 传 force 重新生成）."""
-    try:
-        from utils.daily_pick import generate_daily_pick
-        body = request.get_json(silent=True) or {}
-        result = generate_daily_pick(force=bool(body.get("force")))
-        return jsonify(result)
-    except Exception as e:
-        logger.error("生成推荐失败: %s", e)
-        return jsonify({"available": False, "reason": "生成推荐失败"}), 500
+    """旧版 LLM 自主荐股已停用；GET 仅保留只读历史档案。"""
+    return jsonify({
+        "available": False,
+        "reason": "legacy_generation_disabled",
+        "message": "旧版 AI 自主荐股已停用，请使用策略决策接口。",
+    }), 410

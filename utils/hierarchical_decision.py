@@ -12,8 +12,12 @@ import pandas as pd
 from strategy.factor_lib import FactorContext
 from utils.csv_manager import CSVManager
 from utils.decision_config import get_decision_config
-from utils.decision_ledger import get_active_models, get_latest_decision, save_decision_run
-from utils.decision_versions import FEATURE_VERSION, data_version, strategy_version
+from utils.decision_ledger import (
+    get_active_models, get_latest_decision, list_models, save_decision_run,
+)
+from utils.decision_versions import (
+    FEATURE_VERSION, VALIDATED_MODEL_SOURCE_REFS, data_version, strategy_version,
+)
 from utils.data_freshness import local_data_status, next_trade_date
 from utils.probability_model import BinaryLogit
 
@@ -67,13 +71,29 @@ def _baseline_candidates() -> tuple[str | None, list[dict]]:
 
 
 def _active_model_bundle() -> tuple[dict, str]:
-    # 候选入口已切到原版B1，旧云阶样本训练出的模型不可跨分布复用。
+    # 旧候选分布或未经时点快照/purge 验证的模型不可上线复用。
     models = {
         key: model for key, model in get_active_models().items()
-        if "super-b1-original" in (model.get("source_refs") or [])
+        if VALIDATED_MODEL_SOURCE_REFS.issubset(set(model.get("source_refs") or []))
     }
-    version = next(iter(models.values()))["version"] if models else "baseline-only"
+    version = (
+        "|".join(f"{key}@{models[key]['version']}" for key in sorted(models))
+        if models else "baseline-only"
+    )
     return models, version
+
+
+def _layer_modes(models: dict, weekly_gate_mode: str) -> dict[str, str]:
+    latest = {item["model_key"]: item for item in list_models()}
+    modes = {"weekly_four_ma": weekly_gate_mode}
+    for key in ("market", "sector", "risk", "quality"):
+        if key in models:
+            modes[key] = "active"
+        elif (latest.get(key) or {}).get("status") == "shadow":
+            modes[key] = "shadow"
+        else:
+            modes[key] = "off"
+    return modes
 
 
 def _live_feature_rows(candidates: list[dict], trade_date: str) -> pd.DataFrame:
@@ -139,12 +159,13 @@ def run_close_decision(as_of: str | None = None) -> dict:
             model_version = "baseline-only"
 
     reason_codes = []
+    weekly_gate_mode = config["weekly_gate_mode"]
     if not baseline:
         final_action, status = "none", "complete"
         reason_codes.append("no_rule_hits")
-    elif config["strict_unvalidated_gate"] and not {"market", "sector"}.issubset(models):
+    elif config["strict_unvalidated_gate"] and "market" not in models:
         final_action, status = "observe", "degraded"
-        reason_codes.append("hierarchy_models_unvalidated")
+        reason_codes.append("market_model_unvalidated")
     else:
         final_action, status = "buy", "complete"
 
@@ -156,14 +177,33 @@ def run_close_decision(as_of: str | None = None) -> dict:
         market_p, market_t = probability.get("market"), probability.get("market_threshold")
         sector_p, sector_t = probability.get("sector"), probability.get("sector_threshold")
         risk_p, risk_t = probability.get("risk"), probability.get("risk_threshold")
-        if action == "buy" and (market_p is None or market_t is None or market_p < market_t):
-            action, reasons = "avoid", ["market_gate"]
-        elif action == "buy" and (sector_p is None or sector_t is None or sector_p < sector_t):
-            action, reasons = "avoid", ["sector_gate"]
-        elif action == "buy" and risk_p is not None and risk_t is not None and risk_p > risk_t:
-            action, reasons = "avoid", ["stock_risk_veto"]
+        weekly = row.get("weekly") or {}
+        weekly_passed = weekly.get("passed") is True
+        if weekly_gate_mode == "active" and not weekly_passed:
+            action = "observe"
+            reasons.append("weekly_four_ma_gate")
+        elif weekly_gate_mode == "shadow" and not weekly_passed:
+            reasons.append("weekly_four_ma_shadow_fail")
+
+        if action == "buy" and "market" in models and (
+            market_p is None or market_t is None or market_p < market_t
+        ):
+            action = "avoid"
+            reasons.append("market_gate")
+        elif action == "buy" and "sector" in models and (
+            sector_p is None or sector_t is None or sector_p < sector_t
+        ):
+            action = "avoid"
+            reasons.append("sector_gate")
+        elif (
+            action == "buy" and "risk" in models
+            and risk_p is not None and risk_t is not None and risk_p > risk_t
+        ):
+            action = "avoid"
+            reasons.append("stock_risk_veto")
         elif action == "observe":
-            reasons = ["hierarchy_models_unvalidated"]
+            if "market" not in models and "market_model_unvalidated" not in reasons:
+                reasons.append("market_model_unvalidated")
         candidates.append({
             "code": row["code"], "name": row.get("name"), "industry": row.get("industry"),
             "action": action, "baseline": {
@@ -173,7 +213,7 @@ def run_close_decision(as_of: str | None = None) -> dict:
                 "confirmation_count": len(row.get("confirmations") or []),
                 "close": row.get("close"), "J": row.get("J"),
                 "RSI": row.get("RSI"), "cap_yi": row.get("cap_yi"),
-                "weekly": row.get("weekly"),
+                "weekly": {**weekly, "gate_mode": weekly_gate_mode},
             },
             "market": {"probability": market_p, "threshold": market_t},
             "sector": {**(row.get("sector") or {}), "probability": sector_p, "threshold": sector_t},
@@ -218,7 +258,8 @@ def run_close_decision(as_of: str | None = None) -> dict:
         "source_refs": [f"local-eod:{trade_date}", "factor:super-b1-original"],
         "market": {
             "models_active": sorted(models),
-            "gate_order": ["market", "sector", "stock", "execution"],
+            "layer_modes": _layer_modes(models, weekly_gate_mode),
+            "gate_order": ["weekly_four_ma", "market", "sector", "stock", "execution"],
             "decision_for_date": next_trade_date(trade_date),
         },
         "evaluation": {k: v.get("metrics", {}) for k, v in models.items()},

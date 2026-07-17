@@ -14,6 +14,28 @@ import orjson
 from views.view_manager import _get_conn
 
 
+DECISION_RUNS_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS decision_runs (
+        run_id TEXT PRIMARY KEY,
+        trade_date TEXT NOT NULL,
+        stage TEXT NOT NULL CHECK(stage IN ('close', 'preopen')),
+        as_of TEXT NOT NULL,
+        status TEXT NOT NULL,
+        final_action TEXT NOT NULL,
+        strategy_version TEXT NOT NULL,
+        feature_version TEXT NOT NULL,
+        model_version TEXT NOT NULL,
+        data_version TEXT NOT NULL,
+        source_refs_json TEXT NOT NULL,
+        market_json TEXT NOT NULL,
+        evaluation_json TEXT NOT NULL,
+        reason_codes_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+"""
+
+
 def _json(value: Any) -> str:
     return orjson.dumps(value if value is not None else {}).decode()
 
@@ -27,29 +49,123 @@ def _loads(value: str | None, fallback):
         return fallback
 
 
-def init_decision_ledger() -> None:
-    with _get_conn() as conn:
+def _table_exists(conn, name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+    ).fetchone() is not None
+
+
+def _migrate_append_only_runs(conn) -> None:
+    """移除旧版决策表的业务唯一键，保留全部历史记录与外键。"""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'decision_runs'"
+    ).fetchone()
+    if row is None:
+        return
+    normalized = "".join((row["sql"] or "").lower().split())
+    if "unique(trade_date,stage,strategy_version,data_version)" not in normalized:
+        return
+
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("BEGIN IMMEDIATE")
+    for table in (
+        "decision_outcomes_v2_migration",
+        "decision_candidates_v2_migration",
+        "decision_runs_v2_migration",
+    ):
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
+    conn.execute(DECISION_RUNS_SCHEMA.replace("decision_runs", "decision_runs_v2_migration"))
+    conn.execute("""
+        INSERT INTO decision_runs_v2_migration
+        SELECT run_id, trade_date, stage, as_of, status, final_action,
+               strategy_version, feature_version, model_version, data_version,
+               source_refs_json, market_json, evaluation_json, reason_codes_json,
+               created_at, updated_at
+        FROM decision_runs
+    """)
+
+    has_candidates = _table_exists(conn, "decision_candidates")
+    if has_candidates:
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS decision_runs (
-                run_id TEXT PRIMARY KEY,
-                trade_date TEXT NOT NULL,
-                stage TEXT NOT NULL CHECK(stage IN ('close', 'preopen')),
-                as_of TEXT NOT NULL,
-                status TEXT NOT NULL,
-                final_action TEXT NOT NULL,
-                strategy_version TEXT NOT NULL,
-                feature_version TEXT NOT NULL,
-                model_version TEXT NOT NULL,
-                data_version TEXT NOT NULL,
-                source_refs_json TEXT NOT NULL,
+            CREATE TABLE decision_candidates_v2_migration (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                code TEXT NOT NULL,
+                name TEXT,
+                industry TEXT,
+                rank_no INTEGER,
+                tie_group INTEGER DEFAULT 1,
+                action TEXT NOT NULL,
+                baseline_json TEXT NOT NULL,
                 market_json TEXT NOT NULL,
-                evaluation_json TEXT NOT NULL,
+                sector_json TEXT NOT NULL,
+                stock_json TEXT NOT NULL,
+                events_json TEXT NOT NULL,
                 reason_codes_json TEXT NOT NULL,
+                explanation TEXT,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(trade_date, stage, strategy_version, data_version)
+                UNIQUE(run_id, code),
+                FOREIGN KEY(run_id) REFERENCES decision_runs(run_id) ON DELETE CASCADE
             )
         """)
+        conn.execute("""
+            INSERT INTO decision_candidates_v2_migration
+            SELECT id, run_id, code, name, industry, rank_no, tie_group, action,
+                   baseline_json, market_json, sector_json, stock_json, events_json,
+                   reason_codes_json, explanation, created_at
+            FROM decision_candidates
+        """)
+
+    has_outcomes = _table_exists(conn, "decision_outcomes")
+    if has_outcomes:
+        conn.execute("""
+            CREATE TABLE decision_outcomes_v2_migration (
+                run_id TEXT NOT NULL,
+                code TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                action TEXT NOT NULL,
+                entry_date TEXT,
+                entry_price REAL,
+                ret_1 REAL,
+                net_ret_5 REAL,
+                max_gain_5 REAL,
+                max_drawdown_5 REAL,
+                entry_feasible INTEGER,
+                days_tracked INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(run_id, code),
+                FOREIGN KEY(run_id) REFERENCES decision_runs(run_id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            INSERT INTO decision_outcomes_v2_migration
+            SELECT run_id, code, stage, trade_date, action, entry_date, entry_price,
+                   ret_1, net_ret_5, max_gain_5, max_drawdown_5, entry_feasible,
+                   days_tracked, status, updated_at
+            FROM decision_outcomes
+        """)
+
+    if has_outcomes:
+        conn.execute("DROP TABLE decision_outcomes")
+    if has_candidates:
+        conn.execute("DROP TABLE decision_candidates")
+    conn.execute("DROP TABLE decision_runs")
+    conn.execute("ALTER TABLE decision_runs_v2_migration RENAME TO decision_runs")
+    if has_candidates:
+        conn.execute("ALTER TABLE decision_candidates_v2_migration RENAME TO decision_candidates")
+    if has_outcomes:
+        conn.execute("ALTER TABLE decision_outcomes_v2_migration RENAME TO decision_outcomes")
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(f"决策账本迁移后外键校验失败: {len(violations)}")
+
+
+def init_decision_ledger() -> None:
+    with _get_conn() as conn:
+        _migrate_append_only_runs(conn)
+        conn.execute(DECISION_RUNS_SCHEMA)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS decision_candidates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,33 +266,32 @@ def init_decision_ledger() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_evolution_date ON evolution_runs(trade_date)")
 
 
-def make_run_id(trade_date: str, stage: str, strategy: str, data: str) -> str:
-    raw = f"{trade_date}|{stage}|{strategy}|{data}".encode()
+def make_run_id(run: dict, candidates: list[dict]) -> str:
+    payload = {
+        key: run.get(key)
+        for key in (
+            "trade_date", "stage", "as_of", "status", "final_action",
+            "strategy_version", "feature_version", "model_version", "data_version",
+            "source_refs", "market", "evaluation", "reason_codes",
+        )
+    }
+    payload["candidates"] = candidates
+    raw = orjson.dumps(payload, option=orjson.OPT_SORT_KEYS)
     return hashlib.sha256(raw).hexdigest()[:24]
 
 
 def save_decision_run(run: dict, candidates: list[dict]) -> str:
     init_decision_ledger()
     now = datetime.now().astimezone().isoformat(timespec="seconds")
-    run_id = run.get("run_id") or make_run_id(
-        run["trade_date"], run["stage"], run["strategy_version"], run["data_version"]
-    )
+    run_id = run.get("run_id") or make_run_id(run, candidates)
     with _get_conn() as conn:
         conn.execute("""
-            INSERT INTO decision_runs
+            INSERT OR IGNORE INTO decision_runs
               (run_id, trade_date, stage, as_of, status, final_action,
                strategy_version, feature_version, model_version, data_version,
                source_refs_json, market_json, evaluation_json, reason_codes_json,
                created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(run_id) DO UPDATE SET
-              as_of=excluded.as_of, status=excluded.status,
-              final_action=excluded.final_action, model_version=excluded.model_version,
-              source_refs_json=excluded.source_refs_json,
-              market_json=excluded.market_json,
-              evaluation_json=excluded.evaluation_json,
-              reason_codes_json=excluded.reason_codes_json,
-              updated_at=excluded.updated_at
         """, (
             run_id, run["trade_date"], run["stage"], run["as_of"], run["status"],
             run["final_action"], run["strategy_version"], run["feature_version"],
@@ -185,10 +300,9 @@ def save_decision_run(run: dict, candidates: list[dict]) -> str:
             _json(run.get("evaluation", {})), _json(run.get("reason_codes", [])),
             run.get("created_at", now), now,
         ))
-        conn.execute("DELETE FROM decision_candidates WHERE run_id = ?", (run_id,))
         for index, candidate in enumerate(candidates, start=1):
             conn.execute("""
-                INSERT INTO decision_candidates
+                INSERT OR IGNORE INTO decision_candidates
                   (run_id, code, name, industry, rank_no, tie_group, action,
                    baseline_json, market_json, sector_json, stock_json,
                    events_json, reason_codes_json, explanation, created_at)
@@ -242,7 +356,8 @@ def get_latest_decision(stage: str | None = None) -> dict | None:
     where, params = ("WHERE stage = ?", (stage,)) if stage else ("", ())
     with _get_conn() as conn:
         row = conn.execute(
-            f"SELECT run_id FROM decision_runs {where} ORDER BY trade_date DESC, as_of DESC LIMIT 1",
+            f"SELECT run_id FROM decision_runs {where} "
+            "ORDER BY trade_date DESC, as_of DESC, created_at DESC, run_id DESC LIMIT 1",
             params,
         ).fetchone()
     return get_decision(row["run_id"]) if row else None
@@ -272,18 +387,11 @@ def register_model(model: dict) -> None:
     now = datetime.now().astimezone().isoformat(timespec="seconds")
     with _get_conn() as conn:
         conn.execute("""
-            INSERT INTO model_registry
+            INSERT OR IGNORE INTO model_registry
               (model_key, version, status, trained_as_of, train_range, test_range,
                feature_names_json, params_json, metrics_json, source_refs_json,
                artifact_json, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(model_key, version) DO UPDATE SET
-              status=excluded.status, trained_as_of=excluded.trained_as_of,
-              train_range=excluded.train_range, test_range=excluded.test_range,
-              feature_names_json=excluded.feature_names_json,
-              params_json=excluded.params_json, metrics_json=excluded.metrics_json,
-              source_refs_json=excluded.source_refs_json,
-              artifact_json=excluded.artifact_json, created_at=excluded.created_at
         """, (
             model["model_key"], model["version"], model.get("status", "shadow"),
             model["trained_as_of"], model.get("train_range"), model.get("test_range"),
@@ -294,12 +402,14 @@ def register_model(model: dict) -> None:
 
 
 def promote_model_bundle(version: str, validation_status: dict[str, str],
-                         required: tuple[str, ...] = ("market", "sector")) -> dict:
-    """原子晋级同一版本的模型，禁止线上混用不同训练批次。"""
+                         required: tuple[str, ...] = ("market",)) -> dict:
+    """逐层原子晋级；未通过的层继续保留各自原冠军。"""
     init_decision_ledger()
     if not all(validation_status.get(key) == "active" for key in required):
         return {"promoted": False, "reason": "required_layers_not_validated"}
-    active_keys = sorted(key for key, status in validation_status.items() if status == "active")
+    requested_active = sorted(
+        key for key, status in validation_status.items() if status == "active"
+    )
     with _get_conn() as conn:
         rows = conn.execute(
             "SELECT model_key FROM model_registry WHERE version = ?", (version,)
@@ -307,14 +417,22 @@ def promote_model_bundle(version: str, validation_status: dict[str, str],
         registered = {row["model_key"] for row in rows}
         if not set(required).issubset(registered):
             return {"promoted": False, "reason": "bundle_incomplete"}
-        conn.execute("UPDATE model_registry SET status = 'shadow' WHERE status = 'active'")
-        placeholders = ",".join("?" for _ in active_keys)
-        conn.execute(
-            f"UPDATE model_registry SET status = 'active' "
-            f"WHERE version = ? AND model_key IN ({placeholders})",
-            [version, *active_keys],
-        )
-    return {"promoted": True, "version": version, "model_keys": active_keys}
+        active_keys = [key for key in requested_active if key in registered]
+        for key in active_keys:
+            conn.execute(
+                "UPDATE model_registry SET status = 'shadow' "
+                "WHERE model_key = ? AND status = 'active'",
+                (key,),
+            )
+            conn.execute(
+                "UPDATE model_registry SET status = 'active' "
+                "WHERE version = ? AND model_key = ?",
+                (version, key),
+            )
+    return {
+        "promoted": True, "version": version, "model_keys": active_keys,
+        "missing_optional_layers": sorted(set(requested_active) - registered),
+    }
 
 
 def list_pending_outcome_candidates() -> list[dict]:
@@ -454,23 +572,31 @@ def get_active_models() -> dict[str, dict]:
 
 
 def list_models() -> list[dict]:
-    """返回每个模型最新注册状态，供决策页解释为何启用或降级。"""
+    """返回每层当前运行模型，并附上最近一次挑战结果。"""
     init_decision_ledger()
     with _get_conn() as conn:
         rows = conn.execute("""
-            SELECT * FROM model_registry ORDER BY model_key, trained_as_of DESC
+            SELECT * FROM model_registry
+            ORDER BY model_key, trained_as_of DESC, created_at DESC, version DESC
         """).fetchall()
-    result, seen = [], set()
+    grouped: dict[str, list] = {}
     for row in rows:
-        if row["model_key"] in seen:
-            continue
-        seen.add(row["model_key"])
-        item = dict(row)
+        grouped.setdefault(row["model_key"], []).append(row)
+    result = []
+    for model_key, attempts in grouped.items():
+        active = next((row for row in attempts if row["status"] == "active"), None)
+        chosen = active or attempts[0]
+        item = dict(chosen)
         for key, fallback in (
             ("feature_names_json", []), ("params_json", {}), ("metrics_json", {}),
             ("source_refs_json", []), ("artifact_json", {}),
         ):
             item[key.removesuffix("_json")] = _loads(item.pop(key), fallback)
         item.pop("artifact", None)
+        item["model_key"] = model_key
+        item["mode"] = "active" if active else ("shadow" if attempts[0]["status"] == "shadow" else "off")
+        item["active_version"] = active["version"] if active else None
+        item["latest_attempt_version"] = attempts[0]["version"]
+        item["latest_attempt_status"] = attempts[0]["status"]
         result.append(item)
     return result

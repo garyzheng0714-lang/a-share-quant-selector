@@ -1,13 +1,15 @@
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 
 import views.view_manager as view_manager
 from utils.csv_manager import CSVManager
 from utils.decision_ledger import outcome_summary, save_decision_run
-from utils.self_evolution import update_decision_outcomes
+from utils.self_evolution import run_daily_evolution, update_decision_outcomes
 
 
 class SelfEvolutionTest(unittest.TestCase):
@@ -42,6 +44,65 @@ class SelfEvolutionTest(unittest.TestCase):
         self.assertEqual(result["complete"], 1)
         self.assertEqual(summary["observe"]["count"], 1)
         self.assertEqual(summary["missed_winner_rate"], 1.0)
+
+    def test_training_is_skipped_before_universe_coverage_gate(self):
+        manager = CSVManager(Path(self.tmp.name) / "data")
+        with ExitStack() as stack:
+            stack.enter_context(patch("utils.self_evolution.local_data_status", return_value={
+                "fresh": True, "local_date": "2026-07-14", "expected_date": "2026-07-14",
+            }))
+            stack.enter_context(patch("utils.self_evolution.Path.read_text", return_value='{"600000":"银行"}'))
+            stack.enter_context(patch("utils.self_evolution._coverage", return_value={
+                "universe_count": 100, "covered_count": 8, "coverage_ratio": 0.08,
+            }))
+            stack.enter_context(patch("utils.self_evolution.update_decision_outcomes", return_value={
+                "updated": 0, "complete": 0, "pending": 0, "missing_data": 0,
+            }))
+            stack.enter_context(patch("utils.self_evolution.data_version", return_value="d1"))
+            stack.enter_context(patch("utils.self_evolution.save_evolution_run", return_value="e1"))
+            stack.enter_context(patch("utils.reference_snapshots.capture_reference_snapshot", return_value={
+                "available": True, "as_of": "2026-07-14",
+            }))
+            build_dataset = stack.enter_context(patch("tools.hierarchical_walk_forward.build_dataset"))
+            result = run_daily_evolution(manager)
+
+        build_dataset.assert_not_called()
+        self.assertEqual(result["metrics"]["training_status"], "skipped_data_gate")
+        self.assertEqual(result["dataset_rows"], 0)
+
+    def test_training_is_skipped_until_reference_history_is_long_enough(self):
+        manager = CSVManager(Path(self.tmp.name) / "data")
+        with ExitStack() as stack:
+            stack.enter_context(patch("utils.self_evolution.local_data_status", return_value={
+                "fresh": True, "local_date": "2026-07-14", "expected_date": "2026-07-14",
+            }))
+            stack.enter_context(patch(
+                "utils.self_evolution.Path.read_text", return_value='{"600000":"银行"}',
+            ))
+            stack.enter_context(patch("utils.self_evolution._coverage", return_value={
+                "universe_count": 100, "covered_count": 80, "coverage_ratio": 0.8,
+            }))
+            stack.enter_context(patch("utils.self_evolution.update_decision_outcomes", return_value={
+                "updated": 0, "complete": 0, "pending": 0, "missing_data": 0,
+            }))
+            stack.enter_context(patch("utils.self_evolution.data_version", return_value="d1"))
+            stack.enter_context(patch("utils.self_evolution.save_evolution_run", return_value="e1"))
+            stack.enter_context(patch(
+                "utils.reference_snapshots.capture_reference_snapshot",
+                return_value={"available": True, "as_of": "2026-07-14"},
+            ))
+            stack.enter_context(patch(
+                "utils.reference_snapshots.load_reference_snapshots",
+                return_value={"2026-07-14": {"as_of": "2026-07-14"}},
+            ))
+            build_dataset = stack.enter_context(
+                patch("tools.hierarchical_walk_forward.build_dataset")
+            )
+            result = run_daily_evolution(manager)
+
+        build_dataset.assert_not_called()
+        self.assertEqual(result["metrics"]["training_status"], "skipped_reference_history")
+        self.assertEqual(result["dataset_rows"], 0)
 
 
 if __name__ == "__main__":

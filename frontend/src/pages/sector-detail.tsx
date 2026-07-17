@@ -6,7 +6,7 @@ import { LoadError, Skeleton } from "@/components/ui";
 import { useSectorDetail } from "@/lib/hooks";
 import type { SectorDetailStock } from "@/lib/api";
 
-const actionLabel = { buy: "买入", observe: "观察", avoid: "回避", none: "-" } as const;
+const actionLabel = { buy: "通过复核", observe: "研究候选", avoid: "未通过", none: "-" } as const;
 
 function StockRow({ stock, onOpen }: { stock: SectorDetailStock; onOpen: () => void }) {
   return (

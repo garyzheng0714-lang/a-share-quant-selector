@@ -49,7 +49,7 @@ export function SuperB1Card({ initialLimit }: { initialLimit?: number } = {}) {
         知行超级B1独立扫描
         {data?.trade_date && ` / ${data.trade_date}`}
         {!isLoading && data?.available && ` / ${hits.length}只`}
-        。上层闸门只决定可执行、观察或回避
+        。上层闸门只决定通过复核、研究候选或未通过
         {(data?.cap_missing ?? 0) > 0 && ` · ${data!.cap_missing} 只因缺市值数据未纳入`}
       </p>
 

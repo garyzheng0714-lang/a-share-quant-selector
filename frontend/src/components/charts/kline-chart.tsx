@@ -126,7 +126,7 @@ function lineSeries(
     xAxisIndex: xIdx,
     yAxisIndex: yIdx,
     showSymbol: false,
-    smooth: true,
+    smooth: false,
     lineStyle: { width: LINE_WIDTH, color },
     itemStyle: { color },
     encode: { x: 0, y: dataIndex },
@@ -154,6 +154,9 @@ function buildOption(
   const gridLeft = isMobile ? 40 : 60;
   const gridRight = isMobile ? 55 : 60;
   const labelFontSize = isMobile ? 10 : 11;
+  const priceGridTop = isMobile
+    ? (isDaily || weeklyLineMode === "ma" ? 52 : 36)
+    : 36;
 
   const commonAxisLabel = {
     color: AXIS_TEXT,
@@ -167,12 +170,12 @@ function buildOption(
 
   const grids = isDaily
     ? [
-        { left: gridLeft, right: gridRight, top: 30, height: "50%" },
+        { left: gridLeft, right: gridRight, top: priceGridTop, height: "48%" },
         { left: gridLeft, right: gridRight, top: "58%", height: "12%" },
         { left: gridLeft, right: gridRight, top: "73%", height: "18%" },
       ]
     : [
-        { left: gridLeft, right: gridRight, top: 30, height: "65%" },
+        { left: gridLeft, right: gridRight, top: priceGridTop, height: "63%" },
         { left: gridLeft, right: gridRight, top: "73%", height: "16%" },
       ];
 
@@ -499,7 +502,7 @@ function buildOverlay(
 export function KlineChart({
   data,
   period,
-  weeklyLineMode = "trend",
+  weeklyLineMode = "ma",
   signals,
   onCrosshairMove,
   className = "",
@@ -514,10 +517,12 @@ export function KlineChart({
     typeof window !== "undefined" && window.innerWidth < 640,
   );
 
-  dataRef.current = data;
-  periodRef.current = period;
-  weeklyLineModeRef.current = weeklyLineMode;
-  signalsRef.current = signals;
+  useEffect(() => {
+    dataRef.current = data;
+    periodRef.current = period;
+    weeklyLineModeRef.current = weeklyLineMode;
+    signalsRef.current = signals;
+  }, [data, period, weeklyLineMode, signals]);
 
   const handleAxisPointer = useCallback(
     (params: { axesInfo?: { value?: number }[] }) => {
@@ -541,7 +546,9 @@ export function KlineChart({
   );
 
   const handlerRef = useRef(handleAxisPointer);
-  handlerRef.current = handleAxisPointer;
+  useEffect(() => {
+    handlerRef.current = handleAxisPointer;
+  }, [handleAxisPointer]);
 
   // Init the chart instance once. Only dispose on unmount so switching
   // period / line mode reuses the same instance instead of re-creating it.
@@ -604,5 +611,16 @@ export function KlineChart({
     );
   }, [data, period, weeklyLineMode, signals]);
 
-  return <div ref={containerRef} className={`w-full ${className}`} />;
+  const chartLabel = period === "weekly"
+    ? `周K线图，当前显示${weeklyLineMode === "ma" ? "MA5、MA10、MA20和MA60" : "趋势线和多空线"}`
+    : "日K线图，包含成交量、趋势线、多空线和KDJ";
+
+  return (
+    <div
+      ref={containerRef}
+      className={`w-full ${className}`}
+      role="img"
+      aria-label={chartLabel}
+    />
+  );
 }
