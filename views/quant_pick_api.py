@@ -1,8 +1,4 @@
-"""量化今日一票 API - 今天买什么 / 明天盯什么
-
-与 AI 荐票（/api/daily-pick）并存但完全独立：那个是模型主观发挥，
-这个是 12 万条历史信号回测出来的规则，只认经双周期验证的短线因子。
-"""
+"""旧客户端量化候选兼容 API；主入口统一使用版本化策略决策。"""
 import json
 import logging
 import threading
@@ -128,14 +124,45 @@ def _today_buy():
 
 @quant_pick_bp.route("/api/quant-comment", methods=["GET"])
 def api_quant_comment():
-    """AI 对今天选中的票的人话点评（慢，单独接口异步加载，不拖累 /api/quant-pick）."""
+    """AI 只解释当前版本化决策已通过复核的候选，不自主选票."""
     try:
         from utils.daily_pick import generate_quant_comment
+        from utils.data_freshness import local_data_status
+        from utils.decision_ledger import get_latest_decision
+        from utils.decision_versions import strategy_version
+        from utils.hierarchical_decision import run_close_decision
 
-        trade_date, rows = _today_buy()
-        if trade_date is None:
-            return jsonify({"available": False, "reason": rows})
-        return jsonify(generate_quant_comment(trade_date, rows))
+        freshness = local_data_status()
+        if not freshness["fresh"]:
+            return jsonify({
+                "available": False, "reason": "stale_market_data", "freshness": freshness,
+            })
+        decision = get_latest_decision("close")
+        if (
+            not decision
+            or decision.get("trade_date") != freshness["local_date"]
+            or decision.get("strategy_version") != strategy_version()
+        ):
+            decision = run_close_decision()
+        if not decision or not decision.get("available", True):
+            return jsonify({"available": False, "reason": "decision_not_ready"})
+
+        rows = []
+        for item in decision.get("candidates", []):
+            if item.get("action") != "buy":
+                continue
+            base = item.get("baseline") or {}
+            rows.append({
+                "code": item["code"], "name": item.get("name"),
+                "industry": item.get("industry"), "sector": item.get("sector"),
+                "close": base.get("close"), "J": base.get("J"), "RSI": base.get("RSI"),
+                "weekly": base.get("weekly"),
+            })
+        if not rows:
+            return jsonify({"available": False, "reason": "no_approved_candidates"})
+        return jsonify(generate_quant_comment(
+            decision["trade_date"], rows, decision_run_id=decision.get("run_id"),
+        ))
     except Exception as e:
         logger.error("AI 点评失败: %s", e, exc_info=True)
         return jsonify({"available": False, "reason": "点评暂不可用"}), 500
@@ -152,12 +179,14 @@ def api_quant_pick():
             from utils.hierarchical_decision import run_close_decision
 
             freshness = local_data_status()
-            if not freshness["fresh"]:
+            decision = get_latest_decision()
+            if not freshness["fresh"] and not decision:
                 return jsonify({
                     "available": False, "reason": "stale_market_data", "freshness": freshness,
                 }), 503
-            decision = get_latest_decision()
-            if not decision or decision.get("trade_date") != freshness["local_date"]:
+            if freshness["fresh"] and (
+                not decision or decision.get("trade_date") != freshness["local_date"]
+            ):
                 decision = run_close_decision()
             if decision and decision.get("candidates") is not None:
                 rows = []
@@ -172,9 +201,10 @@ def api_quant_pick():
                     })
                 return jsonify({
                     "available": True, "trade_date": decision["trade_date"],
+                    "is_stale": not freshness["fresh"], "freshness": freshness,
                     "today_buy": [row for row in rows if row["action"] == "buy"],
                     "tomorrow_watch": [], "decision": decision,
-                    "honest_note": "市场先于板块、板块先于个股；任一闸门未通过就不推荐。",
+                    "honest_note": "只执行已验证且启用的门禁；未验证层仅记录影子结果。",
                 })
         from utils.quant_pick import CORE_FACTOR
 

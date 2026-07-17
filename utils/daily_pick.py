@@ -1,12 +1,9 @@
-"""每日荐一票 - 大模型基于候选票 + 市场温度 + 战绩数据推荐 1 只并给出人话理由
+"""LLM 历史荐股档案与版本化决策解释器。
 
-设计原则（WORKLOG.md 已确认）：
-- 大模型不预测涨跌，只做综合判断：从技术面已筛出的候选里挑 1 只，
-  结合市场温度、策略近期胜率、候选票各自的量化特征给出理由和风险提示
-- 推荐结果只在 Web/命令行展示，不做任何推送
-- 大模型的判断也进战绩考核：llm_picks 表与 performance 表按 (run_date, code)
-  关联即可查到每次推荐的后续真实涨跌，无需重复回填
-- 未配置 API Key 时优雅降级（available: false + 配置引导），绝不报错崩溃
+生产中的 LLM 没有挑票、排序或改写策略动作的权限：
+- ``generate_daily_pick`` 仅为旧数据兼容保留，定时任务和 POST API 均已停用。
+- ``generate_quant_comment`` 只解释版本化决策中已通过复核的候选，并绑定 ``run_id``。
+- 未配置 API Key 时返回 ``available: false``，不影响量化决策。
 
 支持两种大模型服务（config.yaml 的 llm.provider 切换）：
 - ark（默认）：火山方舟 GLM 等 OpenAI 兼容接口，requests 直调，无额外依赖
@@ -14,6 +11,8 @@
 
 API Key 来源（按优先级）：config/config.yaml 的 llm.api_key > 环境变量 ANTHROPIC_API_KEY
 """
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -22,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 import orjson
+import pandas as pd
 import requests
 import yaml
 
@@ -451,16 +451,15 @@ _COMMENTS_SCHEMA = """
 """
 
 COMMENT_SYSTEM_PROMPT = (
-    "你是一位资深A股分析师，服务的用户没有金融专业背景。"
+    "你是A股量化决策的解释器，服务的用户没有金融专业背景。"
     "请用简体中文回复，思考过程也用中文。"
     "重要：股票及其动作已经由分层量化系统确定。你无权挑选、排序或改变 buy/observe/avoid 动作。"
-    "你的唯一任务是解释既定动作的依据和风险；不得把观察或回避写成值得买。"
+    "你的唯一任务是解释候选为何进入研究池及其风险；不得输出直接买入指令或保证性结论。"
     "要求："
     "1. 讲人话。不要甩术语——非用不可的词（如'缩量''突破前高'）要顺手解释成生活比喻；"
     "2. 说数字背后的含义，不要复述用户已经能看到的数字；"
-    "3. 可以结合你对A股规律的经验做推断，但要用'从经验看''通常'标明，"
-    "禁止编造具体新闻、公告、业绩数据；"
-    "4. 风险提示要具体可执行（跌破哪个位置该走、仓位建议多少），不要说'注意风险'这种废话。"
+    "3. 只能使用输入里截至决策日的量化证据，禁止编造新闻、公告、业绩数据；"
+    "4. 风险提示要具体，但必须区分研究观察条件与个人化交易建议。"
 )
 
 COMMENT_SCHEMA = {
@@ -468,7 +467,7 @@ COMMENT_SCHEMA = {
     "properties": {
         "market_note": {
             "type": "string",
-            "description": "今天整体该怎么做（仓位建议），结合市场温度和策略适应度，1-2句大白话",
+            "description": "本次候选的整体研究提示，1-2句大白话",
         },
         "comments": {
             "type": "array",
@@ -477,8 +476,8 @@ COMMENT_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "code": {"type": "string", "description": "6位股票代码，必须是给定列表里的"},
-                    "comment": {"type": "string", "description": "解释系统既定动作，2-3句大白话，不得擅自荐买"},
-                    "risk": {"type": "string", "description": "具体的风险与应对（止损位、仓位），1-2句"},
+                    "comment": {"type": "string", "description": "解释为何进入研究池，2-3句大白话，不得擅自荐买"},
+                    "risk": {"type": "string", "description": "具体风险和需要继续观察的价格/趋势条件，1-2句"},
                 },
                 "required": ["code", "comment", "risk"],
                 "additionalProperties": False,
@@ -495,36 +494,18 @@ def init_comments_table() -> None:
         conn.execute(_COMMENTS_SCHEMA)
 
 
-def _build_comment_prompt(trade_date, stocks, thermometer, csv_manager) -> str:
-    """组装点评上下文：市场环境 + 选股逻辑 + 每只已选定票的技术面."""
-    from utils.market_context import build_macro_brief
+def _build_comment_prompt(trade_date, stocks, csv_manager, decision_run_id=None) -> str:
+    """组装截至决策日的结构化候选证据，不混入无时点标记的外部材料."""
     from utils.stock_features import describe_features, extract_features
 
-    lines = [f"## 一、今天是 {trade_date}，市场环境", ""]
-    try:
-        lines.append(build_macro_brief())
-    except Exception as e:
-        logger.warning("宏观数据包获取失败: %s", e)
-        lines.append("（宏观数据暂不可用）")
-
-    if thermometer.get("available"):
-        fit = (thermometer.get("fitness") or {})
-        if fit.get("available"):
-            lines.append(
-                f"\n### 本系统策略近期适应度\n- 最近{fit['samples']}个信号 T+5 胜率 "
-                f"{fit['win_rate_t5']}%（{fit['status']}，failing=失效中/weak=偏弱/healthy=健康）"
-            )
-
-    lines += [
+    lines = [
+        f"## 一、决策截止日 {trade_date}",
+        f"- 决策 run_id: {decision_run_id or '未提供'}",
         "",
-        "## 二、这些票是怎么选出来的（你不能推翻这个逻辑）",
+        "以下股票由超级 B1 规则命中，并通过当前已启用的分层门禁。",
+        "未验证层和影子门槛只记录证据，不改变本次结果。",
         "",
-        "选股规则叫「云阶」，是 28 个通达信公式里唯一一个经得起双周期检验的：",
-        "在两段互不重叠的历史中，持有1天和持有5天都跑赢大盘（持有5天：样本内胜率 56.0%、",
-        "超额 +2.72%；样本外胜率 49.3%、超额 +1.11%）。",
-        "它的形态是三段式：第一波大涨 → 缩量横盘不破位（洗掉浮筹）→ 再次放量突破前高。",
-        "",
-        "## 三、今天选中的票（已确定，请逐只点评）",
+        "## 二、通过复核的候选（不得重排或增删）",
         "",
     ]
     for s in stocks:
@@ -537,17 +518,19 @@ def _build_comment_prompt(trade_date, stocks, thermometer, csv_manager) -> str:
                 f"在全部 {sec.get('total')} 个行业里排第 {sec.get('rank')}，近3日变化 {sec.get('delta3'):+}）"
             )
         try:
-            feats = extract_features(csv_manager.read_stock(code)) if csv_manager else {}
+            frame = csv_manager.read_stock(code) if csv_manager else None
+            if frame is not None and not frame.empty:
+                frame = frame[pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d") <= trade_date]
+            feats = extract_features(frame) if frame is not None and not frame.empty else {}
             lines.append(f"- 技术面: {describe_features(feats)}")
         except Exception as e:
             logger.debug("提取 %s 技术特征失败: %s", code, e)
         lines.append("")
 
     lines += [
-        "## 四、你的任务",
-        "1. market_note：今天这个大环境下，整体该怎么做（该不该出手、仓位多少），1-2句；",
-        "2. comments：对上面**每一只**票各写一段——为什么它现在值得买（讲人话，"
-        "把'缩量横盘''突破前高'翻译成人能懂的话）+ 具体风险与应对（跌破哪个价该走、仓位建议）；",
+        "## 三、你的任务",
+        "1. market_note：用1-2句说明这是研究候选，不是确定性收益结论；",
+        "2. comments：对上面**每一只**票解释入池证据，并写出需要继续观察的具体风险条件；",
         "3. 不许挑选、不许排序、不许说'这几只里我更看好X'——量化系统已经验证过无法区分优劣。",
     ]
     return "\n".join(lines)
@@ -562,8 +545,8 @@ def _call_ark_comment(api_key: str, llm_cfg: dict, prompt: str) -> tuple:
 
     schema_hint = (
         "\n\n请只输出一个 JSON 对象（不要 markdown 代码块、不要多余文字），字段如下：\n"
-        '{"market_note": "今天整体怎么做1-2句",'
-        ' "comments": [{"code": "6位代码", "comment": "为什么值得买2-3句大白话",'
+        '{"market_note": "候选的整体研究提示1-2句",'
+        ' "comments": [{"code": "6位代码", "comment": "为什么进入研究池2-3句大白话",'
         ' "risk": "具体风险与应对1-2句"}]}\n'
         "comments 必须覆盖上面列出的每一只票。"
     )
@@ -621,10 +604,12 @@ def get_quant_comment(trade_date: str):
     return payload
 
 
-def generate_quant_comment(trade_date: str, stocks: list, force: bool = False) -> dict:
+def generate_quant_comment(
+    trade_date: str, stocks: list, force: bool = False, decision_run_id: str | None = None,
+) -> dict:
     """为量化选出的票生成 AI 点评。同日已生成则复用（force=True 强制重算）.
 
-    stocks: 量化系统已选定的票（云阶今日命中），每只需含 code/name/close/industry/sector。
+    stocks: 版本化分层决策中已通过复核的票，每只需含 code/name/close/industry/sector。
     今天没有命中时不调用模型——没有票可点评，硬生成一段小作文是浪费和噪音。
     """
     init_comments_table()
@@ -636,7 +621,10 @@ def generate_quant_comment(trade_date: str, stocks: list, force: bool = False) -
         existing = get_quant_comment(trade_date)
         if existing:
             # 票变了（盘中重扫出新票）就重算，否则复用
-            if set(existing.get("by_code", {})) == {str(s.get("code")) for s in stocks}:
+            if (
+                existing.get("decision_run_id") == decision_run_id
+                and set(existing.get("by_code", {})) == {str(s.get("code")) for s in stocks}
+            ):
                 return {"available": True, "cached": True, **existing}
 
     api_key = get_api_key()
@@ -644,9 +632,9 @@ def generate_quant_comment(trade_date: str, stocks: list, force: bool = False) -
         return {"available": False, "reason": "未配置大模型 API Key"}
 
     from utils.csv_manager import CSVManager
-    from utils.market_thermometer import get_thermometer
-
-    prompt = _build_comment_prompt(trade_date, stocks, get_thermometer(), CSVManager("data"))
+    prompt = _build_comment_prompt(
+        trade_date, stocks, CSVManager("data"), decision_run_id=decision_run_id,
+    )
     llm_cfg = _load_llm_config()
     provider = (llm_cfg.get("provider") or "ark").lower()
 
@@ -669,7 +657,10 @@ def generate_quant_comment(trade_date: str, stocks: list, force: bool = False) -
     if not by_code:
         return {"available": False, "reason": "模型输出异常（没有一条点评对应到选定的票）"}
 
-    payload = {"market_note": result.get("market_note", ""), "by_code": by_code}
+    payload = {
+        "market_note": result.get("market_note", ""), "by_code": by_code,
+        "decision_run_id": decision_run_id,
+    }
     now = datetime.now().isoformat()
     with _get_conn() as conn:
         conn.execute(

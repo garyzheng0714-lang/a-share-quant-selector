@@ -16,14 +16,20 @@ decision_bp = Blueprint("decision", __name__)
 def _with_models(run: dict | None) -> dict:
     from utils.data_freshness import local_data_status
     freshness = local_data_status()
-    if not freshness["fresh"]:
-        return {
-            "available": False, "reason": "stale_market_data",
-            "freshness": freshness, "models": list_models(),
-        }
     if not run:
-        return {"available": False, "reason": "decision_not_ready", "models": list_models()}
-    return {"available": True, **run, "freshness": freshness, "models": list_models()}
+        reason = "stale_market_data" if not freshness["fresh"] else "decision_not_ready"
+        return {
+            "available": False, "reason": reason, "freshness": freshness,
+            "data_status": "stale" if not freshness["fresh"] else "fresh",
+            "models": list_models(),
+        }
+    return {
+        "available": True, **run, "freshness": freshness,
+        "is_stale": not freshness["fresh"],
+        "data_status": "stale" if not freshness["fresh"] else "fresh",
+        "warning_reason": "stale_market_data" if not freshness["fresh"] else None,
+        "models": list_models(),
+    }
 
 
 @decision_bp.route("/api/decision/latest", methods=["GET"])
@@ -41,7 +47,7 @@ def api_latest_decision():
             or run.get("strategy_version") != strategy_version()
         ):
             run = None
-        if run is None and stage != "preopen":
+        if run is None and freshness["fresh"] and stage != "preopen":
             from utils.hierarchical_decision import run_close_decision
             generated = run_close_decision()
             run = generated if generated.get("available") else None

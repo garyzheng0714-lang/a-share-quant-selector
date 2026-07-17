@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronRight, CalendarClock } from "lucide-react";
@@ -161,15 +161,10 @@ function DateRow({
 export function HistorySection() {
   const { data: views } = useViews();
   const [selectedViewId, setSelectedViewId] = useState<number | null>(null);
-  const { data: results, isLoading } = useViewResults(selectedViewId, 20);
+  const effectiveViewId = selectedViewId ?? views?.[0]?.id ?? null;
+  const { data: results, isLoading } = useViewResults(effectiveViewId, 20);
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
   const navigate = useNavigate();
-
-  useEffect(() => {
-    if (views?.length && selectedViewId === null) {
-      setSelectedViewId(views[0].id);
-    }
-  }, [views, selectedViewId]);
 
   const handleStockClick = (stock: SignalStock) => {
     navigate(`/stock/${stock.code}`);
@@ -181,7 +176,7 @@ export function HistorySection() {
         <div className="flex justify-end mb-3">
           <div className="relative">
             <select
-              value={selectedViewId ?? ""}
+              value={effectiveViewId ?? ""}
               onChange={(e) => {
                 const val = e.target.value;
                 setSelectedViewId(val ? Number(val) : null);
@@ -218,7 +213,7 @@ export function HistorySection() {
       ) : (
         <AnimatePresence mode="wait">
           <motion.div
-            key={selectedViewId}
+            key={effectiveViewId}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}

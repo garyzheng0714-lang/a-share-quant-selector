@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).parent.parent / "data"
 CACHE_FILE = DATA_DIR / "super_b1_cache.json"
 CAP_FILE = DATA_DIR / "stock_market_cap.json"
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 3
 _lock = threading.Lock()
 
 # 需要的K线根数：MA114 预热 + EXIST(...,200) 回看 + 余量

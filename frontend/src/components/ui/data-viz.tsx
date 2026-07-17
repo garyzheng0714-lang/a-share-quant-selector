@@ -5,7 +5,7 @@
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 
 /** 按 0-100 的值给一个语义色：低=冷灰，中=琥珀，高=热红（热=涨=红，A股语义） */
-export function toneForScore(value: number): string {
+function toneForScore(value: number): string {
   if (value >= 75) return "var(--color-bull)";
   if (value >= 50) return "var(--color-accent)";
   if (value >= 30) return "var(--color-ink-secondary)";

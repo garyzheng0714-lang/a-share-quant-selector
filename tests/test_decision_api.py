@@ -50,14 +50,32 @@ class DecisionApiTest(unittest.TestCase):
     @patch("views.decision_api.list_models", return_value=[])
     @patch("views.decision_api.get_latest_decision", return_value={"run_id": "old"})
     @patch("utils.data_freshness.local_data_status")
-    def test_stale_data_hides_old_recommendation(self, freshness, _latest, _models):
+    def test_stale_data_returns_last_decision_with_warning(self, freshness, _latest, _models):
         freshness.return_value = {
             "fresh": False, "local_date": "2026-07-10", "expected_date": "2026-07-14",
         }
         response = self.client.get("/api/decision/latest")
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(response.json["available"])
-        self.assertEqual(response.json["reason"], "stale_market_data")
+        self.assertTrue(response.json["available"])
+        self.assertTrue(response.json["is_stale"])
+        self.assertEqual(response.json["data_status"], "stale")
+        self.assertEqual(response.json["run_id"], "old")
+
+    @patch("views.decision_api.list_models", return_value=[])
+    @patch("views.decision_api.get_decision", return_value={"run_id": "archived-run"})
+    @patch("utils.data_freshness.local_data_status")
+    def test_historical_detail_remains_replayable_when_market_data_is_stale(
+        self, freshness, _decision, _models,
+    ):
+        freshness.return_value = {
+            "fresh": False, "local_date": "2026-07-10", "expected_date": "2026-07-14",
+        }
+
+        response = self.client.get("/api/decision/archived-run")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json["available"])
+        self.assertTrue(response.json["is_stale"])
 
 
 if __name__ == "__main__":

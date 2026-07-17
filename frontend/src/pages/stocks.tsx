@@ -29,12 +29,12 @@ export function Component() {
       <div className="mx-auto max-w-4xl px-4 py-7 sm:px-6 sm:py-10">
         <header className="mb-6">
           <h1 className="text-[28px] font-semibold tracking-[-0.045em] text-ink">个股</h1>
-          <p className="mt-1.5 text-sm text-ink-muted">只看 B1，先判断能不能买</p>
+          <p className="mt-1.5 text-sm text-ink-muted">B1 信号与分层证据，先复核再研究</p>
         </header>
 
-        <div className="mb-6 flex border-b border-border" aria-label="个股视图">
-          <button onClick={() => setView("decision")} className={`relative flex min-h-11 flex-1 items-center justify-center gap-2 text-sm font-medium transition-colors active:scale-[0.99] ${view === "decision" ? "text-accent" : "text-ink-muted hover:text-ink-secondary"}`}><Target size={16} strokeWidth={1.7} />B1{view === "decision" && <span className="absolute inset-x-6 bottom-0 h-px bg-accent" />}</button>
-          <button onClick={() => setView("research")} className={`relative flex min-h-11 flex-1 items-center justify-center gap-2 text-sm font-medium transition-colors active:scale-[0.99] ${view === "research" ? "text-accent" : "text-ink-muted hover:text-ink-secondary"}`}><SlidersHorizontal size={16} strokeWidth={1.7} />其他策略{view === "research" && <span className="absolute inset-x-6 bottom-0 h-px bg-accent" />}</button>
+        <div className="mb-6 flex border-b border-border" role="tablist" aria-label="个股视图">
+          <button type="button" role="tab" aria-selected={view === "decision"} onClick={() => setView("decision")} className={`relative flex min-h-11 flex-1 items-center justify-center gap-2 text-sm font-medium transition-colors active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${view === "decision" ? "text-accent" : "text-ink-muted hover:text-ink-secondary"}`}><Target size={16} strokeWidth={1.7} />B1{view === "decision" && <span className="absolute inset-x-6 bottom-0 h-px bg-accent" />}</button>
+          <button type="button" role="tab" aria-selected={view === "research"} onClick={() => setView("research")} className={`relative flex min-h-11 flex-1 items-center justify-center gap-2 text-sm font-medium transition-colors active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${view === "research" ? "text-accent" : "text-ink-muted hover:text-ink-secondary"}`}><SlidersHorizontal size={16} strokeWidth={1.7} />其他策略{view === "research" && <span className="absolute inset-x-6 bottom-0 h-px bg-accent" />}</button>
         </div>
 
         {view === "decision" ? (

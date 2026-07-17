@@ -35,7 +35,19 @@ REVIEW_PATTERNS = {
 
 
 def _match(title: str, patterns: dict[str, tuple[str, ...]]) -> list[str]:
-    return [code for code, words in patterns.items() if any(word in title for word in words)]
+    negations = ("无", "未", "不存在", "不涉及", "未涉及", "没有")
+    matched = []
+    for code, words in patterns.items():
+        for word in words:
+            start = title.find(word)
+            if start < 0:
+                continue
+            prefix = title[max(0, start - 5):start]
+            if any(prefix.endswith(token) for token in negations):
+                continue
+            matched.append(code)
+            break
+    return matched
 
 
 def fetch_notice_events(codes: set[str], start_date: str, end_date: str,
@@ -164,11 +176,17 @@ def _call_event_llm(events: list[dict]) -> dict:
 def review_candidates(candidates: list[dict], trade_date: str, as_of: str,
                       llm_veto_enabled: bool = False) -> dict:
     codes = {str(c["code"]) for c in candidates}
-    end_date = datetime.fromisoformat(as_of).date().isoformat()
+    # 当前源只有日期精度。盘前不能抓取 as_of 当天的整日索引，否则会混入盘后公告。
+    end_date = (datetime.fromisoformat(as_of).date() - timedelta(days=1)).isoformat()
     fetched = fetch_notice_events(codes, trade_date, end_date)
     events = fetched["events"]
+    timestamped_events = [
+        event for event in events
+        if event.get("published_at_precision") not in {None, "date"}
+        and event.get("published_at", "") <= as_of
+    ]
     llm = (
-        _call_event_llm(events)
+        _call_event_llm(timestamped_events)
         if llm_veto_enabled
         else {"available": False, "reason": "llm_veto_disabled", "decisions": []}
     )
@@ -176,9 +194,10 @@ def review_candidates(candidates: list[dict], trade_date: str, as_of: str,
     veto_codes, review_codes = set(), set()
     for event in events:
         events_by_code[event["code"]].append(event)
-        if event["hard_tags"]:
+        timestamp_precise = event.get("published_at_precision") not in {None, "date"}
+        if event["hard_tags"] and timestamp_precise and event.get("published_at", "") <= as_of:
             veto_codes.add(event["code"])
-        elif event["review_tags"]:
+        elif event["hard_tags"] or event["review_tags"]:
             review_codes.add(event["code"])
     if llm_veto_enabled and llm.get("available"):
         for item in llm["decisions"]:

@@ -125,6 +125,10 @@ export interface KlineResponse {
   code: string;
   name: string;
   period: string;
+  as_of: string;
+  week_end?: string | null;
+  current_week_partial?: boolean;
+  change_label: "今日涨跌" | "本周涨跌";
   data: (string | number)[][];
   signals?: KlineSignal[];
 }
@@ -238,6 +242,10 @@ export interface WeeklyFourLineState {
   ma_values?: Partial<Record<"MA5" | "MA10" | "MA20" | "MA60", number>>;
   reason?: string;
   weeks?: number;
+  as_of?: string;
+  week_end?: string;
+  current_week_partial?: boolean;
+  gate_mode?: "off" | "shadow" | "active";
 }
 
 export interface SuperB1Hit {
@@ -476,6 +484,7 @@ export interface QuantPickResponse {
 export interface QuantComment {
   available: boolean;
   reason?: string;
+  decision_run_id?: string | null;
   market_note?: string;
   by_code?: Record<string, { comment: string; risk: string }>;
 }
@@ -492,6 +501,10 @@ export interface DecisionModel {
   metrics: Record<string, unknown>;
   params: Record<string, unknown>;
   source_refs: string[];
+  mode?: "off" | "shadow" | "active";
+  active_version?: string | null;
+  latest_attempt_version?: string;
+  latest_attempt_status?: "active" | "shadow" | "rejected";
 }
 
 export interface DecisionCandidate {
@@ -535,6 +548,9 @@ export interface DecisionCandidate {
 export interface DecisionResponse {
   available: boolean;
   reason?: string;
+  warning_reason?: string | null;
+  is_stale?: boolean;
+  data_status?: "fresh" | "stale";
   run_id?: string;
   trade_date?: string;
   stage?: "close" | "preopen";
@@ -546,7 +562,12 @@ export interface DecisionResponse {
   model_version?: string;
   data_version?: string;
   source_refs?: string[];
-  market?: { models_active?: string[]; gate_order?: string[]; decision_for_date?: string };
+  market?: {
+    models_active?: string[];
+    layer_modes?: Record<string, "off" | "shadow" | "active">;
+    gate_order?: string[];
+    decision_for_date?: string;
+  };
   evaluation?: Record<string, unknown>;
   reason_codes?: string[];
   candidates?: DecisionCandidate[];
@@ -693,7 +714,7 @@ export const api = {
     request<SuperB1Performance>(`/api/super-b1/performance?limit=${limit}`),
   // AI 自主荐票（getDailyPick / generateDailyPick）已于 2026-07-14 停用——它和量化版
   // 推的票不一样，主页上两个「今日一票」互相打架。AI 现在只点评量化选出的票
-  // （见 getQuantComment）。后端 /api/daily-pick 接口保留，历史记录仍可在复盘页查看。
+  // 旧版自主荐股只保留 GET 历史档案；POST 已永久停用。
   getDailyPickHistory: () =>
     request<DailyPickHistoryResponse>("/api/daily-pick?history=1"),
   getPerformanceSummary: () => request<PerformanceSummary>("/api/performance/summary"),

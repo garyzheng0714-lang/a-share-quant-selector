@@ -21,7 +21,7 @@ export function Component() {
   const { code } = useParams<{ code: string }>();
   const navigate = useNavigate();
   const [period, setPeriod] = useState<Period>("daily");
-  const [weeklyLineMode, setWeeklyLineMode] = useState<WeeklyLineMode>("trend");
+  const [weeklyLineMode, setWeeklyLineMode] = useState<WeeklyLineMode>("ma");
   const [overlay, setOverlay] = useState<KlineOverlay | null>(null);
 
   const stockNavList = useAppStore((s) => s.stockNavList);
@@ -47,6 +47,17 @@ export function Component() {
     setOverlay(data);
   }, []);
 
+  const handlePeriodChange = (nextPeriod: Period) => {
+    setPeriod(nextPeriod);
+    if (nextPeriod === "weekly") setWeeklyLineMode("ma");
+    setOverlay(null);
+  };
+
+  const handleWeeklyLineModeChange = (mode: WeeklyLineMode) => {
+    setWeeklyLineMode(mode);
+    setOverlay(null);
+  };
+
   const goToStock = (direction: -1 | 1) => {
     const newIdx = stockNavIndex + direction;
     if (newIdx < 0 || newIdx >= stockNavList.length) return;
@@ -66,6 +77,10 @@ export function Component() {
     ? ((latestClose - prevClose) / prevClose) * 100
     : 0;
   const isBull = changePercent >= 0;
+  const changeLabel = klineData?.change_label ?? (period === "weekly" ? "本周涨跌" : "今日涨跌");
+  const asOfLabel = klineData?.as_of
+    ? `${klineData.current_week_partial ? "本周进行中，" : ""}截至 ${klineData.as_of}`
+    : null;
 
   // Extract latest trend/DK line values from raw data
   const latestRow = klineData?.data?.length
@@ -132,10 +147,25 @@ export function Component() {
     };
   };
   const lineValues = getLineValues();
+  const weeklyMaState = (() => {
+    if (period !== "weekly" || weeklyLineMode !== "ma" || !klineData?.data?.length) return null;
+    const current = klineData.data[klineData.data.length - 1];
+    const previous = klineData.data.length > 1 ? klineData.data[klineData.data.length - 2] : null;
+    const values = [6, 7, 8, 9].map((index) => current[index] as number | null);
+    if (values.some((value) => value == null)) return null;
+    const aligned = values.every((value, index) => index === values.length - 1 || value! > values[index + 1]!);
+    const risingCount = previous
+      ? values.filter((value, index) => {
+          const before = previous[index + 6] as number | null;
+          return before != null && value! > before;
+        }).length
+      : 0;
+    return { aligned, risingCount };
+  })();
 
   return (
     <PageTransition>
-      <div className="h-[calc(100vh-48px)] flex">
+      <div className="h-[calc(100dvh-48px)] flex">
         {/* 桌面联动列表：从候选/因子/超级B1列表进来时，左侧保留整份名单，
             点一只切一只（知弈策行"翻牌式复盘"），不用回退页面 */}
         {hasNav && (
@@ -187,7 +217,8 @@ export function Component() {
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
               <button
                 onClick={() => navigate(-1)}
-                className="text-sm text-ink-secondary hover:text-ink transition-colors shrink-0"
+                aria-label="返回上一页"
+                className="min-h-9 min-w-9 rounded-lg text-sm text-ink-secondary hover:bg-elevated hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent transition-colors shrink-0"
               >
                 ←
               </button>
@@ -230,28 +261,39 @@ export function Component() {
               </div>
 
               {!isLoading && (
-                <div className="hidden sm:flex items-center gap-1.5">
-                  <span
-                    className={`text-lg font-mono font-semibold ${isBull ? "text-bull" : "text-bear"}`}
-                  >
-                    {latestClose.toFixed(2)}
-                  </span>
-                  <span
-                    className={`text-sm font-mono ${isBull ? "text-bull" : "text-bear"}`}
-                  >
-                    {isBull ? "+" : ""}
-                    {changePercent.toFixed(2)}%
-                  </span>
+                <div className="hidden sm:flex flex-col items-end gap-0.5">
+                  <div className="flex items-baseline gap-2">
+                    <span
+                      className={`text-lg font-mono font-semibold ${isBull ? "text-bull" : "text-bear"}`}
+                    >
+                      {latestClose.toFixed(2)}
+                    </span>
+                    <span className="text-[10px] text-ink-muted">{changeLabel}</span>
+                    <span
+                      className={`text-sm font-mono ${isBull ? "text-bull" : "text-bear"}`}
+                    >
+                      {isBull ? "+" : ""}
+                      {changePercent.toFixed(2)}%
+                    </span>
+                  </div>
+                  {asOfLabel && <span className="text-[10px] text-ink-muted">{asOfLabel}</span>}
                 </div>
               )}
             </div>
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            <div className="flex items-center gap-0.5 bg-inset rounded-xl p-0.5">
+            <div
+              className="flex items-center gap-0.5 bg-inset rounded-[10px] p-0.5"
+              role="tablist"
+              aria-label="K线周期"
+            >
               {(["daily", "weekly"] as Period[]).map((p) => (
                 <button
                   key={p}
-                  onClick={() => setPeriod(p)}
-                  className={`relative px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-md transition-colors ${
+                  type="button"
+                  role="tab"
+                  aria-selected={period === p}
+                  onClick={() => handlePeriodChange(p)}
+                  className={`relative isolate min-h-8 px-2.5 sm:px-3 text-xs sm:text-sm rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent transition-colors ${
                     period === p
                       ? "text-ink font-medium"
                       : "text-ink-secondary hover:text-ink"
@@ -270,14 +312,31 @@ export function Component() {
             </div>
 
             {period === "weekly" && (
-              <button
-                onClick={() =>
-                  setWeeklyLineMode((m) => (m === "trend" ? "ma" : "trend"))
-                }
-                className="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-md bg-elevated text-ink hover:bg-border-hover transition-colors"
+              <div
+                className="flex items-center gap-0.5 rounded-[10px] border border-border bg-surface p-0.5"
+                role="tablist"
+                aria-label="周线指标"
               >
-                {weeklyLineMode === "trend" ? "黄白线" : "均线"}
-              </button>
+                {([
+                  ["ma", "四均线"],
+                  ["trend", "黄白趋势"],
+                ] as const).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="tab"
+                    aria-selected={weeklyLineMode === mode}
+                    onClick={() => handleWeeklyLineModeChange(mode)}
+                    className={`min-h-8 rounded-lg px-2 text-[11px] sm:px-2.5 sm:text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent transition-colors ${
+                      weeklyLineMode === mode
+                        ? "bg-elevated font-medium text-ink"
+                        : "text-ink-muted hover:text-ink-secondary"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             )}
             </div>
           </div>
@@ -296,18 +355,22 @@ export function Component() {
                   </span>
                 ) : null}
               </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <span
-                  className={`text-sm font-mono font-semibold ${isBull ? "text-bull" : "text-bear"}`}
-                >
-                  {latestClose.toFixed(2)}
-                </span>
-                <span
-                  className={`text-xs font-mono ${isBull ? "text-bull" : "text-bear"}`}
-                >
-                  {isBull ? "+" : ""}
-                  {changePercent.toFixed(2)}%
-                </span>
+              <div className="flex flex-col items-end shrink-0">
+                <div className="flex items-baseline gap-1.5">
+                  <span
+                    className={`text-sm font-mono font-semibold ${isBull ? "text-bull" : "text-bear"}`}
+                  >
+                    {latestClose.toFixed(2)}
+                  </span>
+                  <span className="text-[9px] text-ink-muted">{changeLabel}</span>
+                  <span
+                    className={`text-xs font-mono ${isBull ? "text-bull" : "text-bear"}`}
+                  >
+                    {isBull ? "+" : ""}
+                    {changePercent.toFixed(2)}%
+                  </span>
+                </div>
+                {asOfLabel && <span className="text-[9px] text-ink-muted">{asOfLabel}</span>}
               </div>
             </div>
           )}
@@ -318,6 +381,8 @@ export function Component() {
           <div className="bg-surface border-b border-border">
             <button
               onClick={() => setProfileOpen((v) => !v)}
+              aria-expanded={profileOpen}
+              aria-controls="stock-company-profile"
               className="w-full px-3 py-2 flex items-center gap-1 text-xs text-ink-secondary hover:text-ink transition-colors"
             >
               <span>公司信息</span>
@@ -338,7 +403,7 @@ export function Component() {
                   transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
                   className="overflow-hidden"
                 >
-                  <div className="px-3 pb-2.5 space-y-1.5">
+                  <div id="stock-company-profile" className="px-3 pb-2.5 space-y-1.5">
                     {profile.business && (
                       <p className="text-xs text-ink-secondary leading-relaxed break-all">
                         <span className="text-ink-muted">主营业务：</span>
@@ -370,7 +435,10 @@ export function Component() {
             <>
               {/* Persistent indicator values */}
               {lineValues && !isLoading && (
-                <div className="absolute top-1 left-11 sm:left-16 z-10 flex items-center gap-2 sm:gap-3 text-[10px] sm:text-xs font-mono pointer-events-none">
+                <div
+                  className="absolute top-1 left-10 right-1 sm:left-16 sm:right-4 z-10 flex min-h-7 flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-border/60 bg-surface/90 px-2 py-1 text-[10px] sm:gap-x-3 sm:text-xs font-mono pointer-events-none"
+                  aria-live="polite"
+                >
                   {lineValues.type === "trend" ? (
                     <>
                       <span>
@@ -427,6 +495,14 @@ export function Component() {
                           MA60:{lineValues.ma60.toFixed(2)}
                         </span>
                       )}
+                      {weeklyMaState && (
+                        <>
+                          <span className={weeklyMaState.aligned ? "text-bull" : "text-ink-muted"}>
+                            {weeklyMaState.aligned ? "多头排列" : "未形成多头"}
+                          </span>
+                          <span className="text-ink-muted">{weeklyMaState.risingCount}/4 向上</span>
+                        </>
+                      )}
                     </>
                   )}
                 </div>
@@ -456,6 +532,7 @@ export function Component() {
                   <button
                     onClick={() => goToStock(-1)}
                     disabled={stockNavIndex <= 0}
+                    aria-label="查看上一只候选股票"
                     className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-16 sm:w-10 sm:h-20 flex items-center justify-center bg-surface/60 backdrop-blur-sm rounded-r-xl border border-l-0 border-border/30 text-ink-muted hover:text-ink hover:bg-surface/80 disabled:opacity-20 disabled:pointer-events-none transition-all active:scale-95"
                   >
                     <svg width="16" height="16" viewBox="0 0 14 14" fill="none">
@@ -465,6 +542,7 @@ export function Component() {
                   <button
                     onClick={() => goToStock(1)}
                     disabled={stockNavIndex >= stockNavList.length - 1}
+                    aria-label="查看下一只候选股票"
                     className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-16 sm:w-10 sm:h-20 flex items-center justify-center bg-surface/60 backdrop-blur-sm rounded-l-xl border border-r-0 border-border/30 text-ink-muted hover:text-ink hover:bg-surface/80 disabled:opacity-20 disabled:pointer-events-none transition-all active:scale-95"
                   >
                     <svg width="16" height="16" viewBox="0 0 14 14" fill="none">

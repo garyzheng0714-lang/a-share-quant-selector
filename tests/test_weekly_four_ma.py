@@ -14,9 +14,8 @@ def _weekly_frame(closes: list[float]) -> pd.DataFrame:
 
 class WeeklyFourMaTest(unittest.TestCase):
     def test_exposes_each_line_direction(self):
-        passed, detail = weekly_four_ma_bullish(
-            _weekly_frame([float(value) for value in range(1, 63)])
-        )
+        frame = _weekly_frame([float(value) for value in range(1, 63)])
+        passed, detail = weekly_four_ma_bullish(frame)
 
         self.assertTrue(passed)
         self.assertTrue(detail["aligned"])
@@ -28,6 +27,8 @@ class WeeklyFourMaTest(unittest.TestCase):
             "MA20": True,
             "MA60": True,
         })
+        self.assertEqual(detail["as_of"], str(frame["date"].iloc[-1].date()))
+        self.assertFalse(detail["current_week_partial"])
 
     def test_exposes_downward_lines(self):
         closes = [float(value) for value in range(1, 62)] + [-100.0]

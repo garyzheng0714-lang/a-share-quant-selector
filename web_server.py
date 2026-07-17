@@ -707,6 +707,8 @@ def api_get_stock_kline(code):
         from utils.technical import KDJ
 
         period = request.args.get("period", "daily")
+        if period not in {"daily", "weekly"}:
+            return jsonify({"success": False, "error": "period 仅支持 daily 或 weekly"}), 400
         stock_names = _load_stock_names()
         stock_name = stock_names.get(code, "未知")
 
@@ -715,15 +717,25 @@ def api_get_stock_kline(code):
             return jsonify({"success": False, "error": "股票不存在"})
 
         default_days = 200 if period == "daily" else 2000
-        days = int(request.args.get("days", default_days))
+        try:
+            days = int(request.args.get("days", default_days))
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "days 必须是正整数"}), 400
+        if days <= 0:
+            return jsonify({"success": False, "error": "days 必须是正整数"}), 400
+        days = min(days, 5000)
 
         # CSV is stored newest-first; take top N rows then reverse to chronological
         df_slice = df.head(days).iloc[::-1].reset_index(drop=True)
 
+        as_of = pd.to_datetime(df_slice["date"]).max()
+        week_end = None
+        current_week_partial = False
+
         if period == "weekly":
             df_slice["date"] = pd.to_datetime(df_slice["date"])
             weekly = (
-                df_slice.resample("W", on="date")
+                df_slice.resample("W-FRI", on="date")
                 .agg(
                     open=("open", "first"),
                     high=("high", "max"),
@@ -733,6 +745,9 @@ def api_get_stock_kline(code):
                 )
                 .dropna(subset=["open"])
             )
+            if not weekly.empty:
+                week_end = weekly.index[-1]
+                current_week_partial = bool(as_of.normalize() < week_end.normalize())
 
             weekly["MA5"] = weekly["close"].rolling(window=5).mean()
             weekly["MA10"] = weekly["close"].rolling(window=10).mean()
@@ -831,6 +846,10 @@ def api_get_stock_kline(code):
                 "code": code,
                 "name": stock_name,
                 "period": period,
+                "as_of": as_of.strftime("%Y-%m-%d"),
+                "week_end": week_end.strftime("%Y-%m-%d") if week_end is not None else None,
+                "current_week_partial": current_week_partial,
+                "change_label": "本周涨跌" if period == "weekly" else "今日涨跌",
                 "data": data,
                 "signals": signals,
             }
@@ -954,12 +973,15 @@ def api_update_data():
         freshness = local_data_status()
         if not freshness["fresh"]:
             return jsonify({"success": False, "error": "行情数据仍然过期", "freshness": freshness}), 503
+        from utils.reference_snapshots import capture_reference_snapshot
+        snapshot = capture_reference_snapshot("data", freshness["local_date"])
         return jsonify(
             {
                 "success": True,
                 "message": "数据更新完成",
                 "result": result,
                 "freshness": freshness,
+                "reference_snapshot": snapshot,
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
         )
@@ -1020,6 +1042,13 @@ def _scheduled_job():
 
         fetcher = AKShareFetcher("data")
         fetcher.daily_update()
+        from utils.data_freshness import local_data_status
+        from utils.reference_snapshots import capture_reference_snapshot
+
+        freshness = local_data_status()
+        snapshot = capture_reference_snapshot("data", freshness.get("local_date"))
+        if not snapshot.get("available"):
+            logger.warning("时点参考快照未保存: %s", snapshot.get("reason"))
         logger.info("数据更新完成")
     except Exception as e:
         logger.error("定时数据更新失败: %s", e)
@@ -1133,10 +1162,12 @@ def _scheduled_job():
                     "close": base.get("close"), "J": base.get("J"), "RSI": base.get("RSI"),
                 })
             if rows:
-                r = generate_quant_comment(decision["trade_date"], rows)
+                r = generate_quant_comment(
+                    decision["trade_date"], rows, decision_run_id=decision.get("run_id"),
+                )
                 logger.info("AI 点评: %s", "成功" if r.get("available") else r.get("reason"))
             else:
-                logger.info("AI 点评跳过: 当前没有可执行买入标的")
+                logger.info("AI 点评跳过: 当前没有通过复核的候选")
     except Exception as e:
         logger.error("AI 点评失败: %s", e)
 

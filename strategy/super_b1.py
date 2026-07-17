@@ -27,6 +27,8 @@ TDX 语义还原要点：
 
 所有计算都在"正序（从早到晚）"序列上进行；入口自动识别倒序 CSV 并翻转。
 """
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 
@@ -113,7 +115,8 @@ MIN_BARS = 140
 
 
 def compute_super_b1(df: pd.DataFrame, code: str, params: dict = None,
-                     market_cap: float = None, return_history: bool = False):
+                     market_cap: float = None, return_history: bool = False,
+                     market_cap_by_date: dict[str, float] | None = None):
     """对单只股票计算最新一根K线的超级B1信号.
 
     Args:
@@ -122,6 +125,8 @@ def compute_super_b1(df: pd.DataFrame, code: str, params: dict = None,
         params: 覆盖 DEFAULT_PARAMS
         market_cap: 市值（元），调用方从市值缓存传入（优先级见模块 docstring）；
                     None 时回退 CSV 的 market_cap 列
+        market_cap_by_date: 历史训练专用的时点市值映射。传入后，每个历史信号只使用
+                            同交易日快照，不允许用当前市值回填过去。
 
     Returns:
         选中: {"signals": [...], ...}；未选中: None；
@@ -145,11 +150,16 @@ def compute_super_b1(df: pd.DataFrame, code: str, params: dict = None,
     V = d["volume"].astype(float)
 
     # {定义最小流通市值条件}（取数优先级见模块 docstring）
-    if market_cap is None or market_cap <= 0:
-        market_cap = float(d["market_cap"].iloc[-1]) if "market_cap" in d.columns else 0.0
-    if market_cap <= 0 or market_cap != market_cap:
-        return {"cap_missing": True}
-    流通市值满足 = market_cap >= p["min_cap_yi"] * 1e8
+    uses_point_in_time_cap = bool(return_history and market_cap_by_date is not None)
+    if uses_point_in_time_cap:
+        market_cap = 0.0
+        流通市值满足 = True
+    else:
+        if market_cap is None or market_cap <= 0:
+            market_cap = float(d["market_cap"].iloc[-1]) if "market_cap" in d.columns else 0.0
+        if market_cap <= 0 or market_cap != market_cap:
+            return {"cap_missing": True}
+        流通市值满足 = market_cap >= p["min_cap_yi"] * 1e8
 
     # {定义基础判定信息}
     趋势白线 = EMA(EMA(C, 10), 10)
@@ -320,14 +330,21 @@ def compute_super_b1(df: pd.DataFrame, code: str, params: dict = None,
                 if bool(大绿棒条件.iloc[i]) and bool(series.iloc[i])
             ]
             if fired_at:
+                signal_date = str(d["date"].iloc[i])[:10]
+                cap_at_signal = (
+                    float((market_cap_by_date or {}).get(signal_date, 0) or 0)
+                    if uses_point_in_time_cap else float(market_cap)
+                )
+                if cap_at_signal < p["min_cap_yi"] * 1e8:
+                    continue
                 rows.append({
                     "signals": fired_at,
                     "signal_labels": [SIGNAL_LABELS.get(s, s) for s in fired_at],
                     "close": round(float(C.iloc[i]), 2),
                     "J": round(float(J.iloc[i]), 2),
                     "RSI": round(float(RSI.iloc[i]), 2),
-                    "market_cap_yi": round(market_cap / 1e8, 2),
-                    "date": str(d["date"].iloc[i])[:10],
+                    "market_cap_yi": round(cap_at_signal / 1e8, 2),
+                    "date": signal_date,
                 })
         return rows
 

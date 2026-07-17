@@ -16,7 +16,7 @@ from utils.decision_ledger import (
     save_evolution_run,
     upsert_decision_outcome,
 )
-from utils.decision_versions import data_version
+from utils.decision_versions import VALIDATED_MODEL_SOURCE_REFS, data_version
 from utils.execution_model import evaluate_trade
 from utils.market_filter import is_main_board, main_board_only
 
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 MIN_OOS_MONTHS = 6
 MIN_OOS_SAMPLES = 80
 MIN_UNIVERSE_COVERAGE = 0.60
+MIN_REFERENCE_MONTHS = 16
 
 
 def update_decision_outcomes(csv_manager: CSVManager) -> dict:
@@ -92,10 +93,11 @@ def _coverage(csv_manager: CSVManager, names: dict) -> dict:
     }
 
 
-def _promotion_reasons(report: dict, coverage: dict, champion: dict) -> list[str]:
-    reasons = []
+def _promotion_reasons(report: dict, coverage: dict, champion: dict) -> dict[str, list[str]]:
+    by_layer: dict[str, list[str]] = {}
     status = report.get("status", {})
-    for key in ("market", "sector"):
+    for key in ("market", "sector", "risk", "quality"):
+        reasons = []
         metrics = report.get("aggregate", {}).get(key, {})
         if status.get(key) != "active":
             reasons.append(f"{key}_walk_forward_failed")
@@ -111,9 +113,10 @@ def _promotion_reasons(report: dict, coverage: dict, champion: dict) -> list[str
                 reasons.append(f"{key}_worse_than_champion_return")
             if metrics.get("cvar10", float("-inf")) < incumbent.get("cvar10", float("-inf")):
                 reasons.append(f"{key}_worse_than_champion_tail")
-    if coverage["coverage_ratio"] < MIN_UNIVERSE_COVERAGE:
-        reasons.append("universe_coverage_insufficient")
-    return sorted(set(reasons))
+        if coverage["coverage_ratio"] < MIN_UNIVERSE_COVERAGE:
+            reasons.append("universe_coverage_insufficient")
+        by_layer[key] = sorted(set(reasons))
+    return by_layer
 
 
 def run_daily_evolution(csv_manager: CSVManager | None = None) -> dict:
@@ -122,6 +125,9 @@ def run_daily_evolution(csv_manager: CSVManager | None = None) -> dict:
     freshness = local_data_status(csv_manager)
     if not freshness["fresh"]:
         return {"available": False, "reason": "stale_market_data", "freshness": freshness}
+
+    from utils.reference_snapshots import capture_reference_snapshot
+    reference_snapshot = capture_reference_snapshot("data", freshness["local_date"])
 
     names = json.loads(Path("data/stock_names.json").read_text(encoding="utf-8"))
     industries = json.loads(Path("data/stock_industry.json").read_text(encoding="utf-8"))
@@ -133,6 +139,41 @@ def run_daily_evolution(csv_manager: CSVManager | None = None) -> dict:
         **coverage,
         "labels_updated": labels["updated"],
     }
+
+    # 数据门槛未满足时只回填结果并记录进度，不运行昂贵且无效的训练。
+    if coverage["coverage_ratio"] < MIN_UNIVERSE_COVERAGE:
+        run = {
+            **base_run, "status": "complete", "dataset_rows": 0,
+            "promotion_status": "kept_champion",
+            "reason_codes": ["universe_coverage_insufficient"],
+            "metrics": {
+                "strategy": "super-b1-original", "labels": labels,
+                "training_status": "skipped_data_gate",
+                "minimum_coverage": MIN_UNIVERSE_COVERAGE,
+                "reference_snapshot": reference_snapshot,
+            },
+        }
+        run["evolution_id"] = save_evolution_run(run)
+        return {"available": True, **run}
+
+    from utils.reference_snapshots import load_reference_snapshots
+    snapshots = load_reference_snapshots(csv_manager.data_dir)
+    snapshot_months = sorted({date[:7] for date in snapshots})
+    if len(snapshot_months) < MIN_REFERENCE_MONTHS:
+        run = {
+            **base_run, "status": "complete", "dataset_rows": 0,
+            "promotion_status": "kept_champion",
+            "reason_codes": ["reference_history_insufficient"],
+            "metrics": {
+                "strategy": "super-b1-original", "labels": labels,
+                "training_status": "skipped_reference_history",
+                "reference_months": len(snapshot_months),
+                "minimum_reference_months": MIN_REFERENCE_MONTHS,
+                "reference_snapshot": reference_snapshot,
+            },
+        }
+        run["evolution_id"] = save_evolution_run(run)
+        return {"available": True, **run}
 
     try:
         from tools.hierarchical_walk_forward import build_dataset, train_and_register
@@ -154,10 +195,20 @@ def run_daily_evolution(csv_manager: CSVManager | None = None) -> dict:
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         version = result["bundle"]["version"]
-        reasons = _promotion_reasons(result, coverage, get_active_models())
+        champions = {
+            key: model for key, model in get_active_models().items()
+            if VALIDATED_MODEL_SOURCE_REFS.issubset(set(model.get("source_refs") or []))
+        }
+        reasons_by_layer = _promotion_reasons(result, coverage, champions)
+        eligible_status = {
+            key: "active" if not reasons_by_layer.get(key) else "shadow"
+            for key in ("market", "sector", "risk", "quality")
+        }
+        reasons = sorted({reason for values in reasons_by_layer.values() for reason in values})
         promotion = (
-            promote_model_bundle(version, result["status"])
-            if not reasons else {"promoted": False, "reason": "promotion_gate_failed"}
+            promote_model_bundle(version, eligible_status)
+            if not reasons_by_layer.get("market")
+            else {"promoted": False, "reason": "market_promotion_gate_failed"}
         )
         run = {
             **base_run,
@@ -169,7 +220,9 @@ def run_daily_evolution(csv_manager: CSVManager | None = None) -> dict:
             "metrics": {
                 "strategy": "super-b1-original",
                 "labels": labels,
+                "reference_snapshot": reference_snapshot,
                 "validation_status": result["status"],
+                "promotion_reasons_by_layer": reasons_by_layer,
                 "aggregate": result["aggregate"],
                 "promotion": promotion,
             },

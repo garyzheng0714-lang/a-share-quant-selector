@@ -11,6 +11,8 @@ DEFAULTS = {
     "enabled": True,
     "strict_unvalidated_gate": True,
     "preopen_event_check": True,
+    # 周线四均线是目标硬门槛，但在历史口径重建通过前只记录影子结果。
+    "weekly_gate_mode": "shadow",
 }
 
 
@@ -37,4 +39,7 @@ def get_decision_config() -> dict:
     result["preopen_event_check"] = _env_bool(
         "DECISION_PREOPEN_EVENTS", bool(result["preopen_event_check"])
     )
+    weekly_mode = os.getenv("DECISION_WEEKLY_GATE_MODE", result["weekly_gate_mode"])
+    weekly_mode = str(weekly_mode).strip().lower()
+    result["weekly_gate_mode"] = weekly_mode if weekly_mode in {"off", "shadow", "active"} else "shadow"
     return result

@@ -15,7 +15,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "performance", label: "整体战绩" },
   { key: "superb1", label: "超级B1" },
   { key: "history", label: "每日名单" },
-  { key: "picks", label: "AI 荐票" },
+  { key: "picks", label: "旧版 AI" },
 ];
 
 /**
