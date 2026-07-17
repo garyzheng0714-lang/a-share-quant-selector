@@ -174,6 +174,9 @@ export interface SectorHot {
   trend: "up" | "down" | "flat";
   breadth_ma10: number;
   turn_ratio: number;
+  heat_series?: number[];
+  relative_strength?: number;
+  breadth?: number;
 }
 
 export interface SectorRelay {
@@ -187,6 +190,8 @@ export interface SectorsData {
   available: boolean;
   reason?: string;
   trade_date?: string;
+  computed_at?: string;
+  series_dates?: string[];
   industries?: number;
   stocks?: number;
   hot?: SectorHot[];
@@ -206,6 +211,12 @@ export interface SectorDetailStock {
   confirmation_count: number;
   confirmations: string[];
   action: DecisionAction;
+  reason_codes?: string[];
+  weekly?: WeeklyFourLineState | null;
+  decision_run_id?: string | null;
+  decision_as_of?: string | null;
+  data_status?: "complete" | "partial";
+  risk_status?: "passed" | "blocked" | "not_evaluated";
 }
 
 export interface SectorDetailData {
@@ -590,7 +601,7 @@ export interface EvolutionStatus {
   labels_updated: number;
   dataset_rows: number;
   challenger_version?: string | null;
-  promotion_status: "promoted" | "kept_champion" | "not_evaluated";
+  promotion_status: "promoted" | "shadow_registered" | "kept_champion" | "not_evaluated";
   reason_codes: string[];
   outcomes?: {
     buy?: { count: number; win_rate: number | null; avg_net_ret_5: number | null };
@@ -603,6 +614,61 @@ export interface EvolutionStatus {
 export interface EvolutionResponse {
   available: boolean;
   data: EvolutionStatus | null;
+}
+
+export interface SystemStatusResponse {
+  available: boolean;
+  as_of?: string;
+  market_data?: {
+    fresh: boolean;
+    local_date: string | null;
+    expected_date: string;
+  };
+  decision?: {
+    available: boolean;
+    run_id?: string | null;
+    trade_date?: string | null;
+    status?: string | null;
+    final_action?: DecisionAction | null;
+    model_version: string;
+    candidate_counts: Record<"buy" | "observe" | "avoid", number>;
+    reason_codes: string[];
+  };
+  ai?: {
+    ai_run_id?: string;
+    status: "not_called" | "abstained" | "explained" | "shadow_ranked" | "failed";
+    model?: string | null;
+    reason_codes: string[];
+    created_at?: string;
+  };
+  evolution?: {
+    evolution_id?: string;
+    status: string;
+    promotion_status: string;
+    reason_codes: string[];
+    trade_date?: string;
+  };
+  paper?: {
+    established: boolean;
+    reason?: string;
+    account_id?: string;
+    rule_version?: string;
+    cash?: number;
+    market_value?: number;
+    total_equity?: number;
+    net_return?: number | null;
+    nav_days?: number;
+    pending_orders?: number;
+    track_record_state?: string;
+    benchmark_state?: string;
+    latest_nav_date?: string | null;
+  };
+  policy?: {
+    active_policy_version: string;
+    release_id?: string | null;
+    state: "active" | "baseline_only";
+    daily_auto_promotion: boolean;
+  };
 }
 
 export interface FactorMeta {
@@ -706,6 +772,7 @@ export const api = {
   getQuantComment: () => request<QuantComment>("/api/quant-comment"),
   getLatestDecision: () => request<DecisionResponse>("/api/decision/latest"),
   getEvolutionStatus: () => request<EvolutionResponse>("/api/decision/evolution"),
+  getSystemStatus: () => request<SystemStatusResponse>("/api/decision/system-status"),
   getFactorScan: (strategy: string, date?: string) =>
     request<FactorScanResponse>(
       `/api/factor-scan?strategy=${encodeURIComponent(strategy)}${date ? `&date=${date}` : ""}`,

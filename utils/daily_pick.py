@@ -9,7 +9,8 @@
 - ark（默认）：火山方舟 GLM 等 OpenAI 兼容接口，requests 直调，无额外依赖
 - anthropic：Claude 官方 SDK
 
-API Key 来源（按优先级）：config/config.yaml 的 llm.api_key > 环境变量 ANTHROPIC_API_KEY
+API Key 来源（按优先级）：config/config.yaml 的 llm.api_key > provider 对应的环境变量
+（Ark 使用 ARK_API_KEY，Anthropic 使用 ANTHROPIC_API_KEY）。
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import json
 import logging
 import os
 import re
+from uuid import uuid4
 from datetime import datetime
 from pathlib import Path
 
@@ -72,9 +74,24 @@ def _load_llm_config() -> dict:
         return {}
 
 
-def get_api_key():
-    llm_cfg = _load_llm_config()
-    return llm_cfg.get("api_key") or os.environ.get("ANTHROPIC_API_KEY")
+def _get_llm_provider(llm_cfg: dict | None = None) -> str | None:
+    if llm_cfg is None:
+        llm_cfg = _load_llm_config()
+    provider = str(llm_cfg.get("provider") or "ark").strip().lower()
+    return provider if provider in {"ark", "anthropic"} else None
+
+
+def get_api_key(llm_cfg: dict | None = None):
+    if llm_cfg is None:
+        llm_cfg = _load_llm_config()
+    provider = _get_llm_provider(llm_cfg)
+    env_name = {
+        "ark": "ARK_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+    }.get(provider)
+    if env_name is None:
+        return None
+    return llm_cfg.get("api_key") or os.environ.get(env_name)
 
 
 _PICKS_SCHEMA = """
@@ -302,7 +319,11 @@ def generate_daily_pick(force: bool = False, candidates: list = None,
     """
     init_picks_table()
 
-    api_key = get_api_key()
+    llm_cfg = _load_llm_config()
+    provider = _get_llm_provider(llm_cfg)
+    if provider is None:
+        return {"available": False, "reason": "不支持的大模型 provider"}
+    api_key = get_api_key(llm_cfg)
     if not api_key:
         return {
             "available": False,
@@ -329,9 +350,6 @@ def generate_daily_pick(force: bool = False, candidates: list = None,
     perf_summary = get_summary()
     csv_manager = CSVManager("data")
     prompt = _build_prompt(run_date, candidates, thermometer, perf_summary, csv_manager)
-
-    llm_cfg = _load_llm_config()
-    provider = (llm_cfg.get("provider") or "ark").lower()
 
     try:
         if provider == "anthropic":
@@ -442,8 +460,10 @@ def get_pick_history(limit: int = 30) -> list:
 # ============================================================================
 
 _COMMENTS_SCHEMA = """
-    CREATE TABLE IF NOT EXISTS quant_comments (
-        trade_date TEXT PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS quant_comment_runs (
+        comment_id TEXT PRIMARY KEY,
+        trade_date TEXT NOT NULL,
+        decision_run_id TEXT,
         payload_json TEXT NOT NULL,
         model TEXT,
         created_at TEXT NOT NULL
@@ -593,9 +613,19 @@ def get_quant_comment(trade_date: str):
     init_comments_table()
     with _get_conn() as conn:
         row = conn.execute(
-            "SELECT payload_json, model, created_at FROM quant_comments WHERE trade_date = ?",
+            "SELECT payload_json, model, created_at FROM quant_comment_runs "
+            "WHERE trade_date = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
             (trade_date,),
         ).fetchone()
+        if row is None:
+            legacy_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='quant_comments'"
+            ).fetchone()
+            if legacy_exists:
+                row = conn.execute(
+                    "SELECT payload_json, model, created_at FROM quant_comments "
+                    "WHERE trade_date = ?", (trade_date,),
+                ).fetchone()
     if row is None:
         return None
     payload = orjson.loads(row["payload_json"])
@@ -627,7 +657,11 @@ def generate_quant_comment(
             ):
                 return {"available": True, "cached": True, **existing}
 
-    api_key = get_api_key()
+    llm_cfg = _load_llm_config()
+    provider = _get_llm_provider(llm_cfg)
+    if provider is None:
+        return {"available": False, "reason": "不支持的大模型 provider"}
+    api_key = get_api_key(llm_cfg)
     if not api_key:
         return {"available": False, "reason": "未配置大模型 API Key"}
 
@@ -635,9 +669,6 @@ def generate_quant_comment(
     prompt = _build_comment_prompt(
         trade_date, stocks, CSVManager("data"), decision_run_id=decision_run_id,
     )
-    llm_cfg = _load_llm_config()
-    provider = (llm_cfg.get("provider") or "ark").lower()
-
     try:
         if provider == "anthropic":
             result, model = _call_anthropic_comment(api_key, llm_cfg, prompt)
@@ -664,8 +695,10 @@ def generate_quant_comment(
     now = datetime.now().isoformat()
     with _get_conn() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO quant_comments (trade_date, payload_json, model, created_at) "
-            "VALUES (?, ?, ?, ?)",
-            (trade_date, orjson.dumps(payload).decode(), model, now),
+            "INSERT INTO quant_comment_runs "
+            "(comment_id, trade_date, decision_run_id, payload_json, model, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (uuid4().hex[:24], trade_date, decision_run_id,
+             orjson.dumps(payload).decode(), model, now),
         )
     return {"available": True, "cached": False, "model": model, "created_at": now, **payload}

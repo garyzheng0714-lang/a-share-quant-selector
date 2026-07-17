@@ -35,6 +35,7 @@ class SectorRotationCacheTest(unittest.TestCase):
             expected = {
                 "available": True,
                 "trade_date": "2026-07-14",
+                "cache_version": sector_rotation.SECTOR_CACHE_VERSION,
                 "heat_map": {"医药": {"score": 80}},
                 "universe_fingerprint": "same-map",
             }

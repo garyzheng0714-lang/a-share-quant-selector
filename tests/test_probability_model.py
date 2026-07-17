@@ -28,6 +28,13 @@ class ProbabilityModelTest(unittest.TestCase):
         self.assertTrue(np.isfinite(model.coef).all())
         self.assertTrue(np.isfinite(model.predict_proba(frame)).all())
 
+    def test_copy_on_write_frame_does_not_raise_read_only_assignment(self):
+        with pd.option_context("mode.copy_on_write", True):
+            frame = pd.DataFrame({"x": [1.0, np.inf, 3.0], "y": [0, 1, 0]})
+            probability = BinaryLogit(["x"]).fit(frame, "y").predict_proba(frame)
+
+        self.assertTrue(np.isfinite(probability).all())
+
 
 if __name__ == "__main__":
     unittest.main()

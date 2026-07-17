@@ -1,10 +1,17 @@
-import { Outlet } from "react-router-dom";
+import { useEffect } from "react";
+import { Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence } from "framer-motion";
 import { NavBar } from "./nav-bar";
 import { BottomNav } from "./bottom-nav";
 import { ToastContainer } from "@/components/ui/toast";
 
 export function RootLayout() {
+  const location = useLocation();
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [location.pathname]);
+
   return (
     <>
       <NavBar />

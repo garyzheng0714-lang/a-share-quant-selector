@@ -53,7 +53,8 @@ class HierarchicalWalkForwardTest(unittest.TestCase):
             "date": "2026-01-05", "label_end_date": "2026-01-12",
             "code": "600000", "industry": "银行",
             "reference_snapshot_date": "2026-01-05", "universe_coverage": 1.0,
-            "weekly_passed": 1, "net_return_5": 1.0, "excess_5": 0.5,
+            "weekly_passed": 1, "execution_status": "filled_round_trip",
+            "net_return_5": 1.0, "excess_5": 0.5,
             "y_quality": 1, "y_risk": 0,
         }
         row.update({

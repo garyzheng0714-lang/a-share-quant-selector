@@ -4,6 +4,7 @@ from unittest.mock import patch
 from flask import Flask
 
 from views.decision_api import decision_bp
+from views.insight_api import insight_bp
 from utils.decision_versions import strategy_version
 
 
@@ -11,7 +12,14 @@ class DecisionApiTest(unittest.TestCase):
     def setUp(self):
         self.app = Flask(__name__)
         self.app.register_blueprint(decision_bp)
+        self.app.register_blueprint(insight_bp)
         self.client = self.app.test_client()
+
+    def test_legacy_daily_pick_generation_stays_disabled(self):
+        response = self.client.post("/api/daily-pick")
+
+        self.assertEqual(response.status_code, 410)
+        self.assertEqual(response.json["reason"], "legacy_generation_disabled")
 
     @patch("views.decision_api.list_models", return_value=[])
     @patch("views.decision_api.get_latest_decision")
@@ -46,6 +54,36 @@ class DecisionApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json["available"])
         self.assertEqual(response.json["data"]["promotion_status"], "kept_champion")
+
+    @patch("utils.paper_trading.get_paper_status", return_value={
+        "established": True, "track_record_state": "collecting", "nav_days": 2,
+    })
+    @patch("views.decision_api.get_active_policy", return_value=None)
+    @patch("views.decision_api.get_latest_ai_decision_run", return_value={
+        "status": "not_called", "reason_codes": ["no_approved_candidates"],
+    })
+    @patch("views.decision_api.get_latest_evolution", return_value={
+        "status": "complete", "promotion_status": "shadow_registered",
+    })
+    @patch("views.decision_api.get_latest_decision", return_value={
+        "run_id": "run-1", "trade_date": "2026-07-14", "status": "degraded",
+        "final_action": "observe", "model_version": "baseline-only",
+        "reason_codes": ["market_model_unvalidated"],
+        "candidates": [{"action": "observe"}, {"action": "observe"}],
+    })
+    @patch("utils.data_freshness.local_data_status", return_value={
+        "fresh": True, "local_date": "2026-07-14", "expected_date": "2026-07-14",
+    })
+    def test_system_status_exposes_truthful_end_to_end_state(
+        self, _freshness, _decision, _evolution, _ai, _policy, _paper,
+    ):
+        response = self.client.get("/api/decision/system-status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["decision"]["candidate_counts"]["observe"], 2)
+        self.assertEqual(response.json["ai"]["status"], "not_called")
+        self.assertEqual(response.json["policy"]["active_policy_version"], "baseline-only")
+        self.assertFalse(response.json["policy"]["daily_auto_promotion"])
 
     @patch("views.decision_api.list_models", return_value=[])
     @patch("views.decision_api.get_latest_decision", return_value={"run_id": "old"})

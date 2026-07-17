@@ -16,22 +16,21 @@ dingtalk:
   webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN_HERE"
   secret: "YOUR_SECRET_HERE"
 
-# 定时任务配置
-schedule:
-  time: "17:00"  # 每日执行时间
-
 # 数据更新配置
 update:
   lookback_days: 10
   skip_failed: true
 
-# 大模型配置（仅用于有证据的事件分类与决策解释，可选；不参与自由荐股或排序）
-# 1. 到 https://platform.claude.com 申请 API Key
-# 2. 填入下方（或改用环境变量 ANTHROPIC_API_KEY）
-# 3. 不配置时荐票功能自动停用，其他功能不受影响
+# 大模型配置（可选）：只用于候选解释与公告风险标签，不参与自由荐股或排序。
+# provider=ark 时 model 必须填写火山方舟接入点 ID（ep-...）；
+# provider=anthropic 时 model 可留空使用代码默认值。
+# api_key 也可通过 provider 对应的环境变量提供：Ark 使用 ARK_API_KEY，
+# Anthropic 使用 ANTHROPIC_API_KEY。未配置时解释功能停用，不影响规则决策。
 llm:
-  api_key: ""              # sk-ant-...
-  model: "claude-opus-4-8" # 默认即可
+  provider: "ark"  # ark | anthropic
+  api_key: ""
+  model: ""        # Ark: ep-...；Anthropic: 可选模型名
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
 
 # 分层决策：市场 → 板块 → 个股 → 执行
 # 紧急回退也可设置 DECISION_HIERARCHY_ENABLED=false，无需修改文件。
@@ -39,3 +38,4 @@ decision:
   enabled: true
   strict_unvalidated_gate: true  # 市场/板块模型未通过走查时，只观察、不荐买
   preopen_event_check: true      # 08:45 复核隔夜公告；数据源失败则降级为观察
+  weekly_gate_mode: "shadow"     # off | shadow | active；历史时点验证完成前保持 shadow

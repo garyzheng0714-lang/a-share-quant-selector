@@ -1,4 +1,5 @@
 import { NavLink, Link, useLocation } from "react-router-dom";
+import { useSystemStatus } from "@/lib/hooks";
 
 const navItems = [
   { to: "/sectors", label: "板块", matches: ["/sectors"] },
@@ -7,6 +8,8 @@ const navItems = [
 
 export function NavBar() {
   const location = useLocation();
+  const status = useSystemStatus();
+  const fresh = status.data?.market_data?.fresh;
   return (
     <header className="nav-island fixed inset-x-0 top-0 z-50">
       <nav className="mx-auto flex h-14 max-w-6xl items-center px-4 sm:px-6" aria-label="主导航">
@@ -31,8 +34,8 @@ export function NavBar() {
           })}
         </div>
         <div className="ml-auto flex items-center gap-2 text-[11px] text-ink-muted">
-          <span className="h-1.5 w-1.5 rounded-full bg-bear" aria-hidden="true" />
-          <span>数据就绪</span>
+          <span className={`h-1.5 w-1.5 rounded-full ${fresh === true ? "bg-bear" : fresh === false ? "bg-bull" : "bg-ink-muted"}`} aria-hidden="true" />
+          <span>{fresh === true ? "数据就绪" : fresh === false ? "数据过期" : "检查中"}</span>
         </div>
       </nav>
     </header>

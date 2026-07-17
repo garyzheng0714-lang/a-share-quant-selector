@@ -108,7 +108,9 @@ def api_sector_detail(sector_name):
                 ret5 = (close / float(frame.iloc[-1]["close"]) - 1) * 100 if len(frame) > 5 else None
                 hit = b1_map.get(code)
                 aux = confirmations.get(code, [])
-                action = actions.get(code, {}).get("action", "observe" if hit else "none")
+                decision_item = actions.get(code, {})
+                action = decision_item.get("action", "observe" if hit else "none")
+                baseline = decision_item.get("baseline") or {}
                 stocks.append({
                     "code": code, "name": names.get(code, code), "close": round(close, 2),
                     "ret1": round(ret1, 2) if ret1 is not None else None,
@@ -116,6 +118,15 @@ def api_sector_detail(sector_name):
                     "b1": bool(hit), "b1_signals": (hit or {}).get("signal_labels") or [],
                     "confirmation_count": len(aux), "confirmations": aux,
                     "action": action,
+                    "reason_codes": decision_item.get("reason_codes", []),
+                    "weekly": baseline.get("weekly") or (hit or {}).get("weekly"),
+                    "decision_run_id": decision.get("run_id") if decision_item else None,
+                    "decision_as_of": decision.get("as_of") if decision_item else None,
+                    "data_status": "complete" if len(frame) >= 6 else "partial",
+                    "risk_status": (
+                        "blocked" if action == "avoid" else
+                        "passed" if action == "buy" else "not_evaluated"
+                    ),
                 })
             except Exception as e:
                 logger.warning("板块详情跳过异常行情 %s: %s", code, e)

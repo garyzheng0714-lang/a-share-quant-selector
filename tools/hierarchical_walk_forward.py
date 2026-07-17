@@ -1,7 +1,7 @@
 """市场 -> 板块 -> 个股的月度 walk-forward 与消融评估。
 
-输出的模型默认是 shadow。只有在多个真正未来月份中对纯规则
-baseline 有增量的层，才会在 model_registry 中标为 active。
+输出的模型默认是 shadow。walk-forward 只形成研究证据和完整策略候选，
+无权直接改变生产策略。
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from strategy.factor_lib import FactorContext  # noqa: E402
 from utils.csv_manager import CSVManager  # noqa: E402
-from utils.decision_ledger import register_model  # noqa: E402
+from utils.decision_ledger import register_model, register_policy_candidate  # noqa: E402
 from utils.decision_versions import FEATURE_VERSION, strategy_version  # noqa: E402
 from utils.execution_model import evaluate_trade  # noqa: E402
 from utils.market_filter import is_main_board, main_board_only  # noqa: E402
@@ -42,16 +42,16 @@ STOCK_FEATURES = [
     "stock_pct", "stock_j", "stock_rsi", "stock_vol_ratio", "stock_vs_ma20",
     "stock_vs_ma60", "stock_vs_peak60", "stock_position20", "stock_amplitude",
 ]
-DATASET_SCHEMA_VERSION = 2
+DATASET_SCHEMA_VERSION = 3
 MIN_REFERENCE_COVERAGE = 0.60
 BOOTSTRAP_ITERATIONS = 400
 FAMILYWISE_POSITIVE_PROBABILITY = 0.9875
 REQUIRED_DATASET_COLUMNS = {
     "dataset_schema_version", "date", "label_end_date", "code", "industry",
-    "reference_snapshot_date", "universe_coverage", "weekly_passed",
+    "reference_snapshot_date", "universe_coverage", "weekly_passed", "execution_status",
     "net_return_5", "excess_5", "y_quality", "y_risk",
 } | set(MARKET_FEATURES) | set(SECTOR_FEATURES) | set(STOCK_FEATURES)
-MIN_REFERENCE_MONTHS = 16
+MIN_REFERENCE_MONTHS = 21
 
 
 def _read_stock(cm: CSVManager, code: str, industry: str) -> pd.DataFrame | None:
@@ -210,7 +210,8 @@ def _signals_one(args) -> list[dict]:
         market_forward = (market.loc[future_date, "market_index"] / market.loc[date, "market_index"] - 1) * 100
         net_return = execution.get("net_return")
         if net_return is None:
-            net_return = -20.0
+            # 不可买、不可卖和标签尚未成熟不是投资亏损，不能塞入收益标签。
+            continue
         m = market.loc[date]
         s = sector.loc[(date, industry)]
         record = {
@@ -222,6 +223,7 @@ def _signals_one(args) -> list[dict]:
             "weekly_passed": int(weekly_passed),
             "weekly_aligned": int(bool(weekly_detail.get("aligned"))),
             "weekly_rising_count": int(weekly_detail.get("rising_count", 0)),
+            "execution_status": "filled_round_trip",
             "b1_signals": "|".join(hit.get("signals") or []),
             "net_return_5": float(net_return), "market_forward_5": float(market_forward),
             "excess_5": float(net_return - market_forward),
@@ -609,7 +611,7 @@ def train_and_register(frame: pd.DataFrame, output: Path) -> dict:
     version = f"hierarchy-{digest}"
     trained = datetime.now().astimezone().isoformat(timespec="seconds")
     bundle = {
-        "version": version, "trained_as_of": trained,
+        "version": version, "policy_version": version, "trained_as_of": trained,
         "train_range": [str(frame.date.min()), str(frame.date.max())],
         "thresholds": report["thresholds"], "status": report["status"],
         "threshold_source": report["threshold_source"],
@@ -627,7 +629,7 @@ def train_and_register(frame: pd.DataFrame, output: Path) -> dict:
     for key, model in models.items():
         validation_status = report["status"].get(key, "shadow")
         register_model({
-            # 训练通过也先进入 shadow；只有每日进化器能原子晋级整套模型。
+            # 训练通过也只进入 shadow；发布必须经过独立的完整策略审核窗口。
             "model_key": key, "version": version,
             "status": "shadow" if validation_status == "active" else validation_status,
             "trained_as_of": trained, "train_range": "/".join(bundle["train_range"]),
@@ -640,6 +642,22 @@ def train_and_register(frame: pd.DataFrame, output: Path) -> dict:
             "metrics": report["aggregate"].get(key, {}), "source_refs": bundle["source_refs"],
             "artifact": model.to_dict(),
         })
+    register_policy_candidate({
+        "policy_version": version,
+        "research_status": "shadow",
+        "trained_as_of": trained,
+        "train_range": "/".join(bundle["train_range"]),
+        "test_range": "/".join([f["month"] for f in report["folds"]]),
+        "component_versions": {key: version for key in models},
+        "metrics": {"full": report["aggregate"].get("full", {}),
+                    "baseline": report["aggregate"].get("baseline", {})},
+        "evidence": {
+            "state": "forward_observation_required",
+            "bootstrap": report["bootstrap"].get("full", {}),
+            "folds": len(report["folds"]),
+        },
+        "source_refs": bundle["source_refs"],
+    })
     return {**report, "bundle": bundle}
 
 
