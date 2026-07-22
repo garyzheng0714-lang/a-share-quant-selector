@@ -4,6 +4,11 @@ akshare==1.18.73 \
     --hash=sha256:6ba5afbb36084963971f924e0902341b08651b5d4d9cfa581a1e976c8650b74f \
     --hash=sha256:bbda6b1948b799399919b9c169e01d203d3dcbf3941ca2d9d4c5cc5a536ee53a
     # via -r requirements.in
+akracer==0.0.14 ; platform_system == "Linux" \
+    --hash=sha256:629eaccd0e1d18366804b797eb2692ed47bed0028f55b5a5af3cc277d521df04
+    # via
+    #   -r requirements.in
+    #   akshare
 annotated-types==0.7.0 \
     --hash=sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53 \
     --hash=sha256:aff07c09a53a08bc8cfccb9c85b05f1aa9a2a6f23728d790723543408344ce89
@@ -661,7 +666,7 @@ mdurl==0.1.2 \
     --hash=sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8 \
     --hash=sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba
     # via markdown-it-py
-mini-racer==0.14.1 \
+mini-racer==0.14.1 ; platform_system != "Linux" \
     --hash=sha256:0df25889b7c4e753520324a1687d85e41f9f64984efa81963339ed400f004d49 \
     --hash=sha256:440bef1269655b1da94b550612b50669de9881c3d88b805c139f7f1b5ec8ae7b \
     --hash=sha256:4abd58c62c9955988dbc0cbf5a798914334fe570d2b192f8890bec20135ab6d1 \
@@ -889,6 +894,11 @@ pycparser==3.0 \
     --hash=sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29 \
     --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
     # via cffi
+py-mini-racer==0.6.0 ; platform_system == "Linux" \
+    --hash=sha256:42896c24968481dd953eeeb11de331f6870917811961c9b26ba09071e07180e2
+    # via
+    #   -r requirements.in
+    #   akshare
 pydantic==2.13.4 \
     --hash=sha256:45a282cde31d808236fd7ea9d919b128653c8b38b393d1c4ab335c62924d9aba \
     --hash=sha256:c40756b57adaa8b1efeeced5c196f3f3b7c435f90e84ea7f443901bec8099ef6

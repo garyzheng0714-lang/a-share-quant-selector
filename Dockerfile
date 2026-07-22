@@ -2,6 +2,8 @@
 ARG NODE_IMAGE=node:22.17.1-bookworm-slim@sha256:2fa754a9ba4d7adbd2a51d182eaabbe355c82b673624035a38c0d42b08724854
 ARG PYTHON_IMAGE=python:3.11.9-slim-bookworm@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317
 
+# 变量默认值与发布参数都同时锁定 tag 和 digest；Hadolint 无法解析 FROM 中的 ARG。
+# hadolint ignore=DL3006
 FROM ${NODE_IMAGE} AS frontend-builder
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
@@ -9,6 +11,7 @@ RUN npm ci --ignore-scripts
 COPY frontend/ ./
 RUN npm run build
 
+# hadolint ignore=DL3006
 FROM ${PYTHON_IMAGE} AS python-dependencies
 WORKDIR /build
 COPY requirements.lock ./
@@ -17,6 +20,7 @@ RUN pip install --no-cache-dir --no-compile --no-build-isolation \
     --require-hashes --only-binary=:all: --no-binary=jsonpath \
     --prefix=/install -r requirements.lock
 
+# hadolint ignore=DL3006
 FROM ${PYTHON_IMAGE} AS runtime
 ARG GIT_COMMIT_SHA
 LABEL org.opencontainers.image.revision="${GIT_COMMIT_SHA}"
