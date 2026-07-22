@@ -1,0 +1,17 @@
+services:
+  migrate:
+    build:
+      context: .
+      args:
+        GIT_COMMIT_SHA: ${GIT_COMMIT_SHA:-development}
+    image: a-share-quant:dev
+  web:
+    build:
+      context: .
+      args:
+        GIT_COMMIT_SHA: ${GIT_COMMIT_SHA:-development}
+    image: a-share-quant:dev
+  canary:
+    image: a-share-quant:dev
+  worker:
+    image: a-share-quant:dev

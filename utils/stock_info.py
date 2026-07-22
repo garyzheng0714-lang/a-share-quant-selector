@@ -5,8 +5,12 @@
 缓存策略: JSON 文件本地缓存，每日最多刷新一次
 """
 
+from __future__ import annotations
+
 import json
+import hashlib
 import logging
+import os
 import requests
 import time
 from datetime import datetime
@@ -54,7 +58,12 @@ def _is_cache_valid(cache_path: Path) -> bool:
         return False
 
 
-def fetch_industry_mapping(force: bool = False) -> dict[str, str]:
+def fetch_industry_mapping(
+    force: bool = False,
+    *,
+    data_dir: str | Path | None = None,
+    allow_stale_cache: bool = True,
+) -> dict[str, str]:
     """获取全部 A 股的行业分类映射: {stock_code: industry_name}.
 
     通过遍历东方财富行业板块，获取每个板块的成分股，
@@ -66,9 +75,11 @@ def fetch_industry_mapping(force: bool = False) -> dict[str, str]:
     Returns:
         {stock_code: industry_name} 映射字典
     """
-    if not force and _is_cache_valid(INDUSTRY_CACHE):
+    data_root = Path(data_dir) if data_dir is not None else DATA_DIR
+    industry_cache = data_root / "stock_industry.json"
+    if not force and _is_cache_valid(industry_cache):
         try:
-            with open(INDUSTRY_CACHE, "r", encoding="utf-8") as f:
+            with open(industry_cache, "r", encoding="utf-8") as f:
                 data = json.load(f)
             mapping = {k: v for k, v in data.items() if not k.startswith("_")}
             if mapping:
@@ -86,7 +97,7 @@ def fetch_industry_mapping(force: bool = False) -> dict[str, str]:
         board_df = ak.stock_board_industry_name_em()
         if board_df is None or board_df.empty:
             logger.warning("获取行业板块名称失败")
-            return _load_cached_industry()
+            return _load_cached_industry(industry_cache) if allow_stale_cache else {}
 
         industry_names = board_df["板块名称"].tolist()
         total = len(industry_names)
@@ -114,9 +125,11 @@ def fetch_industry_mapping(force: bool = False) -> dict[str, str]:
 
         if mapping:
             cache_data = {**mapping, "_updated_at": datetime.now().isoformat()}
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
-            with open(INDUSTRY_CACHE, "w", encoding="utf-8") as f:
+            data_root.mkdir(parents=True, exist_ok=True)
+            tmp = industry_cache.with_suffix(f".{os.getpid()}.tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f, ensure_ascii=False, indent=2)
+            tmp.replace(industry_cache)
             logger.info("行业分类缓存已保存: %d 只股票", len(mapping))
 
     except ImportError:
@@ -124,14 +137,16 @@ def fetch_industry_mapping(force: bool = False) -> dict[str, str]:
     except Exception as e:
         logger.error("获取行业分类失败: %s", e)
 
-    return mapping if mapping else _load_cached_industry()
+    if mapping:
+        return mapping
+    return _load_cached_industry(industry_cache) if allow_stale_cache else {}
 
 
-def _load_cached_industry() -> dict[str, str]:
+def _load_cached_industry(cache_path: Path = INDUSTRY_CACHE) -> dict[str, str]:
     """降级：从缓存加载行业映射（即使过期）."""
-    if INDUSTRY_CACHE.exists():
+    if cache_path.exists():
         try:
-            with open(INDUSTRY_CACHE, "r", encoding="utf-8") as f:
+            with open(cache_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return {k: v for k, v in data.items() if not k.startswith("_")}
         except Exception:
@@ -161,11 +176,15 @@ def _parse_market_cap(value) -> float:
         return 0
 
 
-def _save_market_caps(caps: dict[str, dict]) -> None:
+def _save_market_caps(
+    caps: dict[str, dict], cache_path: Path = MARKET_CAP_CACHE
+) -> None:
     cache_data = {**caps, "_updated_at": datetime.now().isoformat()}
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with open(MARKET_CAP_CACHE, "w", encoding="utf-8") as f:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cache_path.with_suffix(f".{os.getpid()}.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cache_data, f, ensure_ascii=False)
+    tmp.replace(cache_path)
 
 
 def _fetch_market_caps_tencent(stock_codes: list[str]) -> dict[str, dict]:
@@ -219,7 +238,11 @@ def _fetch_market_caps_tencent(stock_codes: list[str]) -> dict[str, dict]:
 
 
 def fetch_market_caps(
-    force: bool = False, stock_codes: Optional[list[str]] = None
+    force: bool = False,
+    stock_codes: Optional[list[str]] = None,
+    *,
+    data_dir: str | Path | None = None,
+    allow_stale_cache: bool = True,
 ) -> dict[str, dict]:
     """获取全部 A 股的实时市值数据.
 
@@ -227,10 +250,12 @@ def fetch_market_caps(
         {stock_code: {"total_mv": 总市值, "circ_mv": 流通市值}} (单位: 元)
     """
     requested_codes = [str(code).zfill(6) for code in stock_codes or []]
+    data_root = Path(data_dir) if data_dir is not None else DATA_DIR
+    market_cap_cache = data_root / "stock_market_cap.json"
 
-    if not force and _is_cache_valid(MARKET_CAP_CACHE):
+    if not force and _is_cache_valid(market_cap_cache):
         try:
-            with open(MARKET_CAP_CACHE, "r", encoding="utf-8") as f:
+            with open(market_cap_cache, "r", encoding="utf-8") as f:
                 data = json.load(f)
             caps = {k: v for k, v in data.items() if not k.startswith("_")}
             if caps:
@@ -241,7 +266,7 @@ def fetch_market_caps(
                 ]
                 if missing:
                     caps.update(_fetch_market_caps_tencent(missing))
-                    _save_market_caps(caps)
+                    _save_market_caps(caps, market_cap_cache)
                 logger.info("从缓存加载市值数据: %d 只股票", len(caps))
                 return caps
         except Exception:
@@ -273,7 +298,7 @@ def fetch_market_caps(
                 ]
                 if missing:
                     caps.update(_fetch_market_caps_tencent(missing))
-                _save_market_caps(caps)
+                _save_market_caps(caps, market_cap_cache)
                 logger.info("市值数据缓存已保存: %d 只股票", len(caps))
 
     except ImportError:
@@ -284,21 +309,101 @@ def fetch_market_caps(
     if not caps and requested_codes:
         caps = _fetch_market_caps_tencent(requested_codes)
         if caps:
-            _save_market_caps(caps)
+            _save_market_caps(caps, market_cap_cache)
 
-    return caps if caps else _load_cached_market_caps()
+    if caps:
+        return caps
+    return _load_cached_market_caps(market_cap_cache) if allow_stale_cache else {}
 
 
-def _load_cached_market_caps() -> dict[str, dict]:
+def _load_cached_market_caps(cache_path: Path = MARKET_CAP_CACHE) -> dict[str, dict]:
     """降级：从缓存加载市值数据."""
-    if MARKET_CAP_CACHE.exists():
+    if cache_path.exists():
         try:
-            with open(MARKET_CAP_CACHE, "r", encoding="utf-8") as f:
+            with open(cache_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return {k: v for k, v in data.items() if not k.startswith("_")}
         except Exception:
             pass
     return {}
+
+
+def _content_hash(mapping: dict) -> str:
+    clean = {
+        key: value for key, value in mapping.items() if not str(key).startswith("_")
+    }
+    return hashlib.sha256(
+        json.dumps(
+            clean, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+
+
+def refresh_reference_metadata(
+    data_dir: str | Path,
+    stock_codes: list[str],
+    trade_date: str,
+    *,
+    minimum_industry_coverage: float = 0.80,
+    minimum_cap_coverage: float = 0.95,
+) -> dict:
+    """为一个 staging snapshot 获取当日参考数据；失败时不沿用旧映射。"""
+    root = Path(data_dir)
+    codes = sorted({str(code).zfill(6) for code in stock_codes})
+    industries = fetch_industry_mapping(
+        force=True,
+        data_dir=root,
+        allow_stale_cache=False,
+    )
+    caps = fetch_market_caps(
+        force=True,
+        stock_codes=codes,
+        data_dir=root,
+        allow_stale_cache=False,
+    )
+    industry_count = sum(
+        code in industries and bool(industries[code]) for code in codes
+    )
+    cap_count = sum(
+        code in caps
+        and isinstance(caps[code], dict)
+        and bool(caps[code].get("circ_mv") or caps[code].get("total_mv"))
+        for code in codes
+    )
+    total = len(codes)
+    industry_ratio = industry_count / total if total else 0.0
+    cap_ratio = cap_count / total if total else 0.0
+    valid = (
+        total >= 3000
+        and industry_ratio >= minimum_industry_coverage
+        and cap_ratio >= minimum_cap_coverage
+    )
+    manifest = {
+        "schema_version": "reference-data-v1",
+        "as_of": trade_date,
+        "captured_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "universe_count": total,
+        "industry": {
+            "source_id": "akshare-eastmoney",
+            "count": industry_count,
+            "coverage_ratio": round(industry_ratio, 6),
+            "content_hash": _content_hash(industries),
+        },
+        "market_cap": {
+            "source_id": "akshare-eastmoney+tencent",
+            "count": cap_count,
+            "coverage_ratio": round(cap_ratio, 6),
+            "content_hash": _content_hash(caps),
+        },
+        "valid": valid,
+    }
+    target = root / "reference_data_manifest.json"
+    tmp = target.with_suffix(f".{os.getpid()}.tmp")
+    tmp.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+    tmp.replace(target)
+    return manifest
 
 
 def fetch_stock_profile(code: str) -> Optional[dict]:

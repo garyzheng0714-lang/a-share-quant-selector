@@ -1,28 +1,33 @@
 """超级B1全市场扫描 - 文件缓存 + 并行读取（缓存模式与 sector_rotation 一致）
 
-独立模块：不写 results/performance 表（避免污染碗口策略的战绩统计），
-只产出展示用的信号清单。战绩独立追踪属第二期，待用户拍板。
+独立模块：不写旧 results/performance 表，只发布与当前 snapshot 绑定的候选缓存；
+正式表现统计只读取 canonical decision outcomes。
 
 诚实原则落地（2026-07-12 review 修正）：
 - 市值从 data/stock_market_cap.json 取 circ_mv（真流通市值=FINANCE(40)同口径），
   缺该票时退 total_mv，再退 CSV market_cap 列；仍缺失的票计数上报，不静默吞掉
 - trade_date 统一用锚点股探测（多只取 max），命中里日期≠trade_date 的陈旧信号
   （停牌/断更股的旧K线）一律丢弃并计数——旧信号绝不能被当成今天的信号
-- 扫描失败比例超过 20% 时返回 available:false 且不写缓存（系统性故障必须显式暴露，
-  不能伪装成"今日无信号"的正常空态）
+- 任一扫描异常都返回 available:false 且不写缓存，损坏行情或代码错误
+  不能伪装成"今日无信号"的正常空态
 """
+
 import json
 import logging
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from utils.artifact_integrity import artifact_is_valid, seal_artifact
+from utils.decision_versions import cache_identity
+from utils.market_snapshot import read_snapshot_metadata
 
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 CACHE_FILE = DATA_DIR / "super_b1_cache.json"
-CAP_FILE = DATA_DIR / "stock_market_cap.json"
-CACHE_SCHEMA_VERSION = 3
+CACHE_SCHEMA_VERSION = 5
 _lock = threading.Lock()
 
 # 需要的K线根数：MA114 预热 + EXIST(...,200) 回看 + 余量
@@ -32,15 +37,14 @@ NROWS = 400
 ANCHOR_CODES = ("000001", "600030", "600036", "600519")
 
 
-def _load_cap_map() -> dict:
+def _load_cap_map(csv_manager) -> dict:
     """{code: 市值(元)}，circ_mv 优先、退 total_mv。文件缺失返回空 dict."""
-    if not CAP_FILE.exists():
-        return {}
-    try:
-        with open(CAP_FILE, encoding="utf-8") as f:
-            raw = json.load(f)
-    except Exception as e:
-        logger.warning("市值缓存读取失败: %s", e)
+    raw, _ = read_snapshot_metadata(
+        "stock_market_cap.json",
+        getattr(csv_manager, "base_data_dir", DATA_DIR),
+        snapshot_id=getattr(csv_manager, "snapshot_id", None),
+    )
+    if not isinstance(raw, dict):
         return {}
     out = {}
     for code, v in raw.items():
@@ -97,7 +101,7 @@ def compute_scan(csv_manager, stock_names: dict) -> dict:
         return {"available": False, "reason": "本地无行情数据"}
 
     trade_date = _latest_data_date(csv_manager)
-    cap_map = _load_cap_map()
+    cap_map = _load_cap_map(csv_manager)
 
     invalid_kw = ("退", "未知", "退市", "已退")
     tasks = []
@@ -120,15 +124,21 @@ def compute_scan(csv_manager, stock_names: dict) -> dict:
                 else:
                     hits.append(hit)
 
-    if tasks and errors > len(tasks) * 0.2:
-        logger.error("超级B1扫描系统性异常: %d/%d 只失败，不写缓存", errors, len(tasks))
-        return {"available": False, "reason": f"扫描异常（{errors}/{len(tasks)} 只失败）"}
+    if errors:
+        logger.error("超级B1扫描存在异常: %d/%d 只失败，不写缓存", errors, len(tasks))
+        return {
+            "available": False,
+            "reason": f"扫描异常（{errors}/{len(tasks)} 只失败）",
+        }
 
     hits.sort(key=lambda h: (h["J"], h["code"]))  # J 越低越超卖，排前面
     if errors or cap_missing or stale:
         logger.warning(
             "超级B1扫描统计: 失败 %d / 缺市值 %d / 陈旧信号丢弃 %d（共 %d 只）",
-            errors, cap_missing, stale, len(tasks),
+            errors,
+            cap_missing,
+            stale,
+            len(tasks),
         )
     return {
         "available": True,
@@ -140,40 +150,71 @@ def compute_scan(csv_manager, stock_names: dict) -> dict:
         "cap_missing": cap_missing,
         "stale_dropped": stale,
         "cap_note": "流通市值取自市值缓存(circ_mv)，缺失票以总市值近似",
+        **cache_identity(csv_manager, "super_b1", CACHE_SCHEMA_VERSION),
+    }
+
+
+def read_cached_super_b1(csv_manager) -> dict:
+    """读取与当前 snapshot/策略版本绑定的扫描产物，不缺省重算。"""
+    if not CACHE_FILE.exists():
+        return {
+            "available": False,
+            "reason": "super_b1_snapshot_not_ready",
+            "retry_via": "daily_close_pipeline",
+        }
+    try:
+        with open(CACHE_FILE, encoding="utf-8") as handle:
+            cached = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        cached = {}
+    identity = cache_identity(csv_manager, "super_b1", CACHE_SCHEMA_VERSION)
+    valid = bool(
+        cached.get("available")
+        and artifact_is_valid(cached)
+        and cached.get("schema_version") == CACHE_SCHEMA_VERSION
+        and identity.get("cache_key")
+        and cached.get("cache_key") == identity.get("cache_key")
+    )
+    if valid:
+        return cached
+    return {
+        "available": False,
+        "reason": "super_b1_snapshot_not_ready",
+        "retry_via": "daily_close_pipeline",
     }
 
 
 def get_super_b1(csv_manager, stock_names: dict, force: bool = False) -> dict:
     """带文件缓存：数据日期没变就直接用缓存（含双检锁防并发重算）."""
-    def _fresh_cache():
-        if CACHE_FILE.exists():
-            try:
-                with open(CACHE_FILE, encoding="utf-8") as f:
-                    cached = json.load(f)
-                if (
-                    cached.get("available")
-                    and cached.get("schema_version") == CACHE_SCHEMA_VERSION
-                    and cached.get("trade_date") == _latest_data_date(csv_manager)
-                ):
-                    return cached
-            except Exception:
-                pass
-        return None
-
     if not force:
-        cached = _fresh_cache()
-        if cached:
+        cached = read_cached_super_b1(csv_manager)
+        if cached.get("available"):
             return cached
     with _lock:
         if not force:
-            cached = _fresh_cache()
-            if cached:
+            cached = read_cached_super_b1(csv_manager)
+            if cached.get("available"):
                 return cached
         result = compute_scan(csv_manager, stock_names)
         if result.get("available"):
+            tmp = None
             try:
-                with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                result = seal_artifact(result)
+                CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+                tmp = CACHE_FILE.with_suffix(f".{os.getpid()}.tmp")
+                with open(tmp, "w", encoding="utf-8") as f:
                     json.dump(result, f, ensure_ascii=False)
+                tmp.replace(CACHE_FILE)
             except Exception as e:
                 logger.warning("超级B1缓存写入失败: %s", e)
+                if tmp is not None:
+                    try:
+                        tmp.unlink(missing_ok=True)
+                    except OSError:
+                        logger.warning("超级B1临时缓存清理失败: %s", tmp)
+                return {
+                    "available": False,
+                    "reason": "super_b1_cache_write_failed",
+                    "trade_date": result.get("trade_date"),
+                }
         return result

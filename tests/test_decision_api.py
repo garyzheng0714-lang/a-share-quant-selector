@@ -26,13 +26,22 @@ class DecisionApiTest(unittest.TestCase):
     @patch("utils.data_freshness.local_data_status")
     def test_latest_returns_versioned_run(self, freshness, latest, _models):
         freshness.return_value = {
-            "fresh": True, "local_date": "2026-07-14", "expected_date": "2026-07-14",
+            "fresh": True,
+            "local_date": "2026-07-14",
+            "expected_date": "2026-07-14",
+            "snapshot_id": "snap-1",
         }
         latest.return_value = {
-            "run_id": "run-1", "stage": "close", "trade_date": "2026-07-14",
-            "as_of": "2026-07-14T15:00:00+08:00", "status": "complete",
-            "final_action": "none", "candidates": [],
+            "run_id": "run-1",
+            "stage": "close",
+            "trade_date": "2026-07-14",
+            "as_of": "2026-07-14T15:00:00+08:00",
+            "status": "complete",
+            "final_action": "none",
+            "candidates": [],
             "strategy_version": strategy_version(),
+            "data_version": "snapshot-snap-1",
+            "market": {"snapshot_id": "snap-1"},
         }
         response = self.client.get("/api/decision/latest")
         self.assertEqual(response.status_code, 200)
@@ -46,7 +55,8 @@ class DecisionApiTest(unittest.TestCase):
     @patch("views.decision_api.get_latest_evolution")
     def test_evolution_status_is_exposed(self, latest):
         latest.return_value = {
-            "trade_date": "2026-07-14", "status": "complete",
+            "trade_date": "2026-07-14",
+            "status": "complete",
             "promotion_status": "kept_champion",
             "metrics": {"strategy": "super-b1-original"},
         }
@@ -55,58 +65,103 @@ class DecisionApiTest(unittest.TestCase):
         self.assertTrue(response.json["available"])
         self.assertEqual(response.json["data"]["promotion_status"], "kept_champion")
 
-    @patch("utils.paper_trading.get_paper_status", return_value={
-        "established": True, "track_record_state": "collecting", "nav_days": 2,
-    })
+    @patch(
+        "utils.paper_trading.get_paper_status",
+        return_value={
+            "established": True,
+            "track_record_state": "collecting",
+            "nav_days": 2,
+        },
+    )
     @patch("views.decision_api.get_active_policy", return_value=None)
-    @patch("views.decision_api.get_latest_ai_decision_run", return_value={
-        "status": "not_called", "reason_codes": ["no_approved_candidates"],
-    })
-    @patch("views.decision_api.get_latest_evolution", return_value={
-        "status": "complete", "promotion_status": "shadow_registered",
-    })
-    @patch("views.decision_api.get_latest_decision", return_value={
-        "run_id": "run-1", "trade_date": "2026-07-14", "status": "degraded",
-        "final_action": "observe", "model_version": "baseline-only",
-        "reason_codes": ["market_model_unvalidated"],
-        "candidates": [{"action": "observe"}, {"action": "observe"}],
-    })
-    @patch("utils.data_freshness.local_data_status", return_value={
-        "fresh": True, "local_date": "2026-07-14", "expected_date": "2026-07-14",
-    })
+    @patch(
+        "views.decision_api.get_latest_ai_decision_run",
+        return_value={
+            "status": "not_called",
+            "decision_run_id": "run-1",
+            "reason_codes": ["no_approved_candidates"],
+        },
+    )
+    @patch(
+        "views.decision_api.get_latest_evolution",
+        return_value={
+            "status": "complete",
+            "promotion_status": "shadow_registered",
+        },
+    )
+    @patch(
+        "views.decision_api.get_latest_decision",
+        return_value={
+            "run_id": "run-1",
+            "trade_date": "2026-07-14",
+            "status": "degraded",
+            "final_action": "observe",
+            "model_version": "baseline-only",
+            "strategy_version": strategy_version(),
+            "data_version": "snapshot-snap-1",
+            "market": {"snapshot_id": "snap-1"},
+            "reason_codes": ["market_model_unvalidated"],
+            "candidates": [{"action": "observe"}, {"action": "observe"}],
+        },
+    )
+    @patch(
+        "utils.data_freshness.local_data_status",
+        return_value={
+            "fresh": True,
+            "local_date": "2026-07-14",
+            "expected_date": "2026-07-14",
+            "snapshot_id": "snap-1",
+        },
+    )
     def test_system_status_exposes_truthful_end_to_end_state(
-        self, _freshness, _decision, _evolution, _ai, _policy, _paper,
+        self,
+        _freshness,
+        _decision,
+        _evolution,
+        _ai,
+        _policy,
+        _paper,
     ):
         response = self.client.get("/api/decision/system-status")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["decision"]["candidate_counts"]["observe"], 2)
         self.assertEqual(response.json["ai"]["status"], "not_called")
-        self.assertEqual(response.json["policy"]["active_policy_version"], "baseline-only")
+        self.assertEqual(
+            response.json["policy"]["active_policy_version"], "baseline-only"
+        )
         self.assertFalse(response.json["policy"]["daily_auto_promotion"])
 
     @patch("views.decision_api.list_models", return_value=[])
     @patch("views.decision_api.get_latest_decision", return_value={"run_id": "old"})
     @patch("utils.data_freshness.local_data_status")
-    def test_stale_data_returns_last_decision_with_warning(self, freshness, _latest, _models):
+    def test_stale_data_never_exposes_old_decision_as_current(
+        self, freshness, _latest, _models
+    ):
         freshness.return_value = {
-            "fresh": False, "local_date": "2026-07-10", "expected_date": "2026-07-14",
+            "fresh": False,
+            "local_date": "2026-07-10",
+            "expected_date": "2026-07-14",
         }
         response = self.client.get("/api/decision/latest")
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json["available"])
-        self.assertTrue(response.json["is_stale"])
+        self.assertFalse(response.json["available"])
         self.assertEqual(response.json["data_status"], "stale")
-        self.assertEqual(response.json["run_id"], "old")
+        self.assertEqual(response.json["reason"], "stale_market_data")
 
     @patch("views.decision_api.list_models", return_value=[])
     @patch("views.decision_api.get_decision", return_value={"run_id": "archived-run"})
     @patch("utils.data_freshness.local_data_status")
     def test_historical_detail_remains_replayable_when_market_data_is_stale(
-        self, freshness, _decision, _models,
+        self,
+        freshness,
+        _decision,
+        _models,
     ):
         freshness.return_value = {
-            "fresh": False, "local_date": "2026-07-10", "expected_date": "2026-07-14",
+            "fresh": False,
+            "local_date": "2026-07-10",
+            "expected_date": "2026-07-14",
         }
 
         response = self.client.get("/api/decision/archived-run")
@@ -114,6 +169,30 @@ class DecisionApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json["available"])
         self.assertTrue(response.json["is_stale"])
+
+    @patch("views.decision_api.list_models", return_value=[])
+    @patch("views.decision_api.get_decision", return_value={"run_id": "archived-run"})
+    @patch(
+        "utils.data_freshness.local_data_status",
+        return_value={
+            "fresh": True,
+            "local_date": "2026-07-14",
+            "expected_date": "2026-07-14",
+            "snapshot_id": "snap-1",
+        },
+    )
+    def test_historical_detail_is_labeled_even_when_current_data_is_fresh(
+        self,
+        _freshness,
+        _decision,
+        _models,
+    ):
+        response = self.client.get("/api/decision/archived-run")
+
+        self.assertTrue(response.json["available"])
+        self.assertTrue(response.json["is_stale"])
+        self.assertEqual(response.json["data_status"], "historical")
+        self.assertEqual(response.json["warning_reason"], "historical_decision")
 
 
 if __name__ == "__main__":

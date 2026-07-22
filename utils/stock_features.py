@@ -3,6 +3,7 @@
 不只是 J 值和 B1 分——均线结构、量价关系、位置、波动、知行线距离、周线状态，
 让 AI 能做跨维度交叉判断（量价背离、缩量回踩、位置高低），而不是复述页面上已有的数字。
 """
+
 import logging
 
 import pandas as pd
@@ -59,6 +60,7 @@ def extract_features(df: pd.DataFrame) -> dict:
     # 知行线距离（与选股体系一致）
     try:
         from utils.technical import calculate_zhixing_trend
+
         trend = calculate_zhixing_trend(df)
         st = float(trend["short_term_trend"].iloc[0])
         bb = float(trend["bull_bear_line"].iloc[0])
@@ -83,5 +85,7 @@ def describe_features(f: dict) -> str:
         f"日均振幅{f['amp_20d']}%",
     ]
     if "vs_short_trend" in f:
-        parts.append(f"距短期趋势线{f['vs_short_trend']:+}%/距多空线{f['vs_duokong']:+}%")
+        parts.append(
+            f"距短期趋势线{f['vs_short_trend']:+}%/距多空线{f['vs_duokong']:+}%"
+        )
     return "；".join(p for p in parts if p)

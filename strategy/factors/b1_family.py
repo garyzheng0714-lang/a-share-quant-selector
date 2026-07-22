@@ -11,13 +11,19 @@
 每个因子的参数配置值与文档逐字一致；文档含糊处的实现假设写在各函数 docstring。
 所有 compute 函数不抛异常：数据异常（NaN/短数据/零成交量）一律兜底返回 None。
 """
+
 import numpy as np
-import pandas as pd
 
 from strategy.factor_lib import (
-    FactorContext, hit_payload, _last,
-    adaptive_trend_selector, adaptive_trend_selector_series,
-    bbi_uptrend_ok, kdj_oversold_ok, macd_bull_ok, price_stable_ok,
+    FactorContext,
+    hit_payload,
+    _last,
+    adaptive_trend_selector,
+    adaptive_trend_selector_series,
+    bbi_uptrend_ok,
+    kdj_oversold_ok,
+    macd_bull_ok,
+    price_stable_ok,
     CROSS,
 )
 
@@ -83,15 +89,17 @@ def compute_kdj_cross(ctx: FactorContext, params=None):
         period = p["trend_max_period"]
         if not price_stable_ok(ctx, period, p["price_range_pct"]):
             return None
-        if not bbi_uptrend_ok(ctx, p["bbi_min_window"],
-                              p["bbi_q_threshold"], period):
+        if not bbi_uptrend_ok(ctx, p["bbi_min_window"], p["bbi_q_threshold"], period):
             return None
         if not macd_bull_ok(ctx):
             return None
-        return hit_payload(ctx, extra={
-            "K": round(_last(k), 2) if _last(k) == _last(k) else None,
-            "D": round(_last(d), 2) if _last(d) == _last(d) else None,
-        })
+        return hit_payload(
+            ctx,
+            extra={
+                "K": round(_last(k), 2) if _last(k) == _last(k) else None,
+                "D": round(_last(d), 2) if _last(d) == _last(d) else None,
+            },
+        )
     except Exception:
         return None
 
@@ -131,8 +139,7 @@ def compute_tepu(ctx: FactorContext, params=None):
             return None
         if not macd_bull_ok(ctx):
             return None
-        if not kdj_oversold_ok(ctx, p["j_threshold"],
-                               p["j_q_threshold"], period):
+        if not kdj_oversold_ok(ctx, p["j_threshold"], p["j_q_threshold"], period):
             return None
         if not price_stable_ok(ctx, period, p["price_range_pct"]):
             return None
@@ -143,30 +150,33 @@ def compute_tepu(ctx: FactorContext, params=None):
         _, _, j = ctx.kdj()
         jv = j.to_numpy(dtype=float)
 
-        start = n - 1 - off               # 窗口起点（含）
-        win_v = v[start: n - 1]           # 不含当日
+        start = n - 1 - off  # 窗口起点（含）
+        win_v = v[start : n - 1]  # 不含当日
         with np.errstate(invalid="ignore"):
             win_vmax = np.nanmax(win_v) if win_v.size else np.nan
         if not (win_vmax == win_vmax and win_vmax > 0):
-            return None                   # 零成交量/全NaN 兜底
+            return None  # 零成交量/全NaN 兜底
 
-        for t in range(start, n - 1):     # 逐日循环仅 offset=15 天，代价可控
+        for t in range(start, n - 1):  # 逐日循环仅 offset=15 天，代价可控
             g = pct[t]
             if not (g == g and g >= p["up_threshold"]):
                 continue
             if not (v[t] == v[t] and v[t] >= win_vmax * p["volume_threshold"]):
                 continue
-            seg_c = c[start: t + 1]
+            seg_c = c[start : t + 1]
             with np.errstate(invalid="ignore"):
                 if not (c[t] == c[t] and c[t] >= np.nanmax(seg_c)):
                     continue
-            seg_j = jv[t + 1: n - 1]      # 突破日次日 ~ 昨日
+            seg_j = jv[t + 1 : n - 1]  # 突破日次日 ~ 昨日
             if seg_j.size and (np.isnan(seg_j).any() or seg_j.min() < 50):
                 continue
-            return hit_payload(ctx, extra={
-                "breakout_date": str(ctx.df["date"].iloc[t]),
-                "breakout_pct": round(float(g), 2),
-            })
+            return hit_payload(
+                ctx,
+                extra={
+                    "breakout_date": str(ctx.df["date"].iloc[t]),
+                    "breakout_pct": round(float(g), 2),
+                },
+            )
         return None
     except Exception:
         return None
@@ -174,7 +184,7 @@ def compute_tepu(ctx: FactorContext, params=None):
 
 # ====================================================================
 # 13. SuperB1（super_b1_factor）
-#（与已上线的"超级B1"通达信7信号公式 strategy/super_b1.py 不是一回事，
+# （与已上线的"超级B1"通达信7信号公式 strategy/super_b1.py 不是一回事，
 #  独立实现，key 避免冲突）
 # ====================================================================
 
@@ -222,8 +232,9 @@ def compute_super_b1_factor(ctx: FactorContext, params=None):
         drop = (c_prev - c_today) / c_prev
         if not (drop >= p["price_drop_pct"]):
             return None
-        if not kdj_oversold_ok(ctx, p["j_threshold"], p["j_q_threshold"],
-                               b1.get("trend_max_period", 60)):
+        if not kdj_oversold_ok(
+            ctx, p["j_threshold"], p["j_q_threshold"], b1.get("trend_max_period", 60)
+        ):
             return None
         # 回看期内每天是否满足少妇策略（列表最后一个元素 = 昨日）
         hits = adaptive_trend_selector_series(ctx, b1, lb)
@@ -231,15 +242,18 @@ def compute_super_b1_factor(ctx: FactorContext, params=None):
         for i, ok in enumerate(hits):
             if not ok:
                 continue
-            t_m = n - lb - 1 + i          # hits[i] 的绝对下标
-            seg = c[t_m: n - 1]           # [t_m, 昨日]
+            t_m = n - lb - 1 + i  # hits[i] 的绝对下标
+            seg = c[t_m : n - 1]  # [t_m, 昨日]
             lo = np.nanmin(seg)
             hi = np.nanmax(seg)
             if lo > 0 and hi / lo - 1 <= p["close_vol_pct"]:
-                return hit_payload(ctx, extra={
-                    "b1_date": str(ctx.df["date"].iloc[t_m]),
-                    "drop_pct": round(drop * 100, 2),
-                })
+                return hit_payload(
+                    ctx,
+                    extra={
+                        "b1_date": str(ctx.df["date"].iloc[t_m]),
+                        "drop_pct": round(drop * 100, 2),
+                    },
+                )
         return None
     except Exception:
         return None
@@ -277,8 +291,7 @@ def compute_fill_pit(ctx: FactorContext, params=None):
         n = len(ctx.C)
         if n < period:
             return None
-        if not kdj_oversold_ok(ctx, p["j_threshold"],
-                               p["j_q_threshold"], period):
+        if not kdj_oversold_ok(ctx, p["j_threshold"], p["j_q_threshold"], period):
             return None
         c = ctx.C.iloc[-period:].to_numpy(dtype=float)
         if np.isnan(c).any():
@@ -288,24 +301,28 @@ def compute_fill_pit(ctx: FactorContext, params=None):
         peaks = np.where(interior)[0] + 1
         if len(peaks) < 2:
             return None
-        p2 = int(peaks[-1])               # 最新峰
+        p2 = int(peaks[-1])  # 最新峰
         close_today = c[-1]
-        for p1 in peaks[:-1][::-1]:       # 前峰从近到远搜索（峰数量有限）
+        for p1 in peaks[:-1][::-1]:  # 前峰从近到远搜索（峰数量有限）
             p1 = int(p1)
-            if not (c[p2] > c[p1]):       # 最新峰须高于前峰
+            if not (c[p2] > c[p1]):  # 最新峰须高于前峰
                 continue
             mids = peaks[(peaks > p1) & (peaks < p2)]
             if mids.size and (c[mids] > c[p1]).any():
-                continue                  # 区间内其他峰抬高了前峰 → 不合形态
-            interval_min = c[p1: p2 + 1].min()
-            if not (interval_min > 0
-                    and c[p1] >= interval_min * (1 + p["gap_threshold"])):
-                continue                  # 坑不够深
+                continue  # 区间内其他峰抬高了前峰 → 不合形态
+            interval_min = c[p1 : p2 + 1].min()
+            if not (
+                interval_min > 0 and c[p1] >= interval_min * (1 + p["gap_threshold"])
+            ):
+                continue  # 坑不够深
             if abs(close_today - c[p1]) / c[p1] <= p["fluc_threshold"]:
-                return hit_payload(ctx, extra={
-                    "prev_peak": round(float(c[p1]), 2),
-                    "last_peak": round(float(c[p2]), 2),
-                })
+                return hit_payload(
+                    ctx,
+                    extra={
+                        "prev_peak": round(float(c[p1]), 2),
+                        "last_peak": round(float(c[p2]), 2),
+                    },
+                )
         return None
     except Exception:
         return None
@@ -343,25 +360,29 @@ def compute_ticket_refill(ctx: FactorContext, params=None):
             return None
         if not macd_bull_ok(ctx):
             return None
-        if not bbi_uptrend_ok(ctx, p["bbi_min_window"],
-                              p["bbi_q_threshold"], p["trend_max_period"]):
+        if not bbi_uptrend_ok(
+            ctx, p["bbi_min_window"], p["bbi_q_threshold"], p["trend_max_period"]
+        ):
             return None
         rsv_long = ctx.rsv(int(p["n_long"])).iloc[-m:].to_numpy(dtype=float)
         if len(rsv_long) < m or np.isnan(rsv_long).any():
             return None
         if (rsv_long < 80).any():
-            return None                   # 长线未能连续高位
+            return None  # 长线未能连续高位
         rsv_short = ctx.rsv(int(p["n_short"])).iloc[-m:].to_numpy(dtype=float)
         if np.isnan(rsv_short).any():
             return None
         if not (rsv_short[0] >= 80 and rsv_short[-1] >= 80):
-            return None                   # 短线首尾不高
+            return None  # 短线首尾不高
         if not (rsv_short[1:-1].min() < 20):
-            return None                   # 期间未下探低位
-        return hit_payload(ctx, extra={
-            "RSV21": round(float(rsv_long[-1]), 2),
-            "RSV3": round(float(rsv_short[-1]), 2),
-        })
+            return None  # 期间未下探低位
+        return hit_payload(
+            ctx,
+            extra={
+                "RSV21": round(float(rsv_long[-1]), 2),
+                "RSV3": round(float(rsv_short[-1]), 2),
+            },
+        )
     except Exception:
         return None
 
@@ -372,27 +393,45 @@ def compute_ticket_refill(ctx: FactorContext, params=None):
 
 FACTORS = {
     "oversold_b1": {
-        "name": "超卖B1", "group": "B1系", "min_bars": 90,
-        "params": OVERSOLD_B1_PARAMS, "fn": compute_oversold_b1,
+        "name": "超卖B1",
+        "group": "B1系",
+        "min_bars": 90,
+        "params": OVERSOLD_B1_PARAMS,
+        "fn": compute_oversold_b1,
     },
     "kdj_cross": {
-        "name": "KDJ金叉", "group": "B1系", "min_bars": 90,
-        "params": KDJ_CROSS_PARAMS, "fn": compute_kdj_cross,
+        "name": "KDJ金叉",
+        "group": "B1系",
+        "min_bars": 90,
+        "params": KDJ_CROSS_PARAMS,
+        "fn": compute_kdj_cross,
     },
     "tepu": {
-        "name": "TePu", "group": "B1系", "min_bars": 80,
-        "params": TEPU_PARAMS, "fn": compute_tepu,
+        "name": "TePu",
+        "group": "B1系",
+        "min_bars": 80,
+        "params": TEPU_PARAMS,
+        "fn": compute_tepu,
     },
     "super_b1_factor": {
-        "name": "SuperB1", "group": "B1系", "min_bars": 150,
-        "params": SUPER_B1_FACTOR_PARAMS, "fn": compute_super_b1_factor,
+        "name": "SuperB1",
+        "group": "B1系",
+        "min_bars": 150,
+        "params": SUPER_B1_FACTOR_PARAMS,
+        "fn": compute_super_b1_factor,
     },
     "fill_pit": {
-        "name": "填坑", "group": "B1系", "min_bars": 120,
-        "params": FILL_PIT_PARAMS, "fn": compute_fill_pit,
+        "name": "填坑",
+        "group": "B1系",
+        "min_bars": 120,
+        "params": FILL_PIT_PARAMS,
+        "fn": compute_fill_pit,
     },
     "ticket_refill": {
-        "name": "补票", "group": "B1系", "min_bars": 90,
-        "params": TICKET_REFILL_PARAMS, "fn": compute_ticket_refill,
+        "name": "补票",
+        "group": "B1系",
+        "min_bars": 90,
+        "params": TICKET_REFILL_PARAMS,
+        "fn": compute_ticket_refill,
     },
 }

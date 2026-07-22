@@ -1,6 +1,6 @@
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE}${path}`;
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json", ...options?.headers },
@@ -147,12 +147,15 @@ export interface ThermometerData {
   available: boolean;
   reason?: string;
   heat?: {
-    volume_percentile: number;
-    chg_20d: number;
+    methodology: "cross_sectional_sector_heat_v1";
+    breadth_score: number;
+    warming_sector_ratio: number;
+    cooling_sector_ratio: number;
+    delta3_mean: number;
     trend: "bull" | "bear" | "sideways";
     level: "hot" | "cold" | "normal";
-    index_close: number;
-    index_date: string;
+    sector_count: number;
+    as_of: string;
   };
   fitness?: {
     available: boolean;
@@ -725,23 +728,7 @@ export interface FactorScanResponse {
 
 export const api = {
   getStats: () => request<ApiResponse<StatsData>>("/api/stats"),
-  getViews: () => request<ApiResponse<ViewData[]>>("/api/views"),
-  getView: (id: number) => request<ApiResponse<ViewData>>(`/api/views/${id}`),
-  createView: (body: { name: string; source_id?: number }) =>
-    request<ApiResponse<ViewData>>("/api/views", { method: "POST", body: JSON.stringify(body) }),
-  updateView: (id: number, body: Partial<ViewData>) =>
-    request<ApiResponse<ViewData>>(`/api/views/${id}`, { method: "PUT", body: JSON.stringify(body) }),
-  duplicateView: (id: number, name: string) =>
-    request<ApiResponse<ViewData>>(`/api/views/${id}/duplicate`, { method: "POST", body: JSON.stringify({ name }) }),
-  runView: (id: number) =>
-    request<{ success: boolean; task_id: string }>(`/api/views/${id}/run`, { method: "POST" }),
-  getRunStatus: (viewId: number, taskId: string) =>
-    request<TaskStatus>(`/api/views/${viewId}/run/status?task_id=${taskId}`),
-  getViewResults: (viewId: number, limit?: number) =>
-    request<ApiResponse<SelectionResult[]>>(`/api/views/${viewId}/results${limit ? `?limit=${limit}` : ""}`),
-  getViewResultByDate: (viewId: number, date: string) =>
-    request<ApiResponse<SelectionResult>>(`/api/views/${viewId}/results/${date}`),
-  getStocks: (page: number = 1, perPage: number = 500) =>
+  getStocks: (page: number = 1, perPage: number = 50) =>
     request<ApiResponse<StockItem[]> & { total: number; page: number; total_pages: number }>(
       `/api/stocks?page=${page}&per_page=${perPage}`,
     ),
@@ -753,10 +740,6 @@ export const api = {
     request<ApiResponse<RankingStock[]> & { total: number; run_date: string }>("/api/ranking"),
   getIndustries: () =>
     request<ApiResponse<IndustryItem[]> & { total: number }>("/api/industries"),
-  getSchedulerStatus: () =>
-    request<ApiResponse<{ running: boolean; running_tasks: Record<string, string> }>>("/api/scheduler/status"),
-  startScheduler: () => request<{ success: boolean }>("/api/scheduler/start", { method: "POST" }),
-  stopScheduler: () => request<{ success: boolean }>("/api/scheduler/stop", { method: "POST" }),
   updateData: () => request<{ success: boolean; message: string }>("/api/data/update", { method: "POST" }),
   getThermometer: () => request<ThermometerData>("/api/thermometer"),
   getSectors: () => request<SectorsData>("/api/sectors"),
@@ -777,13 +760,6 @@ export const api = {
     request<FactorScanResponse>(
       `/api/factor-scan?strategy=${encodeURIComponent(strategy)}${date ? `&date=${date}` : ""}`,
     ),
-  getSuperB1Performance: (limit = 200) =>
-    request<SuperB1Performance>(`/api/super-b1/performance?limit=${limit}`),
-  // AI 自主荐票（getDailyPick / generateDailyPick）已于 2026-07-14 停用——它和量化版
-  // 推的票不一样，主页上两个「今日一票」互相打架。AI 现在只点评量化选出的票
-  // 旧版自主荐股只保留 GET 历史档案；POST 已永久停用。
-  getDailyPickHistory: () =>
-    request<DailyPickHistoryResponse>("/api/daily-pick?history=1"),
   getPerformanceSummary: () => request<PerformanceSummary>("/api/performance/summary"),
   getPerformanceRecords: (limit = 200) =>
     request<{ total: number; records: PerformanceRecord[] }>(`/api/performance/records?limit=${limit}`),

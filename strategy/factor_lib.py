@@ -17,11 +17,22 @@ TDX 函数（REF/MA/EMA/LLV/HHV/CROSS/SMA_TDX 等）直接复用 strategy/super_
 - SMA(X,N,M) = ewm(alpha=M/N, adjust=False)；EMA = ewm(span=N, adjust=False)
 - 所有计算在正序（从早到晚）序列上进行
 """
+
 import numpy as np
 import pandas as pd
 
 from strategy.super_b1 import (  # noqa: F401  (re-export 给 factors/ 用)
-    REF, MA, EMA, LLV, HHV, COUNT, EVERY, EXIST, CROSS, BARSLAST, SMA_TDX,
+    REF,
+    MA,
+    EMA,
+    LLV,
+    HHV,
+    COUNT,
+    EVERY,
+    EXIST,
+    CROSS,
+    BARSLAST,
+    SMA_TDX,
 )
 
 
@@ -56,6 +67,7 @@ class FactorContext:
 
     def kdj(self, n=9, m1=3, m2=3):
         """通达信 KDJ：返回 (K, D, J)."""
+
         def _calc():
             llv = LLV(self.L, n)
             hhv = HHV(self.H, n)
@@ -64,19 +76,25 @@ class FactorContext:
             d = SMA_TDX(k, m2, 1)
             j = 3 * k - 2 * d
             return k, d, j
+
         return self._memo(("kdj", n, m1, m2), _calc)
 
     def bbi(self):
         """BBI = (MA3+MA6+MA12+MA24)/4."""
-        return self._memo("bbi", lambda: (
-            MA(self.C, 3) + MA(self.C, 6) + MA(self.C, 12) + MA(self.C, 24)) / 4)
+        return self._memo(
+            "bbi",
+            lambda: (MA(self.C, 3) + MA(self.C, 6) + MA(self.C, 12) + MA(self.C, 24))
+            / 4,
+        )
 
     def macd(self, fast=12, slow=26, signal=9):
         """标准 MACD：返回 (DIF, DEA)."""
+
         def _calc():
             dif = EMA(self.C, fast) - EMA(self.C, slow)
             dea = EMA(dif, signal)
             return dif, dea
+
         return self._memo(("macd", fast, slow, signal), _calc)
 
     def white_line(self):
@@ -85,25 +103,35 @@ class FactorContext:
 
     def yellow_line(self, m1=14, m2=28, m3=57, m4=114):
         """知行多空线（黄线）= (MA14+MA28+MA57+MA114)/4，严格窗口."""
-        return self._memo(("yellow", m1, m2, m3, m4), lambda: (
-            MA(self.C, m1) + MA(self.C, m2) + MA(self.C, m3) + MA(self.C, m4)) / 4)
+        return self._memo(
+            ("yellow", m1, m2, m3, m4),
+            lambda: (MA(self.C, m1) + MA(self.C, m2) + MA(self.C, m3) + MA(self.C, m4))
+            / 4,
+        )
 
     def rsv(self, n):
         """通达信 RSV(n) = (C-LLV(L,n))/(HHV(H,n)-LLV(L,n))*100."""
+
         def _calc():
             llv = LLV(self.L, n)
             rng = (HHV(self.H, n) - llv).replace(0, np.nan)
             return (self.C - llv) / rng * 100
+
         return self._memo(("rsv", n), _calc)
 
     def rsi_tdx(self, n):
         """通达信 RSI：SMA(MAX(C-LC,0),N,1)/SMA(ABS(C-LC),N,1)*100."""
+
         def _calc():
             lc = REF(self.C, 1)
             up = (self.C - lc).clip(lower=0)
             total = (self.C - lc).abs()
-            return SMA_TDX(up.fillna(0), n, 1) / SMA_TDX(
-                total.fillna(0), n, 1).replace(0, np.nan) * 100
+            return (
+                SMA_TDX(up.fillna(0), n, 1)
+                / SMA_TDX(total.fillna(0), n, 1).replace(0, np.nan)
+                * 100
+            )
+
         return self._memo(("rsi", n), _calc)
 
     def brick(self, fast=4, slow=6):
@@ -111,11 +139,13 @@ class FactorContext:
 
         与 super_b1.py 内嵌的砖图口径同源。"转红"=砖值上升，"转绿"=砖值下降。
         """
+
         def _calc():
             llv = LLV(self.L, fast)
             rng = (HHV(self.H, fast) - llv).replace(0, np.nan)
             raw = (self.C - llv) / rng * 100
             return SMA_TDX(raw.fillna(50), slow, 1)
+
         return self._memo(("brick", fast, slow), _calc)
 
     def ma(self, n):
@@ -128,6 +158,7 @@ class FactorContext:
         向量化实现：slope = (n*Σxy - Σx*Σy) / (n*Σx² - (Σx)²)，
         x 取 0..n-1 固定，故只需 y 与 xy 的滚动和。
         """
+
         def _calc():
             x = np.arange(n, dtype=float)
             sx = x.sum()
@@ -135,8 +166,10 @@ class FactorContext:
             denom = n * sxx - sx * sx
             sy = self.C.rolling(n, min_periods=n).sum()
             sxy = self.C.rolling(n, min_periods=n).apply(
-                lambda w: float((w * x).sum()), raw=True)
+                lambda w: float((w * x).sum()), raw=True
+            )
             return (n * sxy - sx * sy) / denom
+
         return self._memo(("slope", n), _calc)
 
     def pct_change(self):
@@ -147,8 +180,9 @@ class FactorContext:
 # ---- 条件积木（返回 bool，NaN 语义一律 False） ----
 
 
-def bbi_uptrend_ok(ctx: FactorContext, min_window=20, q_threshold=0.3,
-                   max_period=60) -> bool:
+def bbi_uptrend_ok(
+    ctx: FactorContext, min_window=20, q_threshold=0.3, max_period=60
+) -> bool:
     """BBI 趋势确认（允许回撤）.
 
     在尾部窗口 w ∈ [min_window, max_period] 中，若存在任一 w 使窗口内
@@ -161,14 +195,15 @@ def bbi_uptrend_ok(ctx: FactorContext, min_window=20, q_threshold=0.3,
     n = len(down)
     hi = min(max_period, n)
     for w in range(min_window, hi + 1):
-        seg = down[n - w:]
+        seg = down[n - w :]
         if seg.sum() / w <= q_threshold:
             return True
     return False
 
 
-def kdj_oversold_ok(ctx: FactorContext, j_threshold=15, j_q_threshold=0.1,
-                    window=60) -> bool:
+def kdj_oversold_ok(
+    ctx: FactorContext, j_threshold=15, j_q_threshold=0.1, window=60
+) -> bool:
     """KDJ 超卖：当日 J < 阈值 或 J <= 近 window 日 J 的低分位."""
     _, _, j = ctx.kdj()
     jl = _last(j)
@@ -206,16 +241,17 @@ def adaptive_trend_selector(ctx: FactorContext, b1: dict) -> bool:
     period = b1.get("trend_max_period", 60)
     return (
         price_stable_ok(ctx, period, b1.get("price_range_pct", 1.0))
-        and bbi_uptrend_ok(ctx, b1.get("bbi_min_window", 20),
-                           b1.get("bbi_q_threshold", 0.3), period)
-        and kdj_oversold_ok(ctx, b1.get("j_threshold", 15),
-                            b1.get("j_q_threshold", 0.1), period)
+        and bbi_uptrend_ok(
+            ctx, b1.get("bbi_min_window", 20), b1.get("bbi_q_threshold", 0.3), period
+        )
+        and kdj_oversold_ok(
+            ctx, b1.get("j_threshold", 15), b1.get("j_q_threshold", 0.1), period
+        )
         and macd_bull_ok(ctx)
     )
 
 
-def adaptive_trend_selector_series(ctx: FactorContext, b1: dict,
-                                   lookback: int) -> list:
+def adaptive_trend_selector_series(ctx: FactorContext, b1: dict, lookback: int) -> list:
     """回看窗口内每一天是否满足少妇策略（SuperB1/金叉踩黄需要历史信号点）.
 
     返回最近 lookback 天（不含当日）每天的 bool，列表按时间正序、
@@ -225,7 +261,7 @@ def adaptive_trend_selector_series(ctx: FactorContext, b1: dict,
     out = []
     n = len(ctx.df)
     for i in range(n - lookback - 1, n - 1):
-        if i < 130:          # 黄线/BBI 等长窗口不足时必 False，提前跳过
+        if i < 130:  # 黄线/BBI 等长窗口不足时必 False，提前跳过
             out.append(False)
             continue
         sub = FactorContext(ctx.df.iloc[: i + 1])
@@ -236,8 +272,9 @@ def adaptive_trend_selector_series(ctx: FactorContext, b1: dict,
 # ---- 三度系共用：量时空安全（压力过滤，返回 True=安全/通过） ----
 
 
-def top_pressure_safe(ctx: FactorContext, lookback=120, volume_ratio=2.0,
-                      price_dist=0.15) -> bool:
+def top_pressure_safe(
+    ctx: FactorContext, lookback=120, volume_ratio=2.0, price_dist=0.15
+) -> bool:
     """顶部压力过滤：近 lookback 日的"放量顶部"若悬在当前价上方且距离
     不足 price_dist（如 15%），视为压力过近 → 不安全.
 
@@ -259,13 +296,12 @@ def top_pressure_safe(ctx: FactorContext, lookback=120, volume_ratio=2.0,
     # 取"悬在当前价上方的最近一个压力位"判距离——只看最高顶部会让
     # 近处的较低压力被远处更高的顶部掩盖（review 数值复现确认）
     above = tops[tops > close]
-    if above.empty:            # 全部压力位已被突破，不构成压制
+    if above.empty:  # 全部压力位已被突破，不构成压制
         return True
     return float(above.min()) / close - 1 >= price_dist
 
 
-def gap_pressure_safe(ctx: FactorContext, lookback=120,
-                      volume_min_ratio=1.3) -> bool:
+def gap_pressure_safe(ctx: FactorContext, lookback=120, volume_min_ratio=1.3) -> bool:
     """下跳缺口压力过滤：近 lookback 日存在放量下跳缺口（今日 high < 昨日 low
     且当日量 >= 窗口均量*ratio），且缺口上沿仍悬在当前价上方 → 不安全."""
     n = len(ctx.df)
@@ -282,8 +318,8 @@ def gap_pressure_safe(ctx: FactorContext, lookback=120,
     gap = (h < l_prev) & (v >= vmean * volume_min_ratio)
     if not bool(gap.any()):
         return True
-    upper = float(l_prev[gap].max())   # 最高的缺口上沿
-    return upper <= close              # 已收复则安全
+    upper = float(l_prev[gap].max())  # 最高的缺口上沿
+    return upper <= close  # 已收复则安全
 
 
 def trend_pressure_safe(ctx: FactorContext, ma_period=60) -> bool:
@@ -324,7 +360,8 @@ def hit_payload(ctx: FactorContext, extra: dict = None) -> dict:
     payload = {
         "close": round(_last(ctx.C), 2),
         "pct_change": round(_last(ctx.pct_change()), 2)
-        if _last(ctx.pct_change()) == _last(ctx.pct_change()) else None,
+        if _last(ctx.pct_change()) == _last(ctx.pct_change())
+        else None,
         "J": round(_last(j), 2) if _last(j) == _last(j) else None,
     }
     rsi = _last(ctx.rsi_tdx(6))

@@ -1,128 +1,191 @@
-"""按交易日保存训练所需的时点股票池、行业和流通市值。"""
+"""真正的时点参考数据目录。
+
+这里不再把“今天的映射”贴上历史日期。只有已发布、内容可校验的行情快照
+才能成为训练所用的 universe / industry / market-cap 时点证据。
+"""
+
 from __future__ import annotations
 
 import hashlib
 import json
-import os
-from datetime import datetime
 from pathlib import Path
 
+from utils.market_snapshot import (
+    SNAPSHOT_DIR,
+    load_current_market_snapshot,
+    load_market_snapshot,
+)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 4
 
 
-def _read_mapping(path: Path) -> dict:
-    if not path.exists():
-        return {}
+def _mapping(path: Path) -> dict:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
         return {}
-    return {key: value for key, value in payload.items() if not key.startswith("_")}
-
-
-def _update_manifest(
-    snapshot_root: Path, trade_date: str, captured_at: str, snapshot_hash: str,
-) -> None:
-    manifest_path = snapshot_root / "manifest.json"
-    manifest = _read_mapping(manifest_path)
-    dates = sorted(set(manifest.get("dates") or []) | {trade_date})
-    hashes = dict(manifest.get("snapshots") or {})
-    if trade_date in (manifest.get("dates") or []) and hashes.get(trade_date) == snapshot_hash:
-        return
-    hashes[trade_date] = snapshot_hash
-    payload = {
-        "schema_version": SCHEMA_VERSION,
-        "dates": dates,
-        "snapshots": {date: hashes[date] for date in dates if date in hashes},
-        "updated_at": captured_at,
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): item for key, item in value.items() if not str(key).startswith("_")
     }
-    tmp = manifest_path.with_suffix(f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    tmp.replace(manifest_path)
 
 
-def capture_reference_snapshot(data_dir: str | Path = "data", as_of: str | None = None) -> dict:
-    root = Path(data_dir)
-    trade_date = str(as_of or "")[:10]
-    if not trade_date:
-        return {"available": False, "reason": "snapshot_date_missing"}
-
-    snapshot_root = root / "reference_snapshots"
-    snapshot_root.mkdir(parents=True, exist_ok=True)
-    target = snapshot_root / f"{trade_date}.json"
-    if target.exists():
-        try:
-            existing = json.loads(target.read_text(encoding="utf-8"))
-        except Exception:
-            existing = {}
+def _security_states(payload: Path, trade_date: str, universe: set[str]) -> dict:
+    """读取并独立复验快照中的当日证券状态，不用名称猜测停牌状态。"""
+    try:
+        document = json.loads((payload / "security_status.json").read_text("utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    securities = document.get("securities")
+    if not isinstance(securities, dict):
+        return {}
+    canonical = json.dumps(
+        securities,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    if (
+        document.get("schema_version") != "security-status-v1"
+        or document.get("as_of") != trade_date
+        or document.get("source_id") != "akshare:stock_tfp_em"
+        or document.get("count") != len(securities)
+        or document.get("content_hash") != hashlib.sha256(canonical).hexdigest()
+        or set(securities) != universe
+    ):
+        return {}
+    states = {}
+    for code, item in securities.items():
         if (
-            existing.get("schema_version") == SCHEMA_VERSION
-            and existing.get("as_of") == trade_date
+            not isinstance(item, dict)
+            or item.get("verified") is not True
+            or item.get("as_of") != trade_date
+            or item.get("source_id") != "akshare:stock_tfp_em"
+            or item.get("status") not in {"active", "suspended", "delisted"}
+            or not isinstance(item.get("is_st"), bool)
         ):
-            _update_manifest(
-                snapshot_root,
-                trade_date,
-                existing.get("captured_at") or datetime.now().astimezone().isoformat(timespec="seconds"),
-                hashlib.sha256(target.read_bytes()).hexdigest(),
-            )
-            return {
-                "available": True, "as_of": trade_date, "existing": True,
-                "universe_count": len(existing.get("universe") or []),
-                "industry_count": len(existing.get("industries") or {}),
-                "cap_count": len(existing.get("market_caps") or {}),
-            }
+            return {}
+        states[code] = {
+            "as_of": trade_date,
+            "is_st": item["is_st"],
+            "trading_status": item["status"],
+            "source": item["source_id"],
+            "listing_rule_verified": False,
+            "status_verified": True,
+        }
+    return states
 
-    names = _read_mapping(root / "stock_names.json")
-    industries = _read_mapping(root / "stock_industry.json")
-    raw_caps = _read_mapping(root / "stock_market_cap.json")
-    caps = {}
+
+def _reference_from_market_snapshot(snapshot: dict) -> dict | None:
+    if not snapshot.get("available"):
+        return None
+    manifest = snapshot["manifest"]
+    payload = Path(snapshot["payload_dir"])
+    names = _mapping(payload / "stock_names.json")
+    industries = _mapping(payload / "stock_industry.json")
+    raw_caps = _mapping(payload / "stock_market_cap.json")
+    caps: dict[str, float] = {}
     for code, value in raw_caps.items():
-        if isinstance(value, dict):
-            cap = value.get("circ_mv") or value.get("total_mv")
-        else:
-            cap = value
+        cap = (
+            value.get("circ_mv") or value.get("total_mv")
+            if isinstance(value, dict)
+            else value
+        )
         if isinstance(cap, (int, float)) and cap > 0:
             caps[code] = float(cap)
-    if not names or not caps:
-        return {
-            "available": False, "reason": "reference_data_incomplete",
-            "universe_count": len(names), "cap_count": len(caps),
-        }
-
-    captured_at = datetime.now().astimezone().isoformat(timespec="seconds")
-    payload = {
+    if not names or not industries or not caps:
+        return None
+    trade_date = str(manifest.get("trade_date") or "")[:10]
+    security_states = _security_states(payload, trade_date, set(names))
+    if len(security_states) != len(names):
+        return None
+    content = {
         "schema_version": SCHEMA_VERSION,
         "as_of": trade_date,
-        "captured_at": captured_at,
+        "captured_at": manifest.get("captured_at"),
+        "market_snapshot_id": snapshot["snapshot_id"],
         "universe": sorted(names),
         "industries": industries,
         "market_caps": caps,
+        "security_states": security_states,
     }
-    tmp = target.with_suffix(f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    tmp.replace(target)
-    _update_manifest(
-        snapshot_root, trade_date, captured_at,
-        hashlib.sha256(target.read_bytes()).hexdigest(),
+    content["evidence_hash"] = hashlib.sha256(
+        json.dumps(
+            content, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    content["_universe_set"] = set(content["universe"])
+    return content
+
+
+def capture_reference_snapshot(
+    data_dir: str | Path = "data",
+    as_of: str | None = None,
+    *,
+    snapshot_id: str | None = None,
+) -> dict:
+    """登记一个已发布快照为 PIT 证据；禁止补写或倒签历史日期。
+
+    在线任务应显式传入其已绑定的 ``snapshot_id``，避免任务运行期间
+    ``CURRENT_SNAPSHOT`` 切换后混用两个版本。省略参数仅保留给离线运维命令。
+    """
+    current = (
+        load_market_snapshot(data_dir, snapshot_id, verify_files=True)
+        if snapshot_id is not None
+        else load_current_market_snapshot(data_dir, verify_files=True)
     )
+    if not current.get("available"):
+        return {
+            "available": False,
+            "reason": current.get("reason", "market_snapshot_missing"),
+        }
+    trade_date = str(current["manifest"].get("trade_date") or "")[:10]
+    requested = str(as_of or trade_date)[:10]
+    if requested != trade_date:
+        return {
+            "available": False,
+            "reason": "historical_backdating_forbidden",
+            "requested_as_of": requested,
+            "current_trade_date": trade_date,
+        }
+    reference = _reference_from_market_snapshot(current)
+    if reference is None:
+        return {
+            "available": False,
+            "reason": "reference_data_incomplete",
+            "as_of": trade_date,
+        }
     return {
-        "available": True, "as_of": trade_date, "existing": False,
-        "universe_count": len(names), "industry_count": len(industries), "cap_count": len(caps),
+        "available": True,
+        "as_of": trade_date,
+        "existing": True,
+        "market_snapshot_id": current["snapshot_id"],
+        "evidence_hash": reference["evidence_hash"],
+        "universe_count": len(reference["universe"]),
+        "industry_count": len(reference["industries"]),
+        "cap_count": len(reference["market_caps"]),
     }
 
 
 def load_reference_snapshots(data_dir: str | Path = "data") -> dict[str, dict]:
-    root = Path(data_dir) / "reference_snapshots"
-    snapshots = {}
-    if not root.exists():
+    """从不可变行情快照重建 PIT 目录；损坏或不完整的快照不会进入训练。"""
+    root = Path(data_dir)
+    snapshots: dict[str, dict] = {}
+    snapshot_root = root / SNAPSHOT_DIR
+    if not snapshot_root.exists():
         return snapshots
-    for path in sorted(root.glob("????-??-??.json")):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+    for path in sorted(snapshot_root.iterdir()):
+        if not path.is_dir():
             continue
-        if payload.get("schema_version") == SCHEMA_VERSION and payload.get("as_of") == path.stem:
-            payload["_universe_set"] = set(payload.get("universe") or [])
-            snapshots[path.stem] = payload
+        loaded = load_market_snapshot(root, path.name, verify_files=True)
+        reference = _reference_from_market_snapshot(loaded)
+        if reference is None or not reference.get("as_of"):
+            continue
+        trade_date = str(reference["as_of"])
+        previous = snapshots.get(trade_date)
+        if previous is None or str(reference.get("captured_at")) > str(
+            previous.get("captured_at")
+        ):
+            snapshots[trade_date] = reference
     return snapshots

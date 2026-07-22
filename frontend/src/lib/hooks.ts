@@ -5,14 +5,6 @@ export function useStats() {
   return useSWR("stats", () => api.getStats().then((r) => r.data), { refreshInterval: 30_000 });
 }
 
-export function useViews() {
-  return useSWR("views", () => api.getViews().then((r) => r.data));
-}
-
-export function useView(id: number | null) {
-  return useSWR(id !== null ? `view-${id}` : null, () => api.getView(id!).then((r) => r.data));
-}
-
 export function useStocks(page: number = 1) {
   return useSWR(`stocks-${page}`, () => api.getStocks(page));
 }
@@ -27,17 +19,6 @@ export function useStockProfile(code: string | null) {
 
 export function useRanking() {
   return useSWR("ranking", () => api.getRanking());
-}
-
-export function useSchedulerStatus() {
-  return useSWR("scheduler-status", () => api.getSchedulerStatus().then((r) => r.data), { refreshInterval: 5_000 });
-}
-
-export function useViewResults(viewId: number | null, limit?: number) {
-  return useSWR(
-    viewId !== null ? `view-results-${viewId}-${limit}` : null,
-    () => api.getViewResults(viewId!, limit).then((r) => r.data),
-  );
 }
 
 export function useThermometer() {
@@ -62,10 +43,6 @@ export function useCoverage() {
 
 export function useSuperB1() {
   return useSWR("super-b1", () => api.getSuperB1(), { refreshInterval: 600_000 });
-}
-
-export function useSuperB1Performance() {
-  return useSWR("super-b1-performance", () => api.getSuperB1Performance());
 }
 
 export function useQuantPick() {
@@ -113,12 +90,6 @@ export function useFactorScan(strategy: string | null, date?: string) {
     () => api.getFactorScan(strategy!, date),
     { refreshInterval: date ? 0 : 600_000, revalidateOnFocus: false },
   );
-}
-
-// useDailyPick 已随 AI 自主荐票于 2026-07-14 停用（AI 改为只点评量化选出的票，
-// 见 useQuantComment）。历史荐票记录仍可在复盘页查看 → useDailyPickHistory
-export function useDailyPickHistory() {
-  return useSWR("daily-pick-history", () => api.getDailyPickHistory());
 }
 
 export function usePerformanceSummary() {

@@ -21,6 +21,7 @@ wheels/
 *.egg
 
 # Virtual environments
+.venv/
 venv/
 ENV/
 env/
@@ -40,9 +41,13 @@ data/
 *.log
 
 # Config with sensitive info (user should create their own)
+.env
+.env.*
+!.env.example
 config/config.yaml
 config/config_local.yaml
 config/github.yaml
+secrets/
 
 # OS
 .DS_Store
@@ -53,5 +58,8 @@ Thumbs.db
 
 # Pytest
 .pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/

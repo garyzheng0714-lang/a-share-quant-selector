@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
 
@@ -12,13 +12,22 @@ def _weekly_source() -> pd.DataFrame:
     rows = []
     for index, date in enumerate(dates, start=1):
         close = 10 + index * 0.1
-        rows.append({
-            "date": date, "open": close - 0.05, "close": close,
-            "high": close + 0.1, "low": close - 0.1,
-            "volume": 1000 + index, "amount": 0, "turnover": 0,
-            "market_cap": 1e10,
-        })
-    return pd.DataFrame(rows).sort_values("date", ascending=False).reset_index(drop=True)
+        rows.append(
+            {
+                "date": date,
+                "open": close - 0.05,
+                "close": close,
+                "high": close + 0.1,
+                "low": close - 0.1,
+                "volume": 1000 + index,
+                "amount": 0,
+                "turnover": 0,
+                "market_cap": 1e10,
+            }
+        )
+    return (
+        pd.DataFrame(rows).sort_values("date", ascending=False).reset_index(drop=True)
+    )
 
 
 class KlineApiTest(unittest.TestCase):
@@ -26,8 +35,14 @@ class KlineApiTest(unittest.TestCase):
         self.client = app.test_client()
 
     @patch("web_server._load_stock_names", return_value={"600000": "浦发银行"})
-    @patch("web_server.csv_manager.read_stock", return_value=_weekly_source())
-    def test_weekly_contract_exposes_four_ma_and_partial_week(self, _read, _names):
+    @patch("web_server._snapshot_context")
+    def test_weekly_contract_exposes_four_ma_and_partial_week(self, context, _names):
+        manager = Mock()
+        manager.read_stock.return_value = _weekly_source()
+        context.return_value = (
+            manager,
+            {"available": True, "snapshot_id": "a" * 64, "manifest": {}},
+        )
         response = self.client.get("/api/stock/600000/kline?period=weekly")
 
         self.assertEqual(response.status_code, 200)

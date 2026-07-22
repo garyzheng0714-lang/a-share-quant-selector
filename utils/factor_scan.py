@@ -8,13 +8,15 @@
 缓存：data/factor_cache/{trade_date}.json，按策略分桶，支持增量补算
 （同一日期先扫了 A 策略，再请求 B 策略时只算 B 并合并进缓存文件）。
 
-date 参数 = 历史回看：把每股 df 截断到 <= date 再计算，可复现任意交易日的
-选股结果（知弈策行"上一日/下一日"的交互基础）。截断后最后一根 K 线
-日期 != date 的股票（当日停牌/断更）直接跳过——旧信号不能冒充该日信号。
+date 参数只用于 research-only 缓存：把当前绑定 snapshot 中的行情截断到 <= date。
+它不是历史 PIT 快照或发布证据。截断后最后一根 K 线日期 != date 的股票
+（当日停牌/断更）直接跳过——旧信号不能冒充该日信号。
 
 口径与 super_b1_scan 保持一致：ST/退市名称过滤、锚点股定 trade_date、
-失败 >20% 返回 available:false 且不写缓存、主板过滤留给 API 层。
+任一文件或因子计算异常都返回 available:false 且不写缓存，
+防止损坏数据被伪装成“未命中”；主板过滤留给 API 层。
 """
+
 import json
 import logging
 import os
@@ -22,6 +24,9 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from utils.artifact_integrity import artifact_is_valid, seal_artifact
+from utils.decision_versions import cache_identity
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +36,8 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 CACHE_DIR = DATA_DIR / "factor_cache"
-MAX_CACHE_FILES = 12          # 只保留最近若干个交易日的缓存文件
+MAX_CACHE_FILES = 12  # 只保留最近若干个交易日的缓存文件
+CACHE_SCHEMA_VERSION = 3
 ANCHOR_CODES = ("000001", "600030", "600036", "600519")
 _lock = threading.Lock()
 
@@ -100,20 +106,24 @@ def _scan_one(args):
 
         ctx = FactorContext(df)
         out = {}
+        calculation_failed = False
         for key in strategies:
             meta = registry[key]
             if len(df) < meta["min_bars"]:
                 continue
             try:
                 hit = meta["fn"](ctx)
-            except Exception as e:      # 单策略失败不拖垮整只股票
+            except Exception as e:  # 任一计算错误都使本次全市场产物失效
                 logger.warning("因子 %s 计算 %s 失败: %s", key, code, e)
-                continue
+                calculation_failed = True
+                break
             if hit:
                 hit["code"] = code
                 hit["name"] = name
                 hit["date"] = last_date
                 out[key] = hit
+        if calculation_failed:
+            return code, {}, True, False
         return code, out, False, True
     except Exception as e:
         logger.warning("因子扫描 %s 失败: %s", code, e)
@@ -126,29 +136,60 @@ def _cache_path(trade_date: str) -> Path:
     return CACHE_DIR / f"{trade_date}.json"
 
 
-def _load_cache(trade_date: str) -> dict:
+def _load_cache_envelope(trade_date: str, csv_manager=None) -> dict:
     p = _cache_path(trade_date)
     if p.exists():
         try:
             with open(p, encoding="utf-8") as f:
-                return json.load(f)
+                payload = json.load(f)
+            if not artifact_is_valid(payload):
+                return {}
+            if csv_manager is not None:
+                expected = cache_identity(
+                    csv_manager, "factor_scan", CACHE_SCHEMA_VERSION
+                )
+                if payload.get("_cache_key") != expected.get("cache_key"):
+                    return {}
+            return payload
         except Exception:
             pass
     return {}
 
 
-def _save_cache(trade_date: str, data: dict) -> None:
+def _load_cache(trade_date: str, csv_manager=None) -> dict:
+    envelope = _load_cache_envelope(trade_date, csv_manager)
+    if csv_manager is None:
+        return envelope
+    return envelope.get("results") or {}
+
+
+def _save_cache(trade_date: str, data: dict, csv_manager) -> bool:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = None
     try:
         # 原子写：快路径读缓存不持锁，直接写目标文件会让并发读者读到半截 JSON
         target = _cache_path(trade_date)
-        tmp = target.with_suffix(".tmp")
+        tmp = target.with_suffix(f".{os.getpid()}.tmp")
+        identity = cache_identity(csv_manager, "factor_scan", CACHE_SCHEMA_VERSION)
+        payload = seal_artifact(
+            {
+                "_cache_schema_version": CACHE_SCHEMA_VERSION,
+                "_cache_key": identity.get("cache_key"),
+                "_cache_identity": identity,
+                "results": data,
+            }
+        )
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
+            json.dump(payload, f, ensure_ascii=False)
         os.replace(tmp, target)
     except Exception as e:
         logger.warning("因子缓存写入失败: %s", e)
-        return
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("因子临时缓存清理失败: %s", tmp)
+        return False
     # 滚动清理旧缓存
     files = sorted(CACHE_DIR.glob("*.json"))
     for old in files[:-MAX_CACHE_FILES]:
@@ -156,10 +197,16 @@ def _save_cache(trade_date: str, data: dict) -> None:
             old.unlink()
         except Exception:
             pass
+    return True
 
 
-def compute_scan(csv_manager, stock_names: dict, strategies: list,
-                 date: str = "", trade_date: str = "") -> dict:
+def compute_scan(
+    csv_manager,
+    stock_names: dict,
+    strategies: list,
+    date: str = "",
+    trade_date: str = "",
+) -> dict:
     """全市场扫描指定策略集。返回 {available, trade_date, results: {key: {...}}}.
 
     trade_date 由调用方传入统一口径（get_factor_hits 已探测过）——若在此重新探测，
@@ -203,33 +250,48 @@ def compute_scan(csv_manager, stock_names: dict, strategies: list,
             for key, hit in hits.items():
                 buckets[key].append(hit)
 
-    if tasks and errors > len(tasks) * 0.2:
-        logger.error("因子扫描系统性异常: %d/%d 失败，不写缓存", errors, len(tasks))
-        return {"available": False, "reason": f"扫描异常（{errors}/{len(tasks)} 只失败）"}
+    if errors:
+        logger.error("因子扫描存在异常: %d/%d 失败，不写缓存", errors, len(tasks))
+        return {
+            "available": False,
+            "reason": f"扫描异常（{errors}/{len(tasks)} 只失败）",
+        }
     if valid_n == 0:
         # 该日期全市场没有任何有效K线（未来日期/周末/数据未更新）——
         # 必须显式报错，绝不能伪装成"当日全部策略 0 命中"写入缓存
-        return {"available": False,
-                "reason": f"{target} 无有效行情数据（非交易日或数据未更新）"}
+        return {
+            "available": False,
+            "reason": f"{target} 无有效行情数据（非交易日或数据未更新）",
+        }
 
     results = {}
     for key in strategies:
         hits = buckets[key]
-        hits.sort(key=lambda h: (h.get("J") if h.get("J") is not None else 999,
-                                 h["code"]))
+        hits.sort(
+            key=lambda h: (h.get("J") if h.get("J") is not None else 999, h["code"])
+        )
         results[key] = {
             "hits": hits,
             "total_scanned": len(tasks),
             "errors": errors,
         }
-    logger.info("因子扫描完成: date=%s 策略=%s 命中=%s 失败=%d",
-                trade_date, strategies,
-                {k: len(v["hits"]) for k, v in results.items()}, errors)
+    logger.info(
+        "因子扫描完成: date=%s 策略=%s 命中=%s 失败=%d",
+        trade_date,
+        strategies,
+        {k: len(v["hits"]) for k, v in results.items()},
+        errors,
+    )
     return {"available": True, "trade_date": trade_date, "results": results}
 
 
-def get_factor_hits(csv_manager, stock_names: dict, strategies: list,
-                    date: str = "", force: bool = False) -> dict:
+def get_factor_hits(
+    csv_manager,
+    stock_names: dict,
+    strategies: list,
+    date: str = "",
+    force: bool = False,
+) -> dict:
     """带缓存入口：请求的策略里缓存缺哪个就补算哪个（增量合并）.
 
     Returns:
@@ -249,25 +311,34 @@ def get_factor_hits(csv_manager, stock_names: dict, strategies: list,
 
     # 快路径不进锁：全市场扫描可能耗时数分钟，缓存命中的请求绝不能被它排队
     if not force:
-        cache = _load_cache(trade_date)
+        cache = _load_cache(trade_date, csv_manager)
         if all(s in cache for s in strategies):
-            return {"available": True, "trade_date": trade_date,
-                    "results": {s: cache[s] for s in strategies}}
+            return {
+                "available": True,
+                "trade_date": trade_date,
+                "results": {s: cache[s] for s in strategies},
+            }
 
     with _lock:
         # 双检：等锁期间别人可能已算完。force 也不清缓存——单策略 force 重扫
         # 若清空整份缓存，会把其余 27 个策略的预热结果一起抹掉
-        cache = _load_cache(trade_date)
-        missing = (list(strategies) if force
-                   else [s for s in strategies if s not in cache])
+        cache = _load_cache(trade_date, csv_manager)
+        missing = (
+            list(strategies) if force else [s for s in strategies if s not in cache]
+        )
         if missing:
-            scan = compute_scan(csv_manager, stock_names, missing,
-                                date=date if date else "",
-                                trade_date=trade_date)
+            scan = compute_scan(
+                csv_manager,
+                stock_names,
+                missing,
+                date=date if date else "",
+                trade_date=trade_date,
+            )
             if not scan.get("available"):
                 return scan
             cache.update(scan["results"])
-            _save_cache(trade_date, cache)
+            if not _save_cache(trade_date, cache, csv_manager):
+                return {"available": False, "reason": "factor_cache_write_failed"}
 
     results = {s: cache[s] for s in strategies if s in cache}
     if not results:
@@ -275,17 +346,24 @@ def get_factor_hits(csv_manager, stock_names: dict, strategies: list,
     return {"available": True, "trade_date": trade_date, "results": results}
 
 
-def read_cached_factor_hits(csv_manager, strategies: list) -> dict:
-    """只读最新因子缓存；板块详情不能因辅助因子缺失而触发全市场扫描。"""
-    trade_date = _latest_data_date(csv_manager)
+def read_cached_factor_hits(csv_manager, strategies: list, date: str = "") -> dict:
+    """只读因子缓存；HTTP GET 不得因缓存缺失触发全市场扫描。"""
+    latest = _latest_data_date(csv_manager)
+    if date and (not _DATE_RE.fullmatch(date) or (latest and date > latest)):
+        return {"available": False, "reason": "invalid_or_future_date"}
+    trade_date = date or latest
     if not trade_date:
         return {"available": False, "reason": "无法确定交易日"}
-    cache = _load_cache(trade_date)
+    envelope = _load_cache_envelope(trade_date, csv_manager)
+    cache = envelope.get("results") or {}
     results = {key: cache[key] for key in strategies if key in cache}
     return {
         "available": bool(results),
+        "reason": None if results else "factor_snapshot_not_ready",
         "trade_date": trade_date,
         "results": results,
+        "cache_key": envelope.get("_cache_key"),
+        "artifact_content_hash": envelope.get("artifact_content_hash"),
     }
 
 
@@ -293,5 +371,6 @@ def prewarm_all(csv_manager, stock_names: dict) -> dict:
     """16:00 定时任务预热：全部策略一次算完（一次IO跑28策略）."""
     from strategy.factors import FACTOR_REGISTRY
 
-    return get_factor_hits(csv_manager, stock_names,
-                           list(FACTOR_REGISTRY.keys()), force=True)
+    return get_factor_hits(
+        csv_manager, stock_names, list(FACTOR_REGISTRY.keys()), force=True
+    )

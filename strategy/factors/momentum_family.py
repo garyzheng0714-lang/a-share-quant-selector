@@ -9,14 +9,23 @@
 所有 compute 函数对 NaN / 短数据 / 零成交量兜底返回 None，绝不抛异常
 （模块级 _safe 装饰器做最终兜底，函数体内先做自然的 NaN/长度防御）。
 """
+
 import functools
 
 import numpy as np
-import pandas as pd
 
 from strategy.factor_lib import (
-    FactorContext, hit_payload, bbi_uptrend_ok, amplitude_pct, _last,
-    REF, MA, EMA, LLV, HHV, CROSS, SMA_TDX,
+    hit_payload,
+    bbi_uptrend_ok,
+    amplitude_pct,
+    _last,
+    REF,
+    MA,
+    EMA,
+    LLV,
+    HHV,
+    CROSS,
+    SMA_TDX,
 )
 
 
@@ -26,19 +35,24 @@ def _safe(fn):
     规格硬性要求"任何输入不得抛异常"——函数体内已做常规 NaN/长度防御，
     这里是最后一道保险，防御脏数据（如全 NaN 列、全零量）的极端组合。
     """
+
     @functools.wraps(fn)
     def wrap(ctx, params=None):
         try:
             return fn(ctx, params)
         except Exception:
             return None
+
     return wrap
 
 
 # ============ 16. 神魔操盘（angel_devil） ============
 
 ANGEL_DEVIL_PARAMS = {
-    "ema_fast": 2, "ema_slow": 42, "slope_window": 21, "slope_multiplier": 20,
+    "ema_fast": 2,
+    "ema_slow": 42,
+    "slope_window": 21,
+    "slope_multiplier": 20,
 }
 
 
@@ -58,21 +72,30 @@ def compute_angel_devil(ctx, params=None):
     if not bool(CROSS(angel, devil).iloc[-1]):
         return None
     a, d = _last(angel), _last(devil)
-    return hit_payload(ctx, extra={
-        "angel": round(a, 2) if a == a else None,
-        "devil": round(d, 2) if d == d else None,
-    })
+    return hit_payload(
+        ctx,
+        extra={
+            "angel": round(a, 2) if a == a else None,
+            "devil": round(d, 2) if d == d else None,
+        },
+    )
 
 
 # ============ 17. 六脉神剑（six_veins） ============
 
 SIX_VEINS_PARAMS = {
-    "macd_fast": 8, "macd_slow": 13, "macd_signal": 5,
+    "macd_fast": 8,
+    "macd_slow": 13,
+    "macd_signal": 5,
     # 以下为文档"-"（未给值）处采用的通达信六脉神剑常用默认（见 docstring 假设）
-    "kdj_n": 9, "kdj_m1": 3, "kdj_m2": 3,
-    "rsi_short": 6, "rsi_long": 12,
+    "kdj_n": 9,
+    "kdj_m1": 3,
+    "kdj_m2": 3,
+    "rsi_short": 6,
+    "rsi_long": 12,
     "lwr_n": 10,
-    "zlmm_short": 5, "zlmm_long": 10,
+    "zlmm_short": 5,
+    "zlmm_long": 10,
 }
 
 
@@ -110,17 +133,26 @@ def compute_six_veins(ctx, params=None):
     # 6) ZLMM：MTM 动量的双周期归一化强度
     mtm = ctx.C.diff()
     am = mtm.abs()
-    mms = 100 * EMA(EMA(mtm, p["zlmm_short"]), 3) / \
-        EMA(EMA(am, p["zlmm_short"]), 3).replace(0, np.nan)
-    mmm = 100 * EMA(EMA(mtm, p["zlmm_long"]), 8) / \
-        EMA(EMA(am, p["zlmm_long"]), 8).replace(0, np.nan)
+    mms = (
+        100
+        * EMA(EMA(mtm, p["zlmm_short"]), 3)
+        / EMA(EMA(am, p["zlmm_short"]), 3).replace(0, np.nan)
+    )
+    mmm = (
+        100
+        * EMA(EMA(mtm, p["zlmm_long"]), 8)
+        / EMA(EMA(am, p["zlmm_long"]), 8).replace(0, np.nan)
+    )
     c6 = mms > mmm
     allc = c1 & c2 & c3 & c4 & c5 & c6
     # 首次共振：今日全真 且 昨日非全真
     if bool(allc.iloc[-1]) and not bool(allc.iloc[-2]):
-        return hit_payload(ctx, extra={
-            "dif": round(_last(dif), 3) if _last(dif) == _last(dif) else None,
-        })
+        return hit_payload(
+            ctx,
+            extra={
+                "dif": round(_last(dif), 3) if _last(dif) == _last(dif) else None,
+            },
+        )
     return None
 
 
@@ -159,9 +191,14 @@ def compute_wave_band(ctx, params=None):
 # ============ 19. 单针下30（needle_down30） ============
 
 NEEDLE_DOWN30_PARAMS = {
-    "n_long": 21, "n_short": 3, "long_target": 85, "short_target": 30,
-    "short_cross_lookback": 3, "long_stability_window": 5,
-    "long_stability_min_ratio": 0.8, "require_bbi_uptrend": False,
+    "n_long": 21,
+    "n_short": 3,
+    "long_target": 85,
+    "short_target": 30,
+    "short_cross_lookback": 3,
+    "long_stability_window": 5,
+    "long_stability_min_ratio": 0.8,
+    "require_bbi_uptrend": False,
 }
 
 
@@ -184,28 +221,36 @@ def compute_needle_down30(ctx, params=None):
         return None
     # 近3日内发生过"从30上方下穿到30以下"
     cross_down = (rs <= st) & (REF(rs, 1) > st)
-    if not bool(cross_down.iloc[-p["short_cross_lookback"]:].any()):
+    if not bool(cross_down.iloc[-p["short_cross_lookback"] :].any()):
         return None
     # 长线当日 >= 85 且 近5日 >=85 的天数占比 >= 0.8
     if not (_last(rl) >= lt):
         return None
-    tail = rl.iloc[-p["long_stability_window"]:]
+    tail = rl.iloc[-p["long_stability_window"] :]
     ratio = float((tail >= lt).sum()) / p["long_stability_window"]
     if ratio < p["long_stability_min_ratio"]:
         return None
     if p["require_bbi_uptrend"] and not bbi_uptrend_ok(ctx):
         return None
-    return hit_payload(ctx, extra={
-        "rsv_short": round(_last(rs), 1), "rsv_long": round(_last(rl), 1),
-    })
+    return hit_payload(
+        ctx,
+        extra={
+            "rsv_short": round(_last(rs), 1),
+            "rsv_long": round(_last(rl), 1),
+        },
+    )
 
 
 # ============ 20. 底部暴力K（bottom_violent_k） ============
 
 BOTTOM_VIOLENT_K_PARAMS = {
-    "lookback_days": 60, "min_pct_change": 4, "kdj_j_threshold": 15,
-    "consolidation_days": 5, "amplitude_threshold": 0.15,
-    "volume_ratio_threshold": 2, "min_volume_shrink_ratio": 0.7,
+    "lookback_days": 60,
+    "min_pct_change": 4,
+    "kdj_j_threshold": 15,
+    "consolidation_days": 5,
+    "amplitude_threshold": 0.15,
+    "volume_ratio_threshold": 2,
+    "min_volume_shrink_ratio": 0.7,
     "max_consolidation_volatility": 0.03,
 }
 
@@ -237,7 +282,7 @@ def compute_bottom_violent_k(ctx, params=None):
     _, _, j = ctx.kdj()
     j_prev = float(j.iloc[-2])
     cond_j = j_prev == j_prev and j_prev < p["kdj_j_threshold"]
-    win = ctx.C.iloc[-(lb + 1):-1]
+    win = ctx.C.iloc[-(lb + 1) : -1]
     cmin, cmax = float(win.min()), float(win.max())
     c_prev = float(ctx.C.iloc[-2])
     cond_pos = cmax > cmin and (c_prev - cmin) / (cmax - cmin) < 0.25
@@ -259,29 +304,38 @@ def compute_bottom_violent_k(ctx, params=None):
         return None
     # 3) 前期横盘 或 缩量
     cd = p["consolidation_days"]
-    h_pre = ctx.H.iloc[-(cd + 1):-1]
-    l_pre = ctx.L.iloc[-(cd + 1):-1]
+    h_pre = ctx.H.iloc[-(cd + 1) : -1]
+    l_pre = ctx.L.iloc[-(cd + 1) : -1]
     lmin = float(l_pre.min())
     vola = (float(h_pre.max()) - lmin) / lmin if lmin > 0 else float("nan")
     cond_flat = vola == vola and vola <= p["max_consolidation_volatility"]
-    v3 = float(ctx.V.iloc[-4:-1].mean())            # 近3日均量（不含今日）
-    v_ref = float(ctx.V.iloc[-(cd + 4):-4].mean())  # 再前5日均量
+    v3 = float(ctx.V.iloc[-4:-1].mean())  # 近3日均量（不含今日）
+    v_ref = float(ctx.V.iloc[-(cd + 4) : -4].mean())  # 再前5日均量
     cond_shrink = v_ref > 0 and v3 < v_ref * p["min_volume_shrink_ratio"]
     if not (cond_flat or cond_shrink):
         return None
-    return hit_payload(ctx, extra={
-        "body_pct": round(body, 2),
-        "vol_ratio": round(v_today / v_prev, 2) if v_prev > 0 else None,
-    })
+    return hit_payload(
+        ctx,
+        extra={
+            "body_pct": round(body, 2),
+            "vol_ratio": round(v_today / v_prev, 2) if v_prev > 0 else None,
+        },
+    )
 
 
 # ============ 21. 趋势转强（trend_strengthen） ============
 
 TREND_STRENGTHEN_PARAMS = {
-    "ema_fast": 13, "ema_signal": 8, "short_ma": 10, "medium_ma": 54,
-    "ma_surge_filter": 15, "ma_pullback_filter": 10,
-    "volume_surge_ratio": 1.2, "ma_surge_days_limit": 150,
-    "daily_gain_threshold": 0.095, "candle_strength_threshold": 0.05,
+    "ema_fast": 13,
+    "ema_signal": 8,
+    "short_ma": 10,
+    "medium_ma": 54,
+    "ma_surge_filter": 15,
+    "ma_pullback_filter": 10,
+    "volume_surge_ratio": 1.2,
+    "ma_surge_days_limit": 150,
+    "daily_gain_threshold": 0.095,
+    "candle_strength_threshold": 0.05,
 }
 
 
@@ -306,32 +360,43 @@ def compute_trend_strengthen(ctx, params=None):
     golden = (dif > 0) & (REF(dif, 1) <= 0)
     pct = ctx.C.pct_change()
     big = pct >= p["daily_gain_threshold"]
-    yang = (ctx.C - ctx.O) / ctx.O.replace(0, np.nan) >= \
-        p["candle_strength_threshold"]
+    yang = (ctx.C - ctx.O) / ctx.O.replace(0, np.nan) >= p["candle_strength_threshold"]
     vol_up = (ctx.V > 0) & (ctx.V >= REF(ctx.V, 1) * p["volume_surge_ratio"])
     brk = (ctx.C > ctx.ma(p["short_ma"])) & (ctx.C > ctx.ma(p["medium_ma"]))
     sig = golden & big & yang & vol_up & brk
     if not bool(sig.iloc[-1]):
         return None
     # 限频：前15日内不得已有同型信号
-    if bool(sig.iloc[-(p["ma_surge_filter"] + 1):-1].any()):
+    if bool(sig.iloc[-(p["ma_surge_filter"] + 1) : -1].any()):
         return None
-    return hit_payload(ctx, extra={
-        "gain_pct": round(float(pct.iloc[-1]) * 100, 2),
-    })
+    return hit_payload(
+        ctx,
+        extra={
+            "gain_pct": round(float(pct.iloc[-1]) * 100, 2),
+        },
+    )
 
 
 # ============ 23. 云阶（cloud_stair） ============
 
 CLOUD_STAIR_PARAMS = {
-    "min_up_days": 1, "min_down_days": 1, "min_wave_gain_pct": 0.3,
-    "consolidation_days": 5, "min_strong_up_days": 3,
-    "breakout_buffer_pct": 0, "surge_lookback_days": 15,
-    "min_breakout_up_days": 1, "breakout_lookback_days": 3,
-    "min_consolidation_days": 3, "long_high_lookback_days": 60,
-    "strong_up_pct_threshold": 4, "max_recent_close_range_pct": 0.25,
-    "min_recent_close_range_pct": 0.03, "min_peak_to_long_high_ratio": 0.95,
-    "max_recent_high_low_range_pct": 0.35, "min_recent_high_low_range_pct": 0.06,
+    "min_up_days": 1,
+    "min_down_days": 1,
+    "min_wave_gain_pct": 0.3,
+    "consolidation_days": 5,
+    "min_strong_up_days": 3,
+    "breakout_buffer_pct": 0,
+    "surge_lookback_days": 15,
+    "min_breakout_up_days": 1,
+    "breakout_lookback_days": 3,
+    "min_consolidation_days": 3,
+    "long_high_lookback_days": 60,
+    "strong_up_pct_threshold": 4,
+    "max_recent_close_range_pct": 0.25,
+    "min_recent_close_range_pct": 0.03,
+    "min_peak_to_long_high_ratio": 0.95,
+    "max_recent_high_low_range_pct": 0.35,
+    "min_recent_high_low_range_pct": 0.06,
     "max_consolidation_pullback_pct": 0.18,
     "require_trade_on_selection_date": True,
     "min_breakout_close_to_peak_ratio": 0.95,
@@ -371,7 +436,7 @@ def compute_cloud_stair(ctx, params=None):
     if p["require_trade_on_selection_date"] and not (V[-1] > 0):
         return None
     pct = ctx.pct_change().to_numpy(dtype=float)  # 单位：%
-    hh_long = np.nanmax(H[-p["long_high_lookback_days"]:])
+    hh_long = np.nanmax(H[-p["long_high_lookback_days"] :])
     if not (hh_long == hh_long):
         return None
     w0 = max(0, n - p["surge_lookback_days"])
@@ -384,7 +449,7 @@ def compute_cloud_stair(ctx, params=None):
         if peak_h < p["min_peak_to_long_high_ratio"] * hh_long:
             continue
         # 1) 阶段低点 → 峰 涨幅
-        lows = L[w0:peak + 1]
+        lows = L[w0 : peak + 1]
         if not np.isfinite(lows).any():
             continue
         li = w0 + int(np.nanargmin(lows))
@@ -392,9 +457,11 @@ def compute_cloud_stair(ctx, params=None):
         if not (stage_low > 0 and peak_h / stage_low - 1 >= p["min_wave_gain_pct"]):
             continue
         # 1) 强上涨日数量（含低点当日）
-        seg = pct[li:peak + 1]
-        if int(np.nansum(seg >= p["strong_up_pct_threshold"])) < \
-                p["min_strong_up_days"]:
+        seg = pct[li : peak + 1]
+        if (
+            int(np.nansum(seg >= p["strong_up_pct_threshold"]))
+            < p["min_strong_up_days"]
+        ):
             continue
         # 2) 横盘段（峰次日 ~ 今日前一日）
         s0, s1 = peak + 1, n - 1
@@ -403,15 +470,19 @@ def compute_cloud_stair(ctx, params=None):
         if not (cmin > 0):
             continue
         crng = cmax / cmin - 1
-        if not (p["min_recent_close_range_pct"] <= crng
-                <= p["max_recent_close_range_pct"]):
+        if not (
+            p["min_recent_close_range_pct"] <= crng <= p["max_recent_close_range_pct"]
+        ):
             continue
         lmin = np.nanmin(ls)
         if not (lmin > 0):
             continue
         hlr = np.nanmax(hs) / lmin - 1
-        if not (p["min_recent_high_low_range_pct"] <= hlr
-                <= p["max_recent_high_low_range_pct"]):
+        if not (
+            p["min_recent_high_low_range_pct"]
+            <= hlr
+            <= p["max_recent_high_low_range_pct"]
+        ):
             continue
         if 1 - lmin / peak_h > p["max_consolidation_pullback_pct"]:
             continue
@@ -420,21 +491,29 @@ def compute_cloud_stair(ctx, params=None):
         if not (np.nanmax(vs) <= peak_v * p["max_recent_max_volume_to_peak_ratio"]):
             continue
         spct = pct[s0:s1]
-        if int(np.nansum(spct > 0)) < p["min_up_days"] or \
-                int(np.nansum(spct < 0)) < p["min_down_days"]:
+        if (
+            int(np.nansum(spct > 0)) < p["min_up_days"]
+            or int(np.nansum(spct < 0)) < p["min_down_days"]
+        ):
             continue
         # 3) 突破确认（最近3日）
-        bwin = pct[n - p["breakout_lookback_days"]:]
+        bwin = pct[n - p["breakout_lookback_days"] :]
         if int(np.nansum(bwin > 0)) < p["min_breakout_up_days"]:
             continue
-        target = peak_h * p["min_breakout_close_to_peak_ratio"] * \
-            (1 + p["breakout_buffer_pct"])
+        target = (
+            peak_h
+            * p["min_breakout_close_to_peak_ratio"]
+            * (1 + p["breakout_buffer_pct"])
+        )
         if not (C[-1] >= target):
             continue
-        return hit_payload(ctx, extra={
-            "peak_date": str(ctx.df["date"].iloc[peak]),
-            "wave_gain_pct": round((peak_h / stage_low - 1) * 100, 1),
-        })
+        return hit_payload(
+            ctx,
+            extra={
+                "peak_date": str(ctx.df["date"].iloc[peak]),
+                "wave_gain_pct": round((peak_h / stage_low - 1) * 100, 1),
+            },
+        )
     return None
 
 
@@ -464,44 +543,72 @@ def compute_ma520(ctx, params=None):
     ml_t, ml_p = float(ma_l.iloc[-1]), float(ma_l.iloc[-2])
     if not (ml_t == ml_t and ml_t > ml_p):
         return None
-    return hit_payload(ctx, extra={
-        "ma5": round(_last(ma_s), 2), "ma20": round(ml_t, 2),
-    })
+    return hit_payload(
+        ctx,
+        extra={
+            "ma5": round(_last(ma_s), 2),
+            "ma20": round(ml_t, 2),
+        },
+    )
 
 
 # ============ 因子注册表 ============
 
 FACTORS = {
     "angel_devil": {
-        "name": "神魔操盘", "group": "动量系", "min_bars": 80,
-        "params": ANGEL_DEVIL_PARAMS, "fn": compute_angel_devil,
+        "name": "神魔操盘",
+        "group": "动量系",
+        "min_bars": 80,
+        "params": ANGEL_DEVIL_PARAMS,
+        "fn": compute_angel_devil,
     },
     "six_veins": {
-        "name": "六脉神剑", "group": "动量系", "min_bars": 40,
-        "params": SIX_VEINS_PARAMS, "fn": compute_six_veins,
+        "name": "六脉神剑",
+        "group": "动量系",
+        "min_bars": 40,
+        "params": SIX_VEINS_PARAMS,
+        "fn": compute_six_veins,
     },
     "wave_band": {
-        "name": "波段", "group": "动量系", "min_bars": 60,
-        "params": WAVE_BAND_PARAMS, "fn": compute_wave_band,
+        "name": "波段",
+        "group": "动量系",
+        "min_bars": 60,
+        "params": WAVE_BAND_PARAMS,
+        "fn": compute_wave_band,
     },
     "needle_down30": {
-        "name": "单针下30", "group": "动量系", "min_bars": 30,
-        "params": NEEDLE_DOWN30_PARAMS, "fn": compute_needle_down30,
+        "name": "单针下30",
+        "group": "动量系",
+        "min_bars": 30,
+        "params": NEEDLE_DOWN30_PARAMS,
+        "fn": compute_needle_down30,
     },
     "bottom_violent_k": {
-        "name": "底部暴力K", "group": "动量系", "min_bars": 66,
-        "params": BOTTOM_VIOLENT_K_PARAMS, "fn": compute_bottom_violent_k,
+        "name": "底部暴力K",
+        "group": "动量系",
+        "min_bars": 66,
+        "params": BOTTOM_VIOLENT_K_PARAMS,
+        "fn": compute_bottom_violent_k,
     },
     "trend_strengthen": {
-        "name": "趋势转强", "group": "动量系", "min_bars": 90,
-        "params": TREND_STRENGTHEN_PARAMS, "fn": compute_trend_strengthen,
+        "name": "趋势转强",
+        "group": "动量系",
+        "min_bars": 90,
+        "params": TREND_STRENGTHEN_PARAMS,
+        "fn": compute_trend_strengthen,
     },
     "cloud_stair": {
-        "name": "云阶", "group": "动量系", "min_bars": 70,
-        "params": CLOUD_STAIR_PARAMS, "fn": compute_cloud_stair,
+        "name": "云阶",
+        "group": "动量系",
+        "min_bars": 70,
+        "params": CLOUD_STAIR_PARAMS,
+        "fn": compute_cloud_stair,
     },
     "ma520": {
-        "name": "520", "group": "动量系", "min_bars": 25,
-        "params": MA520_PARAMS, "fn": compute_ma520,
+        "name": "520",
+        "group": "动量系",
+        "min_bars": 25,
+        "params": MA520_PARAMS,
+        "fn": compute_ma520,
     },
 }

@@ -1,0 +1,9 @@
+pytest==9.0.3
+pytest-cov==7.0.0
+ruff==0.12.11
+mypy==1.17.1
+pip-audit==2.9.0
+bandit==1.8.6
+hypothesis==6.138.15
+types-PyYAML==6.0.12.20250822
+types-requests==2.32.4.20250809

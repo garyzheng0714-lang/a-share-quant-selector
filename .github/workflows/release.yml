@@ -1,0 +1,406 @@
+name: Build and deploy immutable release
+
+on:
+  workflow_dispatch:
+    inputs:
+      git_sha:
+        description: Full tested commit SHA to release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    outputs:
+      sha: ${{ steps.sha.outputs.value }}
+    steps:
+      - name: Validate requested SHA
+        id: sha
+        env:
+          REQUESTED_SHA: ${{ inputs.git_sha }}
+        run: |
+          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          echo "value=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.sha.outputs.value }}
+          fetch-depth: 0
+      - name: Verify checkout identity
+        env:
+          EXPECTED_SHA: ${{ steps.sha.outputs.value }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11.9"
+      - run: |
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install --require-hashes -r requirements-dev.lock
+          ruff check main.py worker.py web_server.py utils views strategy tools tests
+          ruff format --check main.py worker.py web_server.py utils views strategy tools tests
+          mypy --follow-imports=skip utils/api_security.py utils/artifact_integrity.py utils/data_contracts.py utils/decision_ledger.py utils/market_snapshot.py utils/operations_store.py utils/runtime_schema.py utils/task_submission.py utils/probability_model.py tools/hierarchical_walk_forward.py tools/migration_dry_run.py
+          python -m pytest -q \
+            --cov=utils.api_security --cov=utils.artifact_integrity \
+            --cov=utils.csv_manager --cov=utils.data_contracts \
+            --cov=utils.data_freshness --cov=utils.decision_ledger \
+            --cov=utils.execution_model --cov=utils.market_snapshot \
+            --cov=utils.operations_store --cov=utils.paper_trading \
+            --cov=utils.probability_model --cov=utils.reference_snapshots \
+            --cov=utils.runtime_schema --cov-report=term-missing --cov-fail-under=75
+          pip-audit --disable-pip --require-hashes -r requirements.lock
+          pip-audit --disable-pip --require-hashes -r requirements-dev.lock
+          bandit -q -r main.py web_server.py worker.py utils views tools -lll
+      - uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.17.1"
+      - working-directory: frontend
+        run: npm ci && npm run lint && npm run test && npm run build && npm audit --audit-level=high
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Set image name
+        id: meta
+        run: echo "image=${REGISTRY}/${IMAGE_NAME,,}" >> "$GITHUB_OUTPUT"
+      - name: Build once and push SHA tag
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.image }}:${{ needs.verify.outputs.sha }}
+          build-args: GIT_COMMIT_SHA=${{ needs.verify.outputs.sha }}
+          provenance: mode=max
+          sbom: true
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+      - name: Keyless-sign immutable digest
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "$IMAGE@$DIGEST"
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Smoke-test exact image digest
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          RELEASE_SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          set -euo pipefail
+          WEB_NAME="quant-smoke-web-${GITHUB_RUN_ID}"
+          WORKER_NAME="quant-smoke-worker-${GITHUB_RUN_ID}"
+          DATA_VOLUME="quant-smoke-data-${GITHUB_RUN_ID}"
+          STATE_VOLUME="quant-smoke-state-${GITHUB_RUN_ID}"
+          cleanup() {
+            docker rm -f "$WEB_NAME" "$WORKER_NAME" >/dev/null 2>&1 || true
+            docker volume rm "$DATA_VOLUME" "$STATE_VOLUME" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker pull "$IMAGE@$DIGEST"
+          docker volume create "$DATA_VOLUME"
+          docker volume create "$STATE_VOLUME"
+          docker run --rm \
+            --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m \
+            --cap-drop ALL --security-opt no-new-privileges:true \
+            -e QUANT_STATE_DIR=/app/state \
+            -e QUANT_VIEWS_DB=/app/state/views.db \
+            -e QUANT_OPERATIONS_DB=/app/state/operations.db \
+            -v "$STATE_VOLUME:/app/state" \
+            "$IMAGE@$DIGEST" python tools/migrate_databases.py
+          docker run -d --name "$WEB_NAME" \
+            --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m \
+            --cap-drop ALL --security-opt no-new-privileges:true \
+            -e GIT_COMMIT_SHA="$RELEASE_SHA" \
+            -e QUANT_STATE_DIR=/app/state \
+            -e QUANT_VIEWS_DB=/app/state/views.db \
+            -e QUANT_OPERATIONS_DB=/app/state/operations.db \
+            -p 127.0.0.1::5000 -v "$DATA_VOLUME:/app/data:ro" \
+            -v "$STATE_VOLUME:/app/state" \
+            "$IMAGE@$DIGEST"
+          docker run -d --name "$WORKER_NAME" \
+            --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m \
+            --cap-drop ALL --security-opt no-new-privileges:true \
+            -e GIT_COMMIT_SHA="$RELEASE_SHA" \
+            -e QUANT_STATE_DIR=/app/state \
+            -e QUANT_VIEWS_DB=/app/state/views.db \
+            -e QUANT_OPERATIONS_DB=/app/state/operations.db \
+            -v "$DATA_VOLUME:/app/data" -v "$STATE_VOLUME:/app/state" \
+            "$IMAGE@$DIGEST" python worker.py
+          PORT=$(docker port "$WEB_NAME" 5000/tcp | awk -F: '{print $NF}')
+          for attempt in $(seq 1 20); do
+            if curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null; then
+              break
+            fi
+            test "$attempt" -lt 20
+            sleep 1
+          done
+          test "$(docker inspect -f '{{.State.Running}}' "$WORKER_NAME")" = true
+          curl -fsS "http://127.0.0.1:${PORT}/api/version" | grep -q "$RELEASE_SHA"
+
+  deploy:
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+      - name: Configure SSH host
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$HOST" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      - name: Upload reviewed compose definition
+        env:
+          HOST: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+        run: |
+          ssh "$USER@$HOST" "mkdir -p /opt/a-share-quant"
+          scp docker-compose.yml "$USER@$HOST:/opt/a-share-quant/docker-compose.yml.next"
+      - name: Deploy exact digest with backup and rollback
+        env:
+          HOST: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+          RELEASE_SHA: ${{ needs.verify.outputs.sha }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ssh "$USER@$HOST" \
+            "IMAGE='$IMAGE' DIGEST='$DIGEST' RELEASE_SHA='$RELEASE_SHA' GHCR_USER='$GHCR_USER' GHCR_TOKEN='$GHCR_TOKEN' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd /opt/a-share-quant
+          test "${#RELEASE_SHA}" -eq 40
+          test "${DIGEST#sha256:}" != "$DIGEST"
+          test -f docker-compose.yml.next
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io \
+            --username "$GHCR_USER" --password-stdin
+          unset GHCR_TOKEN
+          install -m 700 -d secrets
+          ensure_runtime_token() {
+            path=$1
+            if ! test -s "$path"; then
+              openssl rand -hex 32 > "$path"
+            fi
+            chmod 600 "$path"
+          }
+          ensure_runtime_token secrets/admin-token
+          ensure_runtime_token secrets/publisher-token
+          ensure_runtime_token secrets/viewer-token
+          PREVIOUS_COMPOSE=0
+          PREVIOUS_ENV=0
+          PREVIOUS_STOPPED=0
+          CANARY_NAME="a-share-quant-canary-${RELEASE_SHA:0:12}"
+          if test -f docker-compose.yml; then
+            cp -f docker-compose.yml .rollback-compose.yml
+            PREVIOUS_COMPOSE=1
+          else
+            rm -f .rollback-compose.yml
+          fi
+          if test -f .release.env; then
+            cp -f .release.env .rollback.env
+            PREVIOUS_ENV=1
+          else
+            rm -f .rollback.env
+          fi
+          restore_release_files() {
+            if test "$PREVIOUS_COMPOSE" -eq 1; then
+              cp -f .rollback-compose.yml docker-compose.yml
+            else
+              rm -f docker-compose.yml
+            fi
+            if test "$PREVIOUS_ENV" -eq 1; then
+              cp -f .rollback.env .release.env
+            else
+              rm -f .release.env
+            fi
+            rm -f .release.env.next
+          }
+          cleanup_canary() {
+            docker rm -f "$CANARY_NAME" >/dev/null 2>&1 || true
+          }
+          restore_before_switch() {
+            status=$?
+            trap - ERR
+            cleanup_canary
+            restore_release_files
+            if test "$PREVIOUS_STOPPED" -eq 1; then
+              docker compose --env-file .release.env up -d --remove-orphans || \
+                echo "Failed to restart the previous release; manual recovery required." >&2
+            fi
+            exit "$status"
+          }
+          rollback_failed_release() {
+            trap - ERR
+            cleanup_canary
+            docker compose --env-file .release.env down --remove-orphans || true
+            restore_release_files
+            if test "$PREVIOUS_COMPOSE" -eq 1 && test "$PREVIOUS_ENV" -eq 1; then
+              docker compose --env-file .release.env up -d --remove-orphans
+            else
+              echo "No complete previous release exists; failed release was stopped." >&2
+            fi
+          }
+          trap restore_before_switch ERR
+          mv docker-compose.yml.next docker-compose.yml
+          {
+            echo "QUANT_IMAGE=${IMAGE}@${DIGEST}"
+            echo "GIT_COMMIT_SHA=${RELEASE_SHA}"
+            echo "QUANT_ADMIN_TOKEN_FILE=/opt/a-share-quant/secrets/admin-token"
+            echo "QUANT_PUBLISHER_TOKEN_FILE=/opt/a-share-quant/secrets/publisher-token"
+            echo "QUANT_VIEWER_TOKEN_FILE=/opt/a-share-quant/secrets/viewer-token"
+          } > .release.env.next
+          docker compose --env-file .release.env.next pull
+          if test "$PREVIOUS_COMPOSE" -eq 1 && test "$PREVIOUS_ENV" -eq 1; then
+            PREVIOUS_STOPPED=1
+            docker compose --env-file .rollback.env -f .rollback-compose.yml \
+              stop worker web
+          fi
+          docker compose --env-file .release.env.next run --rm --no-deps web python tools/backup_databases.py
+          docker compose --profile canary --env-file .release.env.next run --rm \
+            --no-deps canary python tools/migration_dry_run.py
+          docker compose --env-file .release.env.next run --rm --no-deps migrate
+          docker compose --env-file .release.env.next run --rm --no-deps web python tools/predeploy_check.py
+          EXPECTED_IMAGE="${IMAGE}@${DIGEST}"
+          cleanup_canary
+          docker compose --profile canary --env-file .release.env.next run -d \
+            --name "$CANARY_NAME" --no-deps canary
+          test "$(docker inspect -f '{{.Config.Image}}' "$CANARY_NAME")" = "$EXPECTED_IMAGE"
+          CANARY_READY=0
+          for attempt in $(seq 1 20); do
+            if docker exec -i -e EXPECTED_SHA="$RELEASE_SHA" \
+              "$CANARY_NAME" python - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.request
+
+
+          def read_json(path: str) -> dict:
+              with urllib.request.urlopen(
+                  f"http://localhost:5000{path}", timeout=5
+              ) as response:
+                  assert response.status == 200
+                  return json.load(response)
+
+
+          health = read_json("/healthz")
+          version = read_json("/api/version")
+          stats = read_json("/api/stats")
+          snapshot_id = version.get("snapshot_id")
+          stats_data = stats.get("data") or {}
+
+          assert health.get("status") == "ok"
+          assert version.get("git_commit_sha") == os.environ["EXPECTED_SHA"]
+          assert version.get("snapshot_available") is True
+          assert isinstance(snapshot_id, str) and re.fullmatch(r"[0-9a-f]{64}", snapshot_id)
+          assert stats.get("success") is True
+          assert stats_data.get("snapshot_id") == snapshot_id
+          PY
+            then
+              CANARY_READY=1
+              break
+            fi
+            sleep 2
+          done
+          test "$CANARY_READY" -eq 1
+          cleanup_canary
+          mv .release.env.next .release.env
+          trap - ERR
+          if ! docker compose --env-file .release.env up -d --remove-orphans; then
+            rollback_failed_release
+            exit 1
+          fi
+          for attempt in $(seq 1 30); do
+            web_container=$(docker compose --env-file .release.env ps -q web)
+            worker_container=$(docker compose --env-file .release.env ps -q worker)
+            if test -n "$web_container" \
+              && test -n "$worker_container" \
+              && test "$(docker inspect -f '{{.Config.Image}}' "$web_container")" = "$EXPECTED_IMAGE" \
+              && test "$(docker inspect -f '{{.Config.Image}}' "$worker_container")" = "$EXPECTED_IMAGE" \
+              && docker compose --env-file .release.env exec -T \
+                -e EXPECTED_SHA="$RELEASE_SHA" web python - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.request
+
+
+          def read_json(path: str) -> dict:
+              with urllib.request.urlopen(
+                  f"http://localhost:5000{path}", timeout=5
+              ) as response:
+                  assert response.status == 200
+                  return json.load(response)
+
+
+          version = read_json("/api/version")
+          readiness = read_json("/readyz")
+          stats = read_json("/api/stats")
+          snapshot_id = version.get("snapshot_id")
+          scheduler = readiness.get("scheduler") or {}
+          market_data = readiness.get("market_data") or {}
+          stats_data = stats.get("data") or {}
+
+          assert version.get("git_commit_sha") == os.environ["EXPECTED_SHA"]
+          assert version.get("snapshot_available") is True
+          assert isinstance(snapshot_id, str) and re.fullmatch(r"[0-9a-f]{64}", snapshot_id)
+          assert readiness.get("ready") is True
+          assert market_data.get("snapshot_id") == snapshot_id
+          assert scheduler.get("running") is True
+          assert scheduler.get("leader")
+          assert stats.get("success") is True
+          assert stats_data.get("snapshot_id") == snapshot_id
+          assert stats_data.get("scheduler_running") is True
+          PY
+            then
+              docker compose --env-file .release.env ps
+              exit 0
+            fi
+            sleep 5
+          done
+          rollback_failed_release
+          exit 1
+          REMOTE

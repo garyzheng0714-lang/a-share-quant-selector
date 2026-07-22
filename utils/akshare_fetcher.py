@@ -10,12 +10,17 @@ import sys
 from pathlib import Path
 import json
 import requests
-import random
 import os
+import hashlib
+import re
 
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.csv_manager import CSVManager
+from utils.data_contracts import FetchResult, MarketDataUnavailable
+
+
+MIN_UNIVERSE_SIZE = 3000
 
 # 设置请求会话
 session = requests.Session()
@@ -30,194 +35,24 @@ session.headers.update(
 )
 
 
-# 备选A股股票列表（当网络获取失败时使用）
-DEFAULT_STOCK_LIST = {
-    # 上证指数成分股（部分）
-    "600519": "贵州茅台",
-    "600036": "招商银行",
-    "601398": "工商银行",
-    "600900": "长江电力",
-    "601288": "农业银行",
-    "601088": "中国神华",
-    "601857": "中国石油",
-    "600030": "中信证券",
-    "601628": "中国人寿",
-    "600276": "恒瑞医药",
-    "601318": "中国平安",
-    "600309": "万华化学",
-    "600887": "伊利股份",
-    "601166": "兴业银行",
-    "600028": "中国石化",
-    "601888": "中国中免",
-    "600031": "三一重工",
-    "601012": "隆基绿能",
-    "603288": "海天味业",
-    "600009": "上海机场",
-    "600436": "片仔癀",
-    "603259": "药明康德",
-    "601668": "中国建筑",
-    "600048": "保利发展",
-    "600585": "海螺水泥",
-    "601601": "中国太保",
-    "603501": "韦尔股份",
-    "600690": "海尔智家",
-    "601818": "光大银行",
-    "600893": "航发动力",
-    "601688": "华泰证券",
-    "601211": "国泰君安",
-    "600837": "海通证券",
-    "601669": "中国电建",
-    "600406": "国电南瑞",
-    "601989": "中国重工",
-    "601186": "中国铁建",
-    "601390": "中国中铁",
-    "601800": "中国交建",
-    "601618": "中国中冶",
-    "601117": "中国化学",
-    "601669": "中国电建",
-    # 深证主板
-    "000001": "平安银行",
-    "000002": "万科A",
-    "000333": "美的集团",
-    "000858": "五粮液",
-    "002594": "比亚迪",
-    "000568": "泸州老窖",
-    "000538": "云南白药",
-    "002415": "海康威视",
-    "000725": "京东方A",
-    "000063": "中兴通讯",
-    "002142": "宁波银行",
-    "000651": "格力电器",
-    "000895": "双汇发展",
-    "002304": "洋河股份",
-    "000776": "广发证券",
-    "002271": "东方雨虹",
-    "000938": "中芯国际",
-    "002230": "科大讯飞",
-    "000100": "TCL科技",
-    "002460": "赣锋锂业",
-    "002024": "苏宁易购",
-    "000625": "长安汽车",
-    "002007": "华兰生物",
-    "000768": "中航西飞",
-    "002049": "紫光国微",
-    "000166": "申万宏源",
-    "000069": "华侨城A",
-    "000063": "中兴通讯",
-    "000338": "潍柴动力",
-    "000983": "山西焦煤",
-    "000921": "海信家电",
-    "000999": "华润三九",
-    "000750": "国海证券",
-    # 创业板
-    "300750": "宁德时代",
-    "300059": "东方财富",
-    "300760": "迈瑞医疗",
-    "300124": "汇川技术",
-    "300015": "爱尔眼科",
-    "300014": "亿纬锂能",
-    "300433": "蓝思科技",
-    "300003": "乐普医疗",
-    "300122": "智飞生物",
-    "300142": "沃森生物",
-    "300408": "三环集团",
-    "300413": "芒果超媒",
-    "300001": "特锐德",
-    "300033": "同花顺",
-    "300496": "中科创达",
-    "300136": "信维通信",
-    "300383": "光环新网",
-    "300316": "晶盛机电",
-    "300454": "深信服",
-    "300661": "圣邦股份",
-    "300285": "国瓷材料",
-    "300751": "迈为股份",
-    "300618": "寒锐钴业",
-    "300677": "英科医疗",
-    "300776": "帝尔激光",
-    "300073": "当升科技",
-    "300724": "捷佳伟创",
-    "300274": "阳光电源",
-    "300763": "锦浪科技",
-    "300012": "华测检测",
-    "300496": "中科创达",
-    "300223": "北京君正",
-    "300373": "扬杰科技",
-    "300207": "欣旺达",
-    "300118": "东方日升",
-    "300450": "先导智能",
-    "300604": "长川科技",
-    "300395": "菲利华",
-    "300073": "当升科技",
-    "300124": "汇川技术",
-    "300760": "迈瑞医疗",
-    "300015": "爱尔眼科",
-    "300122": "智飞生物",
-    "300142": "沃森生物",
-    "300003": "乐普医疗",
-    "300529": "健帆生物",
-    "300601": "康泰生物",
-    "300676": "华大基因",
-    "300595": "欧普康视",
-    "300357": "我武生物",
-    "300832": "新产业",
-    "300009": "安科生物",
-    "300463": "迈克生物",
-    "300026": "红日药业",
-    "300026": "红日药业",
-    "300244": "迪安诊断",
-    "300298": "三诺生物",
-    "300347": "泰格医药",
-    "300558": "贝达药业",
-    "300630": "普利制药",
-    "300841": "康华生物",
-    "300896": "爱美客",
-    "300999": "金龙鱼",
-    "300888": "稳健医疗",
-    "300866": "安克创新",
-    "300999": "金龙鱼",
-}
-
-
 class AKShareFetcher:
     """AKShare 数据抓取器"""
 
-    def __init__(self, data_dir="data"):
+    def __init__(self, data_dir="data", *, state_dir: str | Path | None = None):
         self.csv_manager = CSVManager(data_dir)
         self.full_data_dir = Path(data_dir)
+        self.state_dir = (
+            Path(state_dir) if state_dir is not None else self.full_data_dir
+        )
         self.stock_names_file = Path(data_dir) / "stock_names.json"
-        self._market_cap_cache: dict[str, float] = {}
-        self.bootstrap_state_file = self.full_data_dir / "universe_bootstrap.json"
-
-    def _get_real_market_cap(self, stock_code: str) -> float:
-        """获取真实总市值（带内存缓存）."""
-        if stock_code in self._market_cap_cache:
-            return self._market_cap_cache[stock_code]
-
-        if not self._market_cap_cache:
-            self._load_market_cap_bulk()
-
-        return self._market_cap_cache.get(stock_code, 0)
-
-    def _load_market_cap_bulk(self) -> None:
-        """批量加载总市值数据到内存缓存."""
-        try:
-            from utils.stock_info import fetch_market_caps
-
-            known_codes = self.csv_manager.list_all_stocks()
-            if not known_codes:
-                known_codes = list(self._load_local_stock_names().keys())
-
-            caps = fetch_market_caps(stock_codes=known_codes or None)
-            for code, data in caps.items():
-                if isinstance(data, dict):
-                    self._market_cap_cache[code] = (
-                        data.get("total_mv") or data.get("circ_mv") or 0
-                    )
-                elif isinstance(data, (int, float)):
-                    self._market_cap_cache[code] = float(data)
-        except Exception as e:
-            print(f"  加载市值数据失败: {e}，使用0作为默认值")
+        self.universe_manifest_file = Path(data_dir) / "universe_manifest.json"
+        self.security_status_file = Path(data_dir) / "security_status.json"
+        self.provenance_file = Path(data_dir) / "ingestion_provenance.json"
+        self.bootstrap_state_file = self.state_dir / "universe_bootstrap.json"
+        self.universe_refresh_status = {
+            "fresh": False,
+            "reason": "universe_refresh_not_attempted",
+        }
 
     def _load_local_stock_names(self):
         """从本地文件加载股票名称"""
@@ -225,19 +60,226 @@ class AKShareFetcher:
             try:
                 with open(self.stock_names_file, "r", encoding="utf-8") as f:
                     return json.load(f)
-            except:
+            except (OSError, json.JSONDecodeError):
                 pass
         return {}
 
-    def _save_stock_names(self, stock_dict):
-        """保存股票名称到本地"""
+    def _save_stock_names(self, stock_dict, source: str):
+        """保存可审计的 last-known-good 股票池及其版本元数据。"""
+        if len(stock_dict) < MIN_UNIVERSE_SIZE:
+            raise ValueError("universe_below_minimum_size")
+        self.stock_names_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.stock_names_file.with_suffix(f".{os.getpid()}.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(stock_dict, f, ensure_ascii=False, indent=2)
+        tmp.replace(self.stock_names_file)
+        canonical = json.dumps(
+            stock_dict,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        manifest = {
+            "schema_version": "universe-v1",
+            "captured_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "source": source,
+            "count": len(stock_dict),
+            "expected_minimum_size": MIN_UNIVERSE_SIZE,
+            "stale": False,
+            "content_hash": hashlib.sha256(canonical).hexdigest(),
+        }
+        manifest_tmp = self.universe_manifest_file.with_suffix(f".{os.getpid()}.tmp")
+        manifest_tmp.write_text(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+        manifest_tmp.replace(self.universe_manifest_file)
+
+    def _universe_size_is_safe(self, candidate: dict, previous: dict) -> bool:
+        """阻断虽高于绝对下限、但相对上一版异常骤降的股票池。"""
+        if len(candidate) < MIN_UNIVERSE_SIZE:
+            return False
+        if len(previous) < MIN_UNIVERSE_SIZE:
+            return True
+        maximum_drop = float(os.environ.get("QUANT_MAX_UNIVERSE_DROP_RATIO", "0.10"))
+        return len(candidate) >= len(previous) * (1 - maximum_drop)
+
+    def _mark_universe_stale(self, reason: str) -> None:
+        """保留 LKG 内容，但显式记录本次刷新失败。"""
         try:
-            tmp = self.stock_names_file.with_suffix(f".{os.getpid()}.tmp")
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(stock_dict, f, ensure_ascii=False, indent=2)
-            tmp.replace(self.stock_names_file)
-        except Exception as e:
-            print(f"  保存股票名称失败: {e}")
+            manifest = json.loads(
+                self.universe_manifest_file.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            return
+        manifest.update(
+            {
+                "stale": True,
+                "last_refresh_attempt_at": datetime.now()
+                .astimezone()
+                .isoformat(timespec="seconds"),
+                "last_refresh_error": reason,
+            }
+        )
+        tmp = self.universe_manifest_file.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+        tmp.replace(self.universe_manifest_file)
+
+    def _save_security_status(
+        self,
+        stock_dict: dict[str, str],
+        suspension_frame: pd.DataFrame,
+        trade_date: str,
+    ) -> None:
+        """将交易所日历对应的停牌分类作为独立、可校验证据。"""
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", trade_date):
+            raise ValueError("security_status_trade_date_invalid")
+        suspended: dict[str, dict] = {}
+        code_column = next(
+            (name for name in ("代码", "股票代码") if name in suspension_frame),
+            None,
+        )
+        # 有效的“当日无停牌”响应仍应带有稳定列定义；无列空表更像
+        # 上游 schema 变化/异常降级，不得据此把全市场标成“已验证正常交易”。
+        if code_column is None:
+            raise ValueError("suspension_schema_missing_code")
+        if not suspension_frame.empty:
+            for _, row in suspension_frame.iterrows():
+                code = str(row.get(code_column) or "").split(".", 1)[0].zfill(6)
+                if code in stock_dict:
+                    suspended[code] = {
+                        "reason": str(row.get("停牌原因") or "").strip() or None,
+                        "planned_resume_at": str(row.get("预计复牌时间") or "").strip()
+                        or None,
+                    }
+        securities = {
+            code: {
+                "status": "suspended" if code in suspended else "active",
+                "verified": True,
+                "as_of": trade_date,
+                "source_id": "akshare:stock_tfp_em",
+                "is_st": "ST" in str(name).upper().replace("＊", "*"),
+                **(suspended.get(code) or {}),
+            }
+            for code, name in sorted(stock_dict.items())
+        }
+        canonical = json.dumps(
+            securities,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        payload = {
+            "schema_version": "security-status-v1",
+            "as_of": trade_date,
+            "captured_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "source_id": "akshare:stock_tfp_em",
+            "count": len(securities),
+            "suspended_count": len(suspended),
+            "content_hash": hashlib.sha256(canonical).hexdigest(),
+            "securities": securities,
+        }
+        tmp = self.security_status_file.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+        )
+        tmp.replace(self.security_status_file)
+
+    def _load_provenance(self) -> dict:
+        if not self.provenance_file.exists():
+            return {"schema_version": "ingestion-provenance-v1", "stocks": {}}
+        try:
+            payload = json.loads(self.provenance_file.read_text(encoding="utf-8"))
+            if payload.get("schema_version") == "ingestion-provenance-v1":
+                payload.setdefault("stocks", {})
+                return payload
+        except Exception:
+            pass
+        return {"schema_version": "ingestion-provenance-v1", "stocks": {}}
+
+    def _verified_security_statuses(self, trade_date: str) -> dict[str, dict]:
+        try:
+            payload = json.loads(self.security_status_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        securities = payload.get("securities")
+        if not isinstance(securities, dict):
+            return {}
+        canonical = json.dumps(
+            securities,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        if (
+            payload.get("schema_version") != "security-status-v1"
+            or payload.get("as_of") != trade_date
+            or payload.get("source_id") != "akshare:stock_tfp_em"
+            or payload.get("count") != len(securities)
+            or payload.get("content_hash") != hashlib.sha256(canonical).hexdigest()
+        ):
+            return {}
+        return securities
+
+    def _record_fetch_provenance(
+        self,
+        stock_code: str,
+        fetch: FetchResult,
+        persisted: pd.DataFrame,
+        *,
+        full_history: bool,
+    ) -> None:
+        """为成功落盘的真实数据记录来源，不为失败或合成数据造记录。"""
+        if not fetch.success or fetch.synthetic or persisted.empty:
+            raise ValueError(
+                "only successful non-synthetic fetches may record provenance"
+            )
+        dates = pd.to_datetime(persisted["date"], errors="coerce").dropna()
+        if dates.empty:
+            raise ValueError("persisted data has no valid dates")
+        payload = self._load_provenance()
+        previous = (payload.get("stocks") or {}).get(stock_code, {})
+        actual_start = dates.min().strftime("%Y-%m-%d")
+        actual_end = dates.max().strftime("%Y-%m-%d")
+        history_start = (
+            actual_start
+            if full_history
+            else previous.get("history_coverage_start") or actual_start
+        )
+        history_source = (
+            fetch.source
+            if full_history
+            else previous.get("history_source_id") or fetch.source
+        )
+        payload["stocks"][stock_code] = {
+            "source_id": fetch.source,
+            "fetched_at": fetch.fetched_at,
+            "adjustment": "qfq",
+            "source_trade_date": actual_end,
+            "provider_returned_latest_date": fetch.returned_latest_date,
+            "requested_start": fetch.requested_start,
+            "requested_end": fetch.requested_end,
+            "persisted_start": actual_start,
+            "persisted_end": actual_end,
+            "rows": len(persisted),
+            "synthetic": False,
+            "history_coverage_start": history_start,
+            "history_source_id": history_source,
+        }
+        payload["updated_at"] = (
+            datetime.now().astimezone().isoformat(timespec="seconds")
+        )
+        tmp = self.provenance_file.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(
+            json.dumps(
+                payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ),
+            encoding="utf-8",
+        )
+        tmp.replace(self.provenance_file)
 
     def _fetch_stock_list_http(self):
         """使用腾讯接口获取股票列表 - 覆盖5000+只A股"""
@@ -268,15 +310,9 @@ class AKShareFetcher:
                 ("300000", "309999"),  # 创业板300-309
             ]
 
-            # 从缓存加载已有的股票列表，避免重复查询
-            cached_stocks = self._load_local_stock_names()
-            if len(cached_stocks) >= 3000:
-                print(f"  从本地缓存加载 {len(cached_stocks)} 只股票")
-                return cached_stocks
-
-            print(f"\n  正在通过腾讯接口获取股票列表...")
-            print(f"  覆盖全部A股代码范围，约5000+只...")
-            print(f"  这可能需要10-15分钟时间，请耐心等待...")
+            print("\n  正在通过腾讯接口获取股票列表...")
+            print("  覆盖全部A股代码范围，约5000+只...")
+            print("  这可能需要10-15分钟时间，请耐心等待...")
 
             # 分批查询，每次最多100只
             batch_size = 100
@@ -285,12 +321,6 @@ class AKShareFetcher:
             # 生成密集的代码列表 - 步长改为1，覆盖几乎所有可能代码
             # 步长1可以获取最大数量的股票
             step = 1  # 步长1覆盖100%代码
-
-            # 如果已有缓存且超过5000只，直接返回
-            cached_stocks = self._load_local_stock_names()
-            if len(cached_stocks) >= 5000:
-                print(f"  从本地缓存加载 {len(cached_stocks)} 只股票")
-                return cached_stocks
 
             # 沪市 - 全覆盖
             for start, end in sh_ranges:
@@ -305,8 +335,8 @@ class AKShareFetcher:
                     all_codes.append(code)
 
             print(f"  计划查询 {len(all_codes)} 个代码 (步长{step})...")
-            print(f"  预计可获取 3000-5000+ 只有效股票...")
-            print(f"  提示: 首次获取需要约5-10分钟，请耐心等待...")
+            print("  预计可获取 3000-5000+ 只有效股票...")
+            print("  提示: 首次获取需要约5-10分钟，请耐心等待...")
 
             total_batches = (len(all_codes) + batch_size - 1) // batch_size
             print(f"  总共 {total_batches} 批次，开始查询...")
@@ -337,6 +367,7 @@ class AKShareFetcher:
                             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                         },
                     )
+                    resp.raise_for_status()
 
                     lines = resp.text.strip().split(";")
                     for line in lines:
@@ -387,25 +418,8 @@ class AKShareFetcher:
                                     # if 'ST' in name:
                                     #     is_valid = False
 
-                                    # 4. 价格异常过滤 - 如果最新价为0或空，可能是停牌或退市
-                                    try:
-                                        current_price = (
-                                            float(parts[3]) if len(parts) > 3 else 0
-                                        )
-                                        if current_price <= 0:
-                                            is_valid = False
-                                    except:
-                                        is_valid = False
-
-                                    # 5. 成交量异常过滤 - 长期无成交量的股票
-                                    try:
-                                        volume = (
-                                            float(parts[6]) if len(parts) > 6 else 0
-                                        )
-                                        if volume <= 0:
-                                            is_valid = False
-                                    except:
-                                        pass
+                                    # 价格/成交量为 0 可能是合法停牌，不得藉此
+                                    # 从 universe 删除。状态由独立的停复牌日历证明。
 
                                     if is_valid:
                                         stocks[code] = name
@@ -417,23 +431,23 @@ class AKShareFetcher:
 
                     time.sleep(0.1)  # 轻微限速
 
-                except Exception as e:
+                except Exception:
                     continue
 
             if stocks:
                 print(f"  ✓ 通过腾讯接口获取: {len(stocks)} 只股票")
                 return stocks
 
-            # 如果获取失败，使用默认列表
-            print(f"  使用默认列表: {len(DEFAULT_STOCK_LIST)} 只股票")
-            return DEFAULT_STOCK_LIST.copy()
+            print("  HTTP 股票列表返回空结果")
+            return {}
         except Exception as e:
             print(f"  HTTP获取失败: {e}")
-            return DEFAULT_STOCK_LIST.copy()
+            return {}
 
     def get_all_stock_codes(self, max_retries=3):
         """获取所有A股股票代码（过滤债基、ETF、ST等）"""
         print("正在获取A股股票列表...")
+        previous = self._load_local_stock_names()
 
         # 方法1: 直接HTTP请求
         for attempt in range(max_retries):
@@ -469,10 +483,20 @@ class AKShareFetcher:
                             continue
                         filtered[code] = name
 
-                    if filtered:
+                    if self._universe_size_is_safe(filtered, previous):
                         print(f"✓ HTTP获取成功: {len(filtered)} 只A股股票")
-                        self._save_stock_names(filtered)
+                        self._save_stock_names(filtered, source="tencent")
+                        self.universe_refresh_status = {
+                            "fresh": True,
+                            "source": "tencent",
+                            "count": len(filtered),
+                        }
                         return filtered
+                    if filtered:
+                        print(
+                            f"  HTTP 股票列表 {len(filtered)} 只，"
+                            "未通过绝对/相对缩水安全门"
+                        )
             except Exception as e:
                 print(f"  HTTP失败: {e}")
                 time.sleep(1)
@@ -516,24 +540,39 @@ class AKShareFetcher:
                     ]
 
                 stock_dict = dict(zip(all_stocks["代码"], all_stocks["名称"]))
-                print(f"✓ akshare获取成功: {len(stock_dict)} 只A股股票")
-                self._save_stock_names(stock_dict)
-                return stock_dict
+                if self._universe_size_is_safe(stock_dict, previous):
+                    print(f"✓ akshare获取成功: {len(stock_dict)} 只A股股票")
+                    self._save_stock_names(stock_dict, source="akshare")
+                    self.universe_refresh_status = {
+                        "fresh": True,
+                        "source": "akshare",
+                        "count": len(stock_dict),
+                    }
+                    return stock_dict
+                print(
+                    f"  akshare 股票列表 {len(stock_dict)} 只，"
+                    "未通过绝对/相对缩水安全门"
+                )
 
             except Exception as e:
                 print(f"  akshare失败: {e}")
                 time.sleep(2**attempt)
 
-        # 降级: 本地缓存或默认列表
+        # 只允许使用足够完整的 last-known-good，绝不伪造小股票池。
         print("\n网络连接失败，尝试加载本地缓存...")
         local_stocks = self._load_local_stock_names()
-        if local_stocks:
+        if len(local_stocks) >= MIN_UNIVERSE_SIZE:
             print(f"✓ 从本地缓存加载: {len(local_stocks)} 只股票")
+            self._mark_universe_stale("all_live_universe_sources_failed")
+            self.universe_refresh_status = {
+                "fresh": False,
+                "reason": "using_stale_last_known_good",
+                "count": len(local_stocks),
+            }
             return local_stocks
-
-        print("\n使用内置默认股票列表...")
-        print(f"✓ 加载默认列表: {len(DEFAULT_STOCK_LIST)} 只股票")
-        return DEFAULT_STOCK_LIST.copy()
+        raise MarketDataUnavailable(
+            "all_universe_sources_failed_and_no_valid_last_known_good"
+        )
 
     def _fetch_stock_history_http(self, stock_code, years=6):
         """使用腾讯接口获取股票历史数据"""
@@ -559,8 +598,10 @@ class AKShareFetcher:
                     "Referer": "https://stock.finance.qq.com/",
                 },
             )
-
+            resp.raise_for_status()
             data = resp.json()
+            if not isinstance(data, (dict, list)):
+                return None
 
             # 解析腾讯返回的数据（处理不同返回格式）
             data_level = data.get("data", {})
@@ -613,84 +654,45 @@ class AKShareFetcher:
                 if records:
                     df = pd.DataFrame(records)
                     df["date"] = pd.to_datetime(df["date"])
-                    df["market_cap"] = self._get_real_market_cap(stock_code)
                     df = df.sort_values("date", ascending=False)
                     return df
 
             return None
         except Exception as e:
-            print(f"  获取更新数据失败: {e}")
-            return None
-        except Exception as e:
             print(f"  HTTP获取历史数据失败: {e}")
             return None
 
-    def _generate_mock_data(self, stock_code, years=6):
-        """生成模拟数据（当网络不可用时使用）"""
-        import numpy as np
-
-        np.random.seed(hash(stock_code) % 2**32)
-
-        days = int(365 * years)
-        end_date = datetime.now()
-        dates = [end_date - timedelta(days=i) for i in range(days)]
-
-        # 生成随机价格序列
-        base_price = 10 + np.random.random() * 30
-        returns = np.random.normal(0.0005, 0.02, days)
-        prices = base_price * np.exp(np.cumsum(returns))
-
-        # 生成OHLC数据
-        df = pd.DataFrame(
-            {
-                "date": dates,
-                "close": prices,
-                "volume": np.random.randint(1000000, 10000000, days),
-                "amount": np.random.randint(10000000, 100000000, days),
-                "turnover": np.random.uniform(1, 10, days),
-            }
-        )
-
-        # 生成合理的 open, high, low
-        df["open"] = df["close"] * (1 + np.random.normal(0, 0.005, days))
-        df["high"] = np.maximum(
-            df[["open", "close"]].max(axis=1)
-            * (1 + abs(np.random.normal(0, 0.01, days))),
-            df[["open", "close"]].max(axis=1),
-        )
-        df["low"] = np.minimum(
-            df[["open", "close"]].min(axis=1)
-            * (1 - abs(np.random.normal(0, 0.01, days))),
-            df[["open", "close"]].min(axis=1),
-        )
-
-        df["market_cap"] = self._get_real_market_cap(stock_code)
-
-        # 按日期倒序排列
-        df = df.sort_values("date", ascending=False)
-
-        return df
-
-    def fetch_stock_history(self, stock_code, years=6):
+    def fetch_stock_history(self, stock_code, years=6) -> FetchResult:
         """
         抓取单只股票历史数据
         前复权，按日期倒序排列
         """
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=365 * years)
+        start_str = start_date.strftime("%Y-%m-%d")
+        end_str = end_date.strftime("%Y-%m-%d")
+        failures = []
+
         # 方法1: 直接HTTP请求
         try:
             df = self._fetch_stock_history_http(stock_code, years)
             if df is not None and not df.empty:
                 print(f"✓ (HTTP获取 {len(df)}条)")
-                return df
+                return FetchResult.ok(
+                    df,
+                    source="tencent",
+                    requested_start=start_str,
+                    requested_end=end_str,
+                )
             else:
-                print(f"  HTTP返回空数据，尝试akshare...")
+                print("  HTTP返回空数据，尝试akshare...")
+                failures.append("tencent:empty")
         except Exception as e:
             print(f"  HTTP异常: {e}，尝试akshare...")
+            failures.append(f"tencent:{type(e).__name__}")
 
         # 方法2: akshare
         try:
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=365 * years)
             start_str = start_date.strftime("%Y%m%d")
             end_str = end_date.strftime("%Y%m%d")
 
@@ -727,24 +729,38 @@ class AKShareFetcher:
                         "turnover",
                     ]
                 ]
-                df["market_cap"] = self._get_real_market_cap(stock_code)
                 df["date"] = pd.to_datetime(df["date"])
                 df = df.sort_values("date", ascending=False)
-                return df
+                return FetchResult.ok(
+                    df,
+                    source="akshare",
+                    requested_start=start_date.strftime("%Y-%m-%d"),
+                    requested_end=end_date.strftime("%Y-%m-%d"),
+                )
+            failures.append("akshare:empty")
         except Exception as e:
-            print(f"  akshare获取失败，使用模拟数据...")
+            print("  akshare获取失败")
+            failures.append(f"akshare:{type(e).__name__}")
 
-        # 降级: 使用模拟数据
-        return self._generate_mock_data(stock_code, years)
+        return FetchResult.failure(
+            source="tencent+akshare",
+            reason="all_sources_failed",
+            requested_start=start_date.strftime("%Y-%m-%d"),
+            requested_end=end_date.strftime("%Y-%m-%d"),
+            details={"failures": failures},
+        )
 
-    def fetch_stock_update(self, stock_code, days=10):
+    def fetch_stock_update(self, stock_code, days=10) -> FetchResult:
         """
         抓取近期数据用于增量更新
         优化：直接指定天数，避免计算误差
         """
+        requested_end = datetime.now().strftime("%Y-%m-%d")
+        requested_start = (datetime.now() - timedelta(days=days + 2)).strftime(
+            "%Y-%m-%d"
+        )
+        failures = []
         try:
-            import requests
-
             # 判断市场前缀
             if stock_code.startswith("6") or stock_code.startswith("88"):
                 market_code = "sh" + stock_code
@@ -764,8 +780,10 @@ class AKShareFetcher:
                     "Referer": "https://stock.finance.qq.com/",
                 },
             )
-
+            resp.raise_for_status()
             data = resp.json()
+            if not isinstance(data, (dict, list)):
+                raise ValueError("unexpected_tencent_json_schema")
 
             # 解析数据
             data_level = data.get("data", {})
@@ -807,14 +825,71 @@ class AKShareFetcher:
                 if records:
                     df = pd.DataFrame(records)
                     df["date"] = pd.to_datetime(df["date"])
-                    df["market_cap"] = self._get_real_market_cap(stock_code)
                     df = df.sort_values("date", ascending=False)
-                    return df
+                    return FetchResult.ok(
+                        df,
+                        source="tencent",
+                        requested_start=requested_start,
+                        requested_end=requested_end,
+                    )
 
-            return None
+            failures.append("tencent:empty")
         except Exception as e:
             print(f"  获取更新数据失败: {e}")
-            return None
+            failures.append(f"tencent:{type(e).__name__}")
+
+        try:
+            df = ak.stock_zh_a_hist(
+                symbol=stock_code,
+                period="daily",
+                start_date=requested_start.replace("-", ""),
+                end_date=requested_end.replace("-", ""),
+                adjust="qfq",
+            )
+            if df is not None and not df.empty:
+                df = df.rename(
+                    columns={
+                        "日期": "date",
+                        "开盘": "open",
+                        "最高": "high",
+                        "最低": "low",
+                        "收盘": "close",
+                        "成交量": "volume",
+                        "成交额": "amount",
+                        "换手率": "turnover",
+                    }
+                )
+                required = [
+                    "date",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                    "amount",
+                    "turnover",
+                ]
+                if set(required).issubset(df.columns):
+                    df = df[required].copy()
+                    df["date"] = pd.to_datetime(df["date"])
+                    df = df.sort_values("date", ascending=False)
+                    return FetchResult.ok(
+                        df,
+                        source="akshare",
+                        requested_start=requested_start,
+                        requested_end=requested_end,
+                    )
+            failures.append("akshare:empty_or_schema_invalid")
+        except Exception as exc:
+            failures.append(f"akshare:{type(exc).__name__}")
+
+        return FetchResult.failure(
+            source="tencent+akshare",
+            reason="all_sources_failed",
+            requested_start=requested_start,
+            requested_end=requested_end,
+            details={"failures": failures},
+        )
 
     def init_full_data(self, max_stocks=None, skip_failed=True):
         """
@@ -831,7 +906,7 @@ class AKShareFetcher:
         stock_codes = list(stock_dict.keys())
 
         # 加载之前失败的股票列表
-        failed_stocks_file = self.full_data_dir / "failed_stocks.json"
+        failed_stocks_file = self.state_dir / "failed_stocks.json"
         failed_stocks = set()
         if skip_failed and failed_stocks_file.exists():
             try:
@@ -840,7 +915,7 @@ class AKShareFetcher:
                 print(f"  将跳过 {len(failed_stocks)} 只之前获取失败的股票")
                 # 从列表中移除失败的股票
                 stock_codes = [c for c in stock_codes if c not in failed_stocks]
-            except:
+            except (OSError, json.JSONDecodeError):
                 pass
 
         if max_stocks:
@@ -857,25 +932,24 @@ class AKShareFetcher:
         for i, code in enumerate(stock_codes, 1):
             print(f"[{i}/{total}] 抓取 {code} {stock_dict.get(code, '')} ...", end=" ")
 
-            df = self.fetch_stock_history(code, years=6)
+            fetch = self.fetch_stock_history(code, years=6)
+            df = fetch.data if fetch.success else pd.DataFrame()
 
-            if df is not None and not df.empty:
+            if not df.empty:
                 # 数据校验 - 检查是否有有效价格数据
-                valid_data = True
                 if len(df) < 10:  # 数据太少，可能是新股或数据异常
                     print(f"⚠ 数据太少({len(df)}条)")
-                    valid_data = False
                     failed_list.append(code)
                 elif df["close"].mean() <= 0:  # 价格异常
-                    print(f"⚠ 价格异常")
-                    valid_data = False
+                    print("⚠ 价格异常")
                     failed_list.append(code)
                 else:
                     self.csv_manager.write_stock(code, df)
+                    self._record_fetch_provenance(code, fetch, df, full_history=True)
                     print(f"✓ ({len(df)}条)")
                     success += 1
             else:
-                print("✗ 失败")
+                print(f"✗ 失败 ({fetch.reason})")
                 failed += 1
                 failed_list.append(code)
 
@@ -886,6 +960,7 @@ class AKShareFetcher:
         # 保存失败的股票列表
         if failed_list:
             try:
+                failed_stocks_file.parent.mkdir(parents=True, exist_ok=True)
                 with open(failed_stocks_file, "w", encoding="utf-8") as f:
                     json.dump(failed_list, f)
                 print(
@@ -895,9 +970,16 @@ class AKShareFetcher:
                 print(f"\n  保存失败列表出错: {e}")
 
         print("=" * 60)
-        print(f"完成! 成功: {success}, 失败: {failed + len(failed_list)}")
+        print(f"完成! 成功: {success}, 失败: {failed}")
         if failed_list and not max_stocks:
-            print(f"提示: 再次运行 init 命令可跳过失败股票，专注于成功获取的数据")
+            print("提示: 再次运行 init 命令可跳过失败股票，专注于成功获取的数据")
+        return {
+            "success": failed == 0,
+            "total": total,
+            "written": success,
+            "failed": failed,
+            "failed_codes": failed_list,
+        }
 
     def _main_board_universe(self) -> dict:
         from utils.market_filter import is_main_board, main_board_only
@@ -906,27 +988,57 @@ class AKShareFetcher:
         if len(stock_dict) < 3000:
             stock_dict = self.get_all_stock_codes()
         return {
-            code: name for code, name in stock_dict.items()
+            code: name
+            for code, name in stock_dict.items()
             if not main_board_only() or is_main_board(code)
         }
 
-    def refresh_stock_universe(self) -> dict:
+    def refresh_stock_universe(self, trade_date: str | None = None) -> dict:
         """刷新当前A股名单；失败时保留本地名单，绝不把完整缓存降级成内置小表。"""
+        previous = self._load_local_stock_names()
+        failure_reason = "live_universe_source_failed"
         try:
             frames = [ak.stock_sh_a_spot_em(), ak.stock_sz_a_spot_em()]
-            all_stocks = pd.concat([frame[["代码", "名称"]] for frame in frames], ignore_index=True)
+            all_stocks = pd.concat(
+                [frame[["代码", "名称"]] for frame in frames], ignore_index=True
+            )
             all_stocks = all_stocks.drop_duplicates(subset=["代码"])
             code_pattern = r"^(00|30|60|68|88)\d{4}$"
-            all_stocks = all_stocks[all_stocks["代码"].astype(str).str.match(code_pattern)]
+            all_stocks = all_stocks[
+                all_stocks["代码"].astype(str).str.match(code_pattern)
+            ]
             excluded = ("债", "基", "ETF", "LOF", "基金", "B股", "指数", "转债", "回购")
-            mask = ~all_stocks["名称"].astype(str).apply(lambda name: any(word in name for word in excluded))
-            fresh = dict(zip(all_stocks.loc[mask, "代码"].astype(str), all_stocks.loc[mask, "名称"].astype(str)))
-            if len(fresh) >= 3000:
-                self._save_stock_names(fresh)
+            mask = ~all_stocks["名称"].astype(str).apply(
+                lambda name: any(word in name for word in excluded)
+            )
+            fresh = dict(
+                zip(
+                    all_stocks.loc[mask, "代码"].astype(str),
+                    all_stocks.loc[mask, "名称"].astype(str),
+                )
+            )
+            if self._universe_size_is_safe(fresh, previous):
+                if trade_date:
+                    suspension_frame = ak.stock_tfp_em(date=trade_date.replace("-", ""))
+                    self._save_security_status(fresh, suspension_frame, trade_date)
+                self._save_stock_names(fresh, source="akshare")
+                self.universe_refresh_status = {
+                    "fresh": True,
+                    "source": "akshare",
+                    "count": len(fresh),
+                }
                 return fresh
+            failure_reason = "universe_shrink_exceeded"
         except Exception as exc:
             print(f"  刷新股票名单失败: {exc}，继续使用本地完整名单")
-        return self._load_local_stock_names()
+            failure_reason = f"live_universe_source_failed:{type(exc).__name__}"
+        self._mark_universe_stale(failure_reason)
+        self.universe_refresh_status = {
+            "fresh": False,
+            "reason": failure_reason,
+            "count": len(previous),
+        }
+        return previous if len(previous) >= MIN_UNIVERSE_SIZE else {}
 
     def _load_bootstrap_state(self) -> dict:
         if self.bootstrap_state_file.exists():
@@ -938,8 +1050,11 @@ class AKShareFetcher:
 
     def _save_bootstrap_state(self, state: dict) -> None:
         state["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.bootstrap_state_file.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.bootstrap_state_file.with_suffix(f".{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.write_text(
+            json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         tmp.replace(self.bootstrap_state_file)
 
     def universe_coverage(self, universe=None) -> dict:
@@ -953,7 +1068,7 @@ class AKShareFetcher:
             if code not in existing:
                 continue
             rows = len(self.csv_manager.read_stock(code, nrows=220))
-            covered += int(rows >= 10)
+            covered += int(rows >= 1)
             trainable += int(rows >= 220)
         total = len(universe)
         ineligible = len([c for c in short_history if c in universe])
@@ -971,14 +1086,40 @@ class AKShareFetcher:
             "updated_at": state.get("updated_at"),
         }
 
-    def bootstrap_universe(self, max_stocks=None, years: int = 6, refresh_universe: bool = False) -> dict:
+    def bootstrap_universe(
+        self,
+        max_stocks=None,
+        years: int = 6,
+        refresh_universe: bool = False,
+        missing_only: bool = False,
+    ) -> dict:
         """完整回补主板股票池；每只完成后写检查点，进程中断可继续。"""
         from utils.data_freshness import expected_completed_trade_date
 
         if refresh_universe:
             self.refresh_stock_universe()
         universe = self._main_board_universe()
-        completed_cutoff = expected_completed_trade_date()
+        completed_cutoff = expected_completed_trade_date(
+            data_dir=self.full_data_dir,
+            allow_unpublished_calendar=True,
+        )
+        if not completed_cutoff:
+            return {
+                "failed": 1,
+                "reason": "trading_calendar_unavailable",
+                "target_date": None,
+            }
+        security_statuses = self._verified_security_statuses(completed_cutoff)
+
+        def legal_non_trading(code: str) -> bool:
+            status = security_statuses.get(code) or {}
+            return bool(
+                status.get("verified") is True
+                and status.get("as_of") == completed_cutoff
+                and status.get("source_id") == "akshare:stock_tfp_em"
+                and status.get("status") in {"suspended", "delisted"}
+            )
+
         state = self._load_bootstrap_state()
         attempts = state.setdefault("attempts", {})
         failures = state.setdefault("failures", {})
@@ -989,11 +1130,14 @@ class AKShareFetcher:
             if code not in existing:
                 queue.append(code)
                 continue
+            if missing_only:
+                continue
             latest = self.csv_manager.read_stock(code, nrows=1)
             if not latest.empty and str(latest.iloc[0]["date"])[:10] > completed_cutoff:
                 complete = self.csv_manager.read_stock(code)
                 complete = complete[
-                    pd.to_datetime(complete["date"]).dt.strftime("%Y-%m-%d") <= completed_cutoff
+                    pd.to_datetime(complete["date"]).dt.strftime("%Y-%m-%d")
+                    <= completed_cutoff
                 ].copy()
                 if not complete.empty:
                     self.csv_manager.write_stock(code, complete)
@@ -1001,22 +1145,35 @@ class AKShareFetcher:
             if rows < 220 and code not in short_history:
                 queue.append(code)
         if max_stocks is not None:
-            queue = queue[:max(0, max_stocks)]
+            queue = queue[: max(0, max_stocks)]
 
         added = trainable_added = failed = 0
-        state.update({"status": "running", "universe_count": len(universe), "current": None})
+        state.update(
+            {"status": "running", "universe_count": len(universe), "current": None}
+        )
         self._save_bootstrap_state(state)
         for index, code in enumerate(queue, start=1):
             state["current"] = code
             attempts[code] = int(attempts.get(code, 0)) + 1
-            frame = self.fetch_stock_history(code, years=years)
-            if frame is not None and not frame.empty:
+            fetch = self.fetch_stock_history(code, years=years)
+            frame = fetch.data if fetch.success else pd.DataFrame()
+            if not frame.empty:
                 frame = frame[
-                    pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d") <= completed_cutoff
+                    pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d")
+                    <= completed_cutoff
                 ].copy()
-            rows = len(frame) if frame is not None else 0
-            if frame is not None and rows >= 10:
+            rows = len(frame)
+            latest = (
+                pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d").max()
+                if rows and "date" in frame
+                else None
+            )
+            acceptable = bool(
+                rows >= 1 and (latest == completed_cutoff or legal_non_trading(code))
+            )
+            if acceptable:
                 self.csv_manager.write_stock(code, frame)
+                self._record_fetch_provenance(code, fetch, frame, full_history=True)
                 added += 1
                 trainable_added += int(rows >= 220)
                 failures.pop(code, None)
@@ -1024,27 +1181,50 @@ class AKShareFetcher:
                     short_history[code] = rows
                 else:
                     short_history.pop(code, None)
+            elif legal_non_trading(code) and rows == 0:
+                # 当日已核实停牌/退市的无历史标的可以在 snapshot
+                # 中明确分类为非交易，不伪造空 K 线。
+                short_history[code] = 0
+                failures.pop(code, None)
             else:
                 failed += 1
-                failures[code] = {"attempts": attempts[code], "rows": rows}
+                failures[code] = {
+                    "attempts": attempts[code],
+                    "rows": rows,
+                    "source": fetch.source,
+                    "reason": (
+                        "returned_latest_date_mismatch"
+                        if rows and latest != completed_cutoff
+                        else fetch.reason
+                    ),
+                    "returned_latest_date": latest,
+                    "requested_date": completed_cutoff,
+                }
             state["processed_this_run"] = index
             self._save_bootstrap_state(state)
             if index % 10 == 0:
                 time.sleep(0.1)
 
         coverage = self.universe_coverage(universe)
-        state.update({
-            "status": "complete" if coverage["remaining_count"] == 0 else "partial",
-            "completed_through_date": completed_cutoff,
-            "current": None,
-            "last_run_attempted": len(queue),
-            "last_run_added": added,
-            "last_run_failed": failed,
-        })
+        state.update(
+            {
+                "status": "complete" if coverage["remaining_count"] == 0 else "partial",
+                "completed_through_date": completed_cutoff,
+                "current": None,
+                "last_run_attempted": len(queue),
+                "last_run_added": added,
+                "last_run_failed": failed,
+            }
+        )
         self._save_bootstrap_state(state)
-        return {**coverage, "attempted": len(queue), "added": added,
-                "trainable_added": trainable_added, "failed": failed,
-                "status": state["status"]}
+        return {
+            **coverage,
+            "attempted": len(queue),
+            "added": added,
+            "trainable_added": trainable_added,
+            "failed": failed,
+            "status": state["status"],
+        }
 
     def expand_universe(self, max_new: int = 50, years: int = 2) -> dict:
         """兼容旧调用；新实现同样具备断点与覆盖率口径。"""
@@ -1057,10 +1237,13 @@ class AKShareFetcher:
         修复：盘中执行时不会将盘中数据误存为收盘数据
         """
         from datetime import datetime
+        from utils.data_freshness import expected_completed_trade_date
 
         # 日更必须以完整股票名单为准。缺历史的票交给后台 bootstrap，已有文件全部增量更新。
         universe = self._main_board_universe()
-        existing_stocks = [code for code in sorted(universe) if self.csv_manager.stock_exists(code)]
+        existing_stocks = [
+            code for code in sorted(universe) if self.csv_manager.stock_exists(code)
+        ]
 
         if not existing_stocks:
             print("没有找到已有数据，请先执行 init")
@@ -1074,48 +1257,104 @@ class AKShareFetcher:
         failed = 0
         skipped = 0
         archived = 0
+        classified_non_trading = 0
+        stock_results = []
 
         print(f"\n开始更新 {total} 只股票的数据...")
         print("=" * 60)
 
-        today = datetime.now().date()
         current_time = datetime.now().time()
+        cutoff_str = expected_completed_trade_date(
+            data_dir=self.full_data_dir,
+            allow_unpublished_calendar=True,
+        )
+        if not cutoff_str:
+            return {
+                "failed": 1,
+                "reason": "trading_calendar_unavailable",
+                "target_date": None,
+            }
+        security_statuses = self._verified_security_statuses(cutoff_str)
 
-        # 判断是否在收盘后（15:00 之后）
-        # A股收盘时间：工作日 15:00
-        market_close_time = datetime.strptime("15:00", "%H:%M").time()
-        is_after_market_close = current_time >= market_close_time
-        # 盘中只禁止写入“今天”的未收盘 K 线，不能阻断此前已收盘交易日的补更。
-        completed_cutoff = today if is_after_market_close else today - timedelta(days=1)
-        cutoff_str = completed_cutoff.strftime("%Y-%m-%d")
-        if not is_after_market_close:
+        def legal_non_trading(code: str) -> bool:
+            status = security_statuses.get(code) or {}
+            return bool(
+                status.get("verified") is True
+                and status.get("as_of") == cutoff_str
+                and status.get("source_id") == "akshare:stock_tfp_em"
+                and status.get("status") in {"suspended", "delisted"}
+            )
+
+        completed_cutoff = datetime.strptime(cutoff_str, "%Y-%m-%d").date()
+        market_data_complete_time = datetime.strptime("15:05", "%H:%M").time()
+        is_after_market_data_complete = current_time >= market_data_complete_time
+        if not is_after_market_data_complete:
             print(
-                f"⚠️ 当前时间 {current_time.strftime('%H:%M')}，今天尚未收盘；"
+                f"⚠️ 当前时间 {current_time.strftime('%H:%M')}，今天行情尚未达完整时点；"
                 f"本次严格更新到 {cutoff_str}"
             )
 
         # 快速缓存：检查上次更新记录
-        update_cache_file = self.full_data_dir / ".update_cache.json"
+        update_cache_file = self.state_dir / ".update_cache.json"
+        update_cache_file.parent.mkdir(parents=True, exist_ok=True)
         update_cache = {}
         if update_cache_file.exists():
             try:
                 with open(update_cache_file, "r", encoding="utf-8") as f:
                     update_cache = json.load(f)
-            except:
+            except (OSError, json.JSONDecodeError):
                 update_cache = {}
 
-        # 如果今天已经更新过（且已收盘），直接跳过
+        def local_date_issues(codes: list[str]) -> dict[str, str]:
+            issues = {}
+            for code in codes:
+                latest = self.csv_manager.read_stock(code, nrows=1)
+                if latest.empty or "date" not in latest:
+                    if not legal_non_trading(code):
+                        issues[code] = "missing_or_unreadable"
+                    continue
+                persisted = str(latest.iloc[0]["date"])[:10]
+                if persisted != cutoff_str and not legal_non_trading(code):
+                    issues[code] = persisted
+            return issues
+
+        # 缓存只是优化，不是完整性证据；必须重新核对本地日期。
         cache_date = update_cache.get("completed_through_date")
         if cache_date == cutoff_str and not max_stocks:
-            print(f"✓ 已完成截至 {cache_date} 的收盘数据更新，无需重复更新")
-            print("=" * 60)
-            return {"target_date": cutoff_str, "updated": 0, "failed": 0, "cached": True}
+            cached_issues = local_date_issues(existing_stocks)
+            if not cached_issues:
+                print(f"✓ 已完成截至 {cache_date} 的收盘数据更新，无需重复更新")
+                print("=" * 60)
+                return {
+                    "target_date": cutoff_str,
+                    "updated": 0,
+                    "failed": 0,
+                    "cached": True,
+                    "validated_count": len(existing_stocks),
+                }
+            print(f"  更新缓存失效：{len(cached_issues)} 只股票未到目标日期")
 
         # 预筛选：快速检查哪些股票需要更新（只读取第一行）
         stocks_to_update = []
         print("  正在检查股票更新状态...")
 
         for code in existing_stocks:
+            if legal_non_trading(code):
+                skipped += 1
+                classified_non_trading += 1
+                stock_results.append(
+                    {
+                        "code": code,
+                        "requested_date": cutoff_str,
+                        "returned_latest_date": None,
+                        "persisted_latest_date": None,
+                        "source": "akshare:stock_tfp_em",
+                        "row_count": 0,
+                        "validation_status": "classified_non_trading",
+                        "error_code": None,
+                    }
+                )
+                continue
             # 快速读取：只读CSV第一行（最新日期）
             path = self.csv_manager.get_stock_path(code)
             if not path.exists():
@@ -1133,16 +1372,11 @@ class AKShareFetcher:
                 days_needed = (completed_cutoff - latest_date).days
 
                 if days_needed > 0:
-                    # 多年未更新通常是已退市/代码终止，日更接口也只支持近 1000 天。
-                    # 保留历史文件供回测，但不让它们阻塞当前活跃股票的更新完成标记。
-                    if days_needed > 180:
-                        archived += 1
-                        continue
                     days_to_fetch = min(days_needed + 2, 60)
                     stocks_to_update.append((code, days_to_fetch))
                 elif days_needed == 0:
                     # 收盘后首次执行时重新拉取当天最终数据；盘中截止日已完整则跳过。
-                    if is_after_market_close and cache_date != cutoff_str:
+                    if is_after_market_data_complete and cache_date != cutoff_str:
                         stocks_to_update.append((code, 2))
                     else:
                         skipped += 1
@@ -1152,19 +1386,31 @@ class AKShareFetcher:
                 stocks_to_update.append((code, 30))
 
         need_update = len(stocks_to_update)
-        print(f"  需要更新: {need_update} 只, 已最新: {skipped} 只, 历史归档: {archived} 只")
+        print(
+            f"  需要更新: {need_update} 只, 已最新/合法无交易: {skipped} 只, "
+            f"明确分类: {classified_non_trading} 只"
+        )
 
         if need_update == 0:
-            # 盘中更新到上一完整交易日也可缓存；15:00 后 cutoff 会自动变成今天。
-            if not max_stocks:
+            issues = local_date_issues(existing_stocks)
+            if not max_stocks and not issues:
                 update_cache["completed_through_date"] = cutoff_str
                 with open(update_cache_file, "w", encoding="utf-8") as f:
                     json.dump(update_cache, f)
-            print("✓ 所有数据已是最新")
+            if issues:
+                print(f"✗ 本地数据未通过目标日期校验: {len(issues)} 只")
+            else:
+                print("✓ 所有数据已是最新")
             print("=" * 60)
             return {
-                "target_date": cutoff_str, "updated": 0, "failed": 0,
-                "skipped": skipped, "archived": archived, "cached": False,
+                "target_date": cutoff_str,
+                "updated": 0,
+                "failed": len(issues),
+                "skipped": skipped,
+                "archived": archived,
+                "classified_non_trading": classified_non_trading,
+                "cached": False,
+                "validation_failures": issues,
             }
 
         print(f"\n开始更新 {need_update} 只股票...")
@@ -1180,34 +1426,105 @@ class AKShareFetcher:
             existing_df = self.csv_manager.read_stock(code)
             old_count = len(existing_df)
 
-            df = self.fetch_stock_update(code, days=days_to_fetch)
+            fetch = self.fetch_stock_update(code, days=days_to_fetch)
+            df = fetch.data if fetch.success else pd.DataFrame()
 
-            if df is not None and not df.empty:
+            if not df.empty:
                 # 腾讯接口盘中会包含今天的实时 K 线；未收盘时必须截掉。
                 df = df[pd.to_datetime(df["date"]).dt.date <= completed_cutoff].copy()
-            if df is not None and not df.empty:
+            returned_dates = (
+                pd.to_datetime(df["date"], errors="coerce").dropna()
+                if not df.empty
+                else pd.Series(dtype="datetime64[ns]")
+            )
+            returned_latest = (
+                returned_dates.max().strftime("%Y-%m-%d")
+                if not returned_dates.empty
+                else None
+            )
+            if not df.empty and returned_latest == cutoff_str:
                 self.csv_manager.update_stock(code, df)
                 new_df = self.csv_manager.read_stock(code)
+                self._record_fetch_provenance(code, fetch, new_df, full_history=False)
                 new_count = len(new_df)
                 added = new_count - old_count
                 print(f"✓ (新增 {added} 条)")
                 updated += 1
+                persisted_latest = (
+                    str(new_df.iloc[0]["date"])[:10] if not new_df.empty else None
+                )
+                stock_results.append(
+                    {
+                        "code": code,
+                        "requested_date": cutoff_str,
+                        "returned_latest_date": returned_latest,
+                        "persisted_latest_date": persisted_latest,
+                        "source": fetch.source,
+                        "row_count": fetch.rows,
+                        "validation_status": "valid"
+                        if persisted_latest == cutoff_str
+                        else "invalid",
+                        "error_code": None
+                        if persisted_latest == cutoff_str
+                        else "persisted_date_mismatch",
+                    }
+                )
             else:
-                print("✗ 失败")
+                reason = (
+                    fetch.reason
+                    if not fetch.success
+                    else "returned_latest_date_mismatch"
+                )
+                print(f"✗ 失败 ({reason}, latest={returned_latest})")
                 failed += 1
+                current = self.csv_manager.read_stock(code, nrows=1)
+                stock_results.append(
+                    {
+                        "code": code,
+                        "requested_date": cutoff_str,
+                        "returned_latest_date": returned_latest,
+                        "persisted_latest_date": (
+                            str(current.iloc[0]["date"])[:10]
+                            if not current.empty
+                            else None
+                        ),
+                        "source": fetch.source,
+                        "row_count": fetch.rows,
+                        "validation_status": "invalid",
+                        "error_code": reason,
+                    }
+                )
 
             if i % 10 == 0:
                 time.sleep(0.1)  # 降低限速
 
-        # 失败时不写“已完成”缓存，否则下一次更新会永久跳过失败股票。
-        if failed == 0 and not max_stocks:
+        validation_failures = local_date_issues(existing_stocks)
+        # 失败或本地日期不匹配时都不写“已完成”缓存。
+        if failed == 0 and not validation_failures and not max_stocks:
             update_cache["completed_through_date"] = cutoff_str
             with open(update_cache_file, "w", encoding="utf-8") as f:
                 json.dump(update_cache, f)
 
         print("=" * 60)
-        print(f"完成! 更新成功: {updated}, 跳过: {skipped}, 历史归档: {archived}, 失败: {failed}")
+        print(
+            f"完成! 更新成功: {updated}, 跳过: {skipped}, 历史归档: {archived}, 失败: {failed}"
+        )
         return {
-            "target_date": cutoff_str, "updated": updated, "skipped": skipped,
-            "archived": archived, "failed": failed, "cached": False,
+            "target_date": cutoff_str,
+            "updated": updated,
+            "skipped": skipped,
+            "archived": archived,
+            "classified_non_trading": classified_non_trading,
+            "failed": len(
+                set(validation_failures)
+                | {
+                    row["code"]
+                    for row in stock_results
+                    if row["validation_status"]
+                    not in {"valid", "classified_non_trading"}
+                }
+            ),
+            "cached": False,
+            "validation_failures": validation_failures,
+            "stocks": stock_results,
         }

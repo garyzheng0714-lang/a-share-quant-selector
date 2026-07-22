@@ -4,67 +4,60 @@
 运行时 from web_server import 会把整个文件重新执行一遍）。与 performance_api 同款：
 Blueprint 自持 CSVManager 与名称缓存。
 """
-import json
+
 import logging
 import time
-from pathlib import Path
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 
 from utils.csv_manager import CSVManager
+from utils.api_security import require_role
+from utils.market_snapshot import read_snapshot_metadata
 
 logger = logging.getLogger(__name__)
 
 super_b1_bp = Blueprint("super_b1", __name__)
 
-_csv_manager = CSVManager("data")
 _CACHE_TTL = 3600
-_names_box: dict = {}
 _industry_box: dict = {}
 
 
-def _load_json_cached(path: str, box: dict) -> dict:
-    """带 TTL 的 json 文件缓存（names / industry 共用）."""
+def _load_json_cached(filename: str, box: dict, manager: CSVManager) -> dict:
+    """按 snapshot ID 隔离的只读元数据缓存。"""
     now = time.time()
-    if not box.get("data") or now - box.get("ts", 0) > _CACHE_TTL:
-        f = Path(path)
-        if f.exists():
-            try:
-                with open(f, "r", encoding="utf-8") as fh:
-                    box["data"] = json.load(fh)
-            except Exception as e:
-                logger.warning("%s 加载失败: %s", path, e)
+    value, snapshot_id = read_snapshot_metadata(
+        filename,
+        manager.base_data_dir,
+        snapshot_id=manager.snapshot_id,
+    )
+    if box.get("snapshot_id") != snapshot_id or now - box.get("ts", 0) > _CACHE_TTL:
+        box["data"] = value if isinstance(value, dict) else {}
+        box["snapshot_id"] = snapshot_id
         box["ts"] = now
     return box.get("data") or {}
 
 
-def _stock_names() -> dict:
-    return _load_json_cached("data/stock_names.json", _names_box)
-
-
-def _industry_map() -> dict:
-    return _load_json_cached("data/stock_industry.json", _industry_box)
+def _industry_map(manager: CSVManager) -> dict:
+    return _load_json_cached("stock_industry.json", _industry_box, manager)
 
 
 @super_b1_bp.route("/api/super-b1", methods=["GET"])
 def api_get_super_b1():
-    """超级B1信号清单（文件缓存，数据日期变化时自动重算）.
-
-    Query:
-        force=1 强制重扫
-    """
+    """只读 worker 已生成的当前快照信号；缓存缺失时不在 GET 重扫。"""
     try:
         from utils.market_filter import is_main_board, main_board_only
-        from utils.super_b1_scan import get_super_b1
+        from utils.super_b1_scan import read_cached_super_b1
 
-        force = request.args.get("force") == "1"
-        result = get_super_b1(_csv_manager, _stock_names(), force=force)
+        manager = CSVManager("data", writable=False)
+        if manager.snapshot_id is None:
+            return jsonify({"available": False, "reason": "snapshot_unavailable"}), 503
+        result = read_cached_super_b1(manager)
         if result.get("available"):
             hits = result.get("hits", [])
             if main_board_only():
                 hits = [h for h in hits if is_main_board(h.get("code", ""))]
             # 附所属行业（展示层拼装，不写进扫描缓存）
-            ind = _industry_map()
+            ind = _industry_map(manager)
             hits = [{**h, "industry": ind.get(h.get("code", ""), "")} for h in hits]
             result = {**result, "hits": hits}
         return jsonify(result)
@@ -75,32 +68,24 @@ def api_get_super_b1():
 
 @super_b1_bp.route("/api/super-b1/performance", methods=["GET"])
 def api_super_b1_performance():
-    """超级B1独立战绩：总体/按信号类型的胜率与平均收益 + 明细."""
-    try:
-        from utils.super_b1_tracker import get_records, get_summary
-
-        limit = request.args.get("limit", default=200, type=int)
-        summary = get_summary()
-        summary["records"] = get_records(limit=limit)
-        return jsonify(summary)
-    except Exception as e:
-        logger.error("超级B1战绩查询失败: %s", e, exc_info=True)
-        return jsonify({"error": "超级B1战绩暂不可用"}), 500
+    """旧 tracker 口径已隔离；统一战绩见 canonical performance API。"""
+    return jsonify(
+        {
+            "available": False,
+            "reason": "legacy_research_disabled",
+            "replacement": "/api/performance/records",
+        }
+    ), 410
 
 
 @super_b1_bp.route("/api/super-b1/performance/refresh", methods=["POST"])
+@require_role("admin")
 def api_super_b1_performance_refresh():
-    """手动触发：把当前扫描缓存的命中录入追踪表 + 回填后续表现."""
-    try:
-        from utils.super_b1_scan import get_super_b1
-        from utils.super_b1_tracker import record_hits, update_performance
-
-        scan = get_super_b1(_csv_manager, _stock_names())
-        added = 0
-        if scan.get("available"):
-            added = record_hits(scan.get("hits", []), scan.get("trade_date", ""))
-        stats = update_performance(_csv_manager)
-        return jsonify({"success": True, "recorded": added, **stats})
-    except Exception as e:
-        logger.error("超级B1战绩刷新失败: %s", e, exc_info=True)
-        return jsonify({"error": "超级B1战绩刷新失败"}), 500
+    """旧 tracker 刷新入口永久停用。"""
+    return jsonify(
+        {
+            "available": False,
+            "reason": "legacy_research_disabled",
+            "replacement": "/api/performance/refresh",
+        }
+    ), 410

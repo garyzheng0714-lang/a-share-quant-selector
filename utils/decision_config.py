@@ -1,4 +1,5 @@
 """分层决策功能开关；默认保守开启，环境变量可即时回退。"""
+
 from __future__ import annotations
 
 import os
@@ -41,5 +42,7 @@ def get_decision_config() -> dict:
     )
     weekly_mode = os.getenv("DECISION_WEEKLY_GATE_MODE", result["weekly_gate_mode"])
     weekly_mode = str(weekly_mode).strip().lower()
-    result["weekly_gate_mode"] = weekly_mode if weekly_mode in {"off", "shadow", "active"} else "shadow"
+    result["weekly_gate_mode"] = (
+        weekly_mode if weekly_mode in {"off", "shadow", "active"} else "shadow"
+    )
     return result
