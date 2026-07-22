@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import signal
@@ -93,14 +94,8 @@ def _outcome_refresh(_payload: dict) -> dict:
     return {"available": True, **result}
 
 
-def _run_daily_close_downstream(manager, freshness: dict) -> dict:
-    """只消费已绑定快照；调用前业务幂等键已被占用。"""
-    from utils.paper_trading import run_daily_paper_cycle
-
-    paper = run_daily_paper_cycle(freshness["local_date"], manager)
-    if not paper.get("available"):
-        return {"success": False, "stage": "paper_pricing", "result": paper}
-
+def _run_decision_materialization(manager, freshness: dict) -> dict:
+    """为已发布快照重建派生缓存并落账决策，不再次抓取行情。"""
     from utils.market_snapshot import read_snapshot_metadata
 
     names, _ = read_snapshot_metadata(
@@ -140,7 +135,6 @@ def _run_daily_close_downstream(manager, freshness: dict) -> dict:
         "success": bool(decision.get("available")),
         "stage": "complete",
         "freshness": freshness,
-        "paper": paper,
         "sectors": sectors,
         "thermometer": thermometer,
         "super_b1": super_b1,
@@ -148,6 +142,117 @@ def _run_daily_close_downstream(manager, freshness: dict) -> dict:
         "decision": decision,
         "ai": ai,
     }
+
+
+def _run_daily_close_downstream(manager, freshness: dict) -> dict:
+    """只消费已绑定快照；调用前业务幂等键已被占用。"""
+    from utils.paper_trading import run_daily_paper_cycle
+
+    paper = run_daily_paper_cycle(freshness["local_date"], manager)
+    if not paper.get("available"):
+        return {"success": False, "stage": "paper_pricing", "result": paper}
+    result = _run_decision_materialization(manager, freshness)
+    return {**result, "paper": paper}
+
+
+def _decision_matches_snapshot(
+    decision: dict | None,
+    freshness: dict,
+    policy_version: str,
+) -> bool:
+    snapshot_id = freshness.get("snapshot_id")
+    return bool(
+        decision
+        and freshness.get("fresh") is True
+        and snapshot_id
+        and decision.get("trade_date") == freshness.get("local_date")
+        and decision.get("trade_date") == freshness.get("expected_date")
+        and decision.get("strategy_version") == policy_version
+        and decision.get("data_version") == f"snapshot-{snapshot_id}"
+        and (decision.get("market") or {}).get("snapshot_id") == snapshot_id
+    )
+
+
+def _materialize_snapshot_decision(payload: dict) -> dict:
+    """快照或代码版本切换后，为当前快照补齐决策产物。"""
+    from utils.csv_manager import CSVManager
+    from utils.data_freshness import local_data_status
+    from utils.decision_ledger import get_latest_decision
+    from utils.decision_versions import strategy_version
+
+    manager = CSVManager("data", writable=False)
+    freshness = local_data_status(manager)
+    if not freshness.get("fresh"):
+        return {"success": False, "stage": "freshness", "freshness": freshness}
+
+    trade_date = str(freshness.get("local_date") or "")
+    snapshot_id = str(freshness.get("snapshot_id") or "")
+    policy_version = strategy_version()
+    requested = {
+        "trade_date": str(payload.get("trade_date") or ""),
+        "snapshot_id": str(payload.get("snapshot_id") or ""),
+        "strategy_version": str(payload.get("strategy_version") or ""),
+    }
+    current = {
+        "trade_date": trade_date,
+        "snapshot_id": snapshot_id,
+        "strategy_version": policy_version,
+    }
+    if requested != current:
+        return {
+            "success": True,
+            "stage": "superseded_snapshot_target",
+            "requested": requested,
+            "current": current,
+        }
+
+    decision = get_latest_decision("close")
+    if _decision_matches_snapshot(decision, freshness, policy_version):
+        return {
+            "success": True,
+            "stage": "idempotent_replay",
+            "trade_date": trade_date,
+            "snapshot_id": snapshot_id,
+            "policy_version": policy_version,
+            "run_id": decision.get("run_id"),
+        }
+
+    task_id = str(payload.get("task_id") or "").strip()
+    if not task_id:
+        return {"success": False, "stage": "business_task_identity_missing"}
+    job_name = "snapshot_decision_materialization"
+    claim = claim_job_run(
+        job_name,
+        trade_date,
+        snapshot_id,
+        policy_version,
+        task_id,
+    )
+    if not claim["claimed"]:
+        return {
+            "success": False,
+            "stage": (
+                "decision_ledger_inconsistent"
+                if claim["status"] == "succeeded"
+                else "business_run_in_progress"
+            ),
+            "original_task_id": claim.get("task_id"),
+        }
+
+    succeeded = False
+    try:
+        result = _run_decision_materialization(manager, freshness)
+        succeeded = result.get("success") is True
+        return result
+    finally:
+        finish_job_run(
+            job_name,
+            trade_date,
+            snapshot_id,
+            policy_version,
+            task_id,
+            succeeded=succeeded,
+        )
 
 
 def _daily_close_pipeline(_payload: dict) -> dict:
@@ -238,6 +343,7 @@ HANDLERS = {
     "model_evolution": _model_evolution,
     "outcome_refresh": _outcome_refresh,
     "daily_close_pipeline": _daily_close_pipeline,
+    "materialize_snapshot_decision": _materialize_snapshot_decision,
 }
 
 
@@ -333,6 +439,56 @@ def _enqueue_completed_close(current: datetime) -> dict:
     }
 
 
+def _enqueue_current_snapshot_decision(current: datetime) -> dict:
+    """新快照或新策略版本必须拥有自己的当前决策。"""
+    from utils.data_freshness import local_data_status
+    from utils.decision_ledger import get_latest_decision
+    from utils.decision_versions import strategy_version
+
+    freshness = local_data_status(as_of=current)
+    if not freshness.get("fresh"):
+        return {
+            "eligible": False,
+            "ready": False,
+            "created": False,
+            "reason": freshness.get("reason") or "market_snapshot_not_ready",
+        }
+    snapshot_id = str(freshness["snapshot_id"])
+    trade_date = str(freshness["local_date"])
+    policy_version = strategy_version()
+    decision = get_latest_decision("close")
+    if _decision_matches_snapshot(decision, freshness, policy_version):
+        return {
+            "eligible": False,
+            "ready": True,
+            "created": False,
+            "trade_date": trade_date,
+            "snapshot_id": snapshot_id,
+            "run_id": decision.get("run_id"),
+        }
+    policy_hash = hashlib.sha256(policy_version.encode()).hexdigest()[:16]
+    task, created = enqueue_task(
+        "materialize_snapshot_decision",
+        f"snapshot-decision:{snapshot_id}:{policy_hash}",
+        payload={
+            "trade_date": trade_date,
+            "snapshot_id": snapshot_id,
+            "strategy_version": policy_version,
+        },
+        requested_by=f"scheduler:{OWNER_ID}",
+        change_reason="materialize current snapshot decision",
+        max_attempts=32,
+    )
+    return {
+        "eligible": True,
+        "ready": False,
+        "created": created,
+        "trade_date": trade_date,
+        "snapshot_id": snapshot_id,
+        "task_id": task["task_id"],
+    }
+
+
 def _enqueue_current_preopen(current: datetime) -> dict:
     from utils.data_freshness import expected_completed_trade_date, next_trade_date
 
@@ -366,11 +522,12 @@ def reconcile_scheduled_tasks(as_of: datetime | None = None) -> dict:
     current = _shanghai_time(as_of)
     if not acquire_scheduler_lease("production-scheduler", OWNER_ID):
         return {"leader": False, "as_of": current.isoformat()}
-    # 先补收盘再入队盘前；任务表的幂等键保证重复对账无副作用。
+    # 先补收盘和当前快照决策，再入队盘前复核。
     return {
         "leader": True,
         "as_of": current.isoformat(),
         "close": _enqueue_completed_close(current),
+        "decision": _enqueue_current_snapshot_decision(current),
         "preopen": _enqueue_current_preopen(current),
     }
 

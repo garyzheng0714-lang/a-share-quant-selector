@@ -84,6 +84,95 @@ def test_close_pipeline_replays_completed_business_key_without_side_effects():
     downstream.assert_not_called()
 
 
+def test_snapshot_materialization_repairs_missing_current_decision_without_ingestion():
+    snapshot_id = "b" * 64
+    manager = MagicMock(snapshot_id=snapshot_id)
+    freshness = {
+        "fresh": True,
+        "local_date": "2026-07-15",
+        "expected_date": "2026-07-15",
+        "snapshot_id": snapshot_id,
+    }
+    materialized = {
+        "success": True,
+        "stage": "complete",
+        "decision": {"available": True, "run_id": "run-current"},
+    }
+    with (
+        patch("utils.csv_manager.CSVManager", return_value=manager),
+        patch("utils.data_freshness.local_data_status", return_value=freshness),
+        patch("utils.decision_versions.strategy_version", return_value="policy-new"),
+        patch("utils.decision_ledger.get_latest_decision", return_value=None),
+        patch.object(
+            worker,
+            "claim_job_run",
+            return_value={"claimed": True, "status": "running"},
+        ) as claim,
+        patch.object(
+            worker, "_run_decision_materialization", return_value=materialized
+        ) as run_materialization,
+        patch.object(worker, "finish_job_run") as finish,
+        patch.object(worker, "_daily_ingestion") as ingestion,
+    ):
+        result = worker._materialize_snapshot_decision(
+            {
+                "task_id": "repair-task",
+                "trade_date": "2026-07-15",
+                "snapshot_id": snapshot_id,
+                "strategy_version": "policy-new",
+            }
+        )
+
+    assert result == materialized
+    ingestion.assert_not_called()
+    run_materialization.assert_called_once_with(manager, freshness)
+    claim.assert_called_once_with(
+        "snapshot_decision_materialization",
+        "2026-07-15",
+        snapshot_id,
+        "policy-new",
+        "repair-task",
+    )
+    finish.assert_called_once_with(
+        "snapshot_decision_materialization",
+        "2026-07-15",
+        snapshot_id,
+        "policy-new",
+        "repair-task",
+        succeeded=True,
+    )
+
+
+def test_snapshot_materialization_rejects_pointer_change_before_side_effects():
+    manager = MagicMock(snapshot_id="c" * 64)
+    freshness = {
+        "fresh": True,
+        "local_date": "2026-07-15",
+        "expected_date": "2026-07-15",
+        "snapshot_id": "c" * 64,
+    }
+    with (
+        patch("utils.csv_manager.CSVManager", return_value=manager),
+        patch("utils.data_freshness.local_data_status", return_value=freshness),
+        patch("utils.decision_versions.strategy_version", return_value="policy-new"),
+        patch.object(worker, "claim_job_run") as claim,
+        patch.object(worker, "_run_decision_materialization") as materialize,
+    ):
+        result = worker._materialize_snapshot_decision(
+            {
+                "task_id": "repair-task",
+                "trade_date": "2026-07-15",
+                "snapshot_id": "b" * 64,
+                "strategy_version": "policy-new",
+            }
+        )
+
+    assert result["success"] is True
+    assert result["stage"] == "superseded_snapshot_target"
+    claim.assert_not_called()
+    materialize.assert_not_called()
+
+
 def test_scheduled_close_never_runs_against_a_different_trade_date():
     manager = MagicMock(snapshot_id="a" * 64)
     freshness = {

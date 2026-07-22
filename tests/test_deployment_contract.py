@@ -47,7 +47,7 @@ def test_release_quiesces_writers_and_validates_canary_before_switch() -> None:
     assert "cleanup_canary" in script
     assert "PREVIOUS_STOPPED" in script
     assert "docker inspect -f '{{.Config.Image}}' \"$CANARY_NAME\"" in script
-    assert "for attempt in $(seq 1 30)" in script
+    assert "for attempt in $(seq 1 360)" in script
 
 
 def test_release_stages_image_before_transactional_deploy() -> None:
@@ -82,7 +82,7 @@ def test_release_stages_image_before_transactional_deploy() -> None:
     assert stage_index < bootstrap_index < release_index
     assert stage_step["timeout-minutes"] == 90
     assert bootstrap_step["timeout-minutes"] == 220
-    assert release_step["timeout-minutes"] == 25
+    assert release_step["timeout-minutes"] == 45
     assert 'docker pull "$SOURCE_IMAGE"' in stage_script
     assert 'docker save "$RUNTIME_IMAGE" | gzip -1' in stage_script
     assert '"$USER@$HOST" "docker load >/dev/null"' in stage_script
@@ -106,6 +106,10 @@ def test_release_stages_image_before_transactional_deploy() -> None:
     assert "EXPECTED_IMAGE_ID" in release_script
     assert "restore_before_switch 130" in release_script
     assert "interrupt_after_switch" in release_script
+    assert 'read_json("/api/decision/latest")' in release_script
+    assert 'read_json("/api/quant-pick")' in release_script
+    assert 'decision.get("available") is True' in release_script
+    assert 'quant_pick.get("available") is True' in release_script
 
 
 def test_empty_snapshot_check_fails_closed_without_network(tmp_path: Path) -> None:

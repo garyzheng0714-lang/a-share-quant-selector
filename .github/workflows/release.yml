@@ -339,7 +339,7 @@ jobs:
           snapshot_ready
           REMOTE
       - name: Deploy exact digest with backup and rollback
-        timeout-minutes: 25
+        timeout-minutes: 45
         env:
           HOST: ${{ secrets.SERVER_HOST }}
           USER: ${{ secrets.SERVER_USER }}
@@ -524,7 +524,7 @@ jobs:
             rollback_failed_release
             exit 1
           fi
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 360); do
             web_container=$(docker compose --env-file .release.env ps -q web)
             worker_container=$(docker compose --env-file .release.env ps -q worker)
             if test -n "$web_container" \
@@ -552,6 +552,8 @@ jobs:
           version = read_json("/api/version")
           readiness = read_json("/readyz")
           stats = read_json("/api/stats")
+          decision = read_json("/api/decision/latest")
+          quant_pick = read_json("/api/quant-pick")
           snapshot_id = version.get("snapshot_id")
           scheduler = readiness.get("scheduler") or {}
           market_data = readiness.get("market_data") or {}
@@ -567,6 +569,12 @@ jobs:
           assert stats.get("success") is True
           assert stats_data.get("snapshot_id") == snapshot_id
           assert stats_data.get("scheduler_running") is True
+          assert decision.get("available") is True
+          assert decision.get("data_status") == "current"
+          assert (decision.get("market") or {}).get("snapshot_id") == snapshot_id
+          assert quant_pick.get("available") is True
+          assert (quant_pick.get("freshness") or {}).get("snapshot_id") == snapshot_id
+          assert (quant_pick.get("decision") or {}).get("run_id") == decision.get("run_id")
           PY
             then
               docker compose --env-file .release.env ps
