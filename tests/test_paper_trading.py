@@ -726,24 +726,29 @@ class PaperTradingTest(unittest.TestCase):
         self.assertEqual(count, 0)
 
     def test_two_workers_cannot_create_duplicate_daily_nav(self):
-        ensure_default_account()
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            results = list(
-                executor.map(
-                    lambda _: run_daily_paper_cycle("2026-01-05", self.manager),
-                    range(2),
+        for attempt in range(10):
+            view_manager.DB_PATH = Path(self.tmp.name) / f"nav-race-{attempt}.db"
+            init_paper_ledger()
+            ensure_default_account()
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(
+                    executor.map(
+                        lambda _: run_daily_paper_cycle("2026-01-05", self.manager),
+                        range(2),
+                    )
                 )
-            )
 
-        self.assertEqual(
-            {result["nav"]["nav_id"] for result in results},
-            {results[0]["nav"]["nav_id"]},
-        )
-        self.assertTrue(all(result["reconciliation"]["balanced"] for result in results))
-        with view_manager._get_conn() as conn:
             self.assertEqual(
-                conn.execute("SELECT COUNT(*) FROM paper_nav").fetchone()[0], 1
+                {result["nav"]["nav_id"] for result in results},
+                {results[0]["nav"]["nav_id"]},
             )
+            self.assertTrue(
+                all(result["reconciliation"]["balanced"] for result in results)
+            )
+            with view_manager._get_conn() as conn:
+                self.assertEqual(
+                    conn.execute("SELECT COUNT(*) FROM paper_nav").fetchone()[0], 1
+                )
 
     def test_decision_without_explicit_execution_date_does_not_queue_order(self):
         from utils.paper_trading import queue_orders_from_decision
