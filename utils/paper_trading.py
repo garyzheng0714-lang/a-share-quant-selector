@@ -979,6 +979,7 @@ def mark_paper_nav(
     _require_account(account_id)
     snapshot_id = _market_snapshot_reference(manager)
     with _get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         cash = _cash_balance(conn, account_id)
         positions, missing = _position_snapshot(conn, account_id, manager, trade_date)
         if missing:
