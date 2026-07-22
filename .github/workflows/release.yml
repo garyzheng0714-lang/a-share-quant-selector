@@ -176,7 +176,7 @@ jobs:
   deploy:
     needs: [verify, build]
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -198,26 +198,37 @@ jobs:
         run: |
           ssh "$USER@$HOST" "mkdir -p /opt/a-share-quant"
           scp docker-compose.yml "$USER@$HOST:/opt/a-share-quant/docker-compose.yml.next"
+      - name: Stage exact image digest on server
+        timeout-minutes: 60
+        env:
+          HOST: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | ssh "$USER@$HOST" \
+            "docker login ghcr.io --username '$GHCR_USER' --password-stdin"
+          ssh "$USER@$HOST" \
+            "docker pull '$IMAGE@$DIGEST' && docker image inspect '$IMAGE@$DIGEST' >/dev/null"
       - name: Deploy exact digest with backup and rollback
+        timeout-minutes: 25
         env:
           HOST: ${{ secrets.SERVER_HOST }}
           USER: ${{ secrets.SERVER_USER }}
           IMAGE: ${{ needs.build.outputs.image }}
           DIGEST: ${{ needs.build.outputs.digest }}
           RELEASE_SHA: ${{ needs.verify.outputs.sha }}
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ssh "$USER@$HOST" \
-            "IMAGE='$IMAGE' DIGEST='$DIGEST' RELEASE_SHA='$RELEASE_SHA' GHCR_USER='$GHCR_USER' GHCR_TOKEN='$GHCR_TOKEN' bash -s" <<'REMOTE'
+            "IMAGE='$IMAGE' DIGEST='$DIGEST' RELEASE_SHA='$RELEASE_SHA' bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/a-share-quant
           test "${#RELEASE_SHA}" -eq 40
           test "${DIGEST#sha256:}" != "$DIGEST"
           test -f docker-compose.yml.next
-          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io \
-            --username "$GHCR_USER" --password-stdin
-          unset GHCR_TOKEN
+          docker image inspect "${IMAGE}@${DIGEST}" >/dev/null
           install -m 700 -d secrets
           ensure_runtime_token() {
             path=$1
@@ -229,6 +240,16 @@ jobs:
           ensure_runtime_token secrets/admin-token
           ensure_runtime_token secrets/publisher-token
           ensure_runtime_token secrets/viewer-token
+          # 上一次若在镜像预热阶段被外部取消，恢复它尚未切换的发布文件。
+          if test -f .release.env.next && test -f .rollback-compose.yml; then
+            cp -f .rollback-compose.yml docker-compose.yml
+            if test -f .rollback.env; then
+              cp -f .rollback.env .release.env
+            else
+              rm -f .release.env
+            fi
+            rm -f .release.env.next
+          fi
           PREVIOUS_COMPOSE=0
           PREVIOUS_ENV=0
           PREVIOUS_STOPPED=0
@@ -262,8 +283,8 @@ jobs:
             docker rm -f "$CANARY_NAME" >/dev/null 2>&1 || true
           }
           restore_before_switch() {
-            status=$?
-            trap - ERR
+            status=${1:-1}
+            trap - ERR HUP INT TERM
             cleanup_canary
             restore_release_files
             if test "$PREVIOUS_STOPPED" -eq 1; then
@@ -273,7 +294,7 @@ jobs:
             exit "$status"
           }
           rollback_failed_release() {
-            trap - ERR
+            trap - ERR HUP INT TERM
             cleanup_canary
             docker compose --env-file .release.env down --remove-orphans || true
             restore_release_files
@@ -283,7 +304,12 @@ jobs:
               echo "No complete previous release exists; failed release was stopped." >&2
             fi
           }
-          trap restore_before_switch ERR
+          interrupt_after_switch() {
+            rollback_failed_release
+            exit 130
+          }
+          trap 'restore_before_switch $?' ERR
+          trap 'restore_before_switch 130' HUP INT TERM
           mv docker-compose.yml.next docker-compose.yml
           {
             echo "QUANT_IMAGE=${IMAGE}@${DIGEST}"
@@ -292,7 +318,6 @@ jobs:
             echo "QUANT_PUBLISHER_TOKEN_FILE=/opt/a-share-quant/secrets/publisher-token"
             echo "QUANT_VIEWER_TOKEN_FILE=/opt/a-share-quant/secrets/viewer-token"
           } > .release.env.next
-          docker compose --env-file .release.env.next pull
           if test "$PREVIOUS_COMPOSE" -eq 1 && test "$PREVIOUS_ENV" -eq 1; then
             PREVIOUS_STOPPED=1
             docker compose --env-file .rollback.env -f .rollback-compose.yml \
@@ -348,7 +373,8 @@ jobs:
           test "$CANARY_READY" -eq 1
           cleanup_canary
           mv .release.env.next .release.env
-          trap - ERR
+          trap - ERR HUP INT TERM
+          trap interrupt_after_switch HUP INT TERM
           if ! docker compose --env-file .release.env up -d --remove-orphans; then
             rollback_failed_release
             exit 1
@@ -397,6 +423,7 @@ jobs:
           PY
             then
               docker compose --env-file .release.env ps
+              trap - HUP INT TERM
               exit 0
             fi
             sleep 5
