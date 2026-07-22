@@ -407,6 +407,53 @@ class OperationsStoreTest(unittest.TestCase):
         self.assertEqual(task["task_type"], "daily_close_pipeline")
         self.assertEqual(task["payload"], {"trade_date": "2026-07-15"})
 
+    def test_scheduler_materializes_decision_for_replaced_current_snapshot(self):
+        import worker
+
+        current = datetime(2026, 7, 16, 8, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+        snapshot_id = "b" * 64
+        freshness = {
+            "fresh": True,
+            "local_date": "2026-07-15",
+            "expected_date": "2026-07-15",
+            "snapshot_id": snapshot_id,
+        }
+        old_decision = {
+            "trade_date": "2026-07-15",
+            "strategy_version": "policy-old",
+            "data_version": f"snapshot-{'a' * 64}",
+            "market": {"snapshot_id": "a" * 64},
+        }
+        with (
+            patch(
+                "utils.data_freshness.expected_completed_trade_date",
+                return_value="2026-07-15",
+            ),
+            patch("utils.data_freshness.local_data_status", return_value=freshness),
+            patch(
+                "utils.decision_versions.strategy_version", return_value="policy-new"
+            ),
+            patch(
+                "utils.decision_ledger.get_latest_decision", return_value=old_decision
+            ),
+        ):
+            first = worker.reconcile_scheduled_tasks(current)
+            repeated = worker.reconcile_scheduled_tasks(current)
+
+        self.assertTrue(first["decision"]["eligible"])
+        self.assertTrue(first["decision"]["created"])
+        self.assertFalse(repeated["decision"]["created"])
+        task = get_task(first["decision"]["task_id"])
+        self.assertEqual(task["task_type"], "materialize_snapshot_decision")
+        self.assertEqual(
+            task["payload"],
+            {
+                "trade_date": "2026-07-15",
+                "snapshot_id": snapshot_id,
+                "strategy_version": "policy-new",
+            },
+        )
+
     def test_morning_reconciliation_catches_previous_close_before_preopen(self):
         import worker
 
