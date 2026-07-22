@@ -47,7 +47,7 @@ SQLite 只适用于当前单机、单行情/决策 writer、低并发边界。op
 
 ## 快速开始
 
-建议使用 Python 3.11.9 和 Node.js 22.17.1。
+建议使用 Python 3.11.15 和 Node.js 22.17.1。
 
 ```bash
 python3.11 -m venv .venv
