@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import fcntl
 import os
+import time
 from pathlib import Path
 from typing import IO
 
 from utils.akshare_fetcher import AKShareFetcher
 from utils.data_freshness import expected_completed_trade_date, refresh_trade_calendar
 from utils.market_snapshot import (
+    find_resumable_rebuild_snapshot,
     prepare_empty_staging_snapshot,
     prepare_staging_snapshot,
     promote_staging_snapshot,
@@ -155,7 +157,13 @@ def _run_full_rebuild(
     max_stocks: int | None = None,
 ) -> dict:
     """从可信外部源全量重建，绝不继承无 provenance 的旧 CSV。"""
-    staging = prepare_empty_staging_snapshot(data_dir)
+    resume_age_hours = max(
+        0.0, float(os.environ.get("QUANT_REBUILD_RESUME_MAX_AGE_HOURS", "24"))
+    )
+    staging = find_resumable_rebuild_snapshot(data_dir, max_age_hours=resume_age_hours)
+    resumed_staging = staging is not None
+    if staging is None:
+        staging = prepare_empty_staging_snapshot(data_dir)
     try:
         refresh_trade_calendar(staging.payload_dir)
     except Exception as exc:
@@ -214,24 +222,59 @@ def _run_full_rebuild(
             "reference": reference,
             "staging_dir": str(staging.root),
         }
+    max_passes = min(
+        5, max(1, int(os.environ.get("QUANT_FULL_REBUILD_MAX_PASSES", "3")))
+    )
+    retry_delay = min(
+        60.0,
+        max(
+            0.0,
+            float(os.environ.get("QUANT_FULL_REBUILD_RETRY_DELAY_SECONDS", "5")),
+        ),
+    )
+    result: dict = {}
+    pass_summaries = []
     try:
-        result = fetcher.bootstrap_universe(
-            max_stocks=max_stocks,
-            years=years,
-            refresh_universe=False,
-        )
+        for pass_number in range(1, max_passes + 1):
+            result = fetcher.bootstrap_universe(
+                max_stocks=max_stocks,
+                years=years,
+                refresh_universe=False,
+            )
+            pass_summaries.append(
+                {
+                    "pass": pass_number,
+                    "attempted": result.get("attempted"),
+                    "added": result.get("added"),
+                    "failed": result.get("failed"),
+                    "remaining_count": result.get("remaining_count"),
+                    "failure_reason_counts": result.get("failure_reason_counts") or {},
+                }
+            )
+            if max_stocks is not None or int(result.get("failed") or 0) == 0:
+                break
+            if pass_number < max_passes:
+                time.sleep(retry_delay * pass_number)
     except Exception as exc:
         return {
             "success": False,
             "reason": "full_rebuild_failed",
             "error_type": type(exc).__name__,
             "staging_dir": str(staging.root),
+            "resumed_staging": resumed_staging,
+            "passes": pass_summaries,
         }
+    result = {
+        **result,
+        "passes": pass_summaries,
+        "pass_count": len(pass_summaries),
+    }
     if max_stocks is not None or int(result.get("failed") or 0) > 0:
         return {
             "success": False,
             "reason": "full_rebuild_incomplete",
             "staging_dir": str(staging.root),
+            "resumed_staging": resumed_staging,
             "bootstrap": result,
         }
     promoted = promote_staging_snapshot(
@@ -242,7 +285,12 @@ def _run_full_rebuild(
         minimum_coverage=float(os.environ.get("QUANT_MIN_SNAPSHOT_COVERAGE", "0.98")),
         required_source_count=int(os.environ.get("QUANT_SNAPSHOT_SOURCE_QUORUM", "2")),
     )
-    return {"success": bool(promoted.get("promoted")), "bootstrap": result, **promoted}
+    return {
+        "success": bool(promoted.get("promoted")),
+        "resumed_staging": resumed_staging,
+        "bootstrap": result,
+        **promoted,
+    }
 
 
 def run_daily_ingestion(data_dir: str | Path = "data") -> dict:

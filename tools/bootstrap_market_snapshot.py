@@ -53,6 +53,7 @@ def _rebuild_summary(result: dict[str, Any]) -> dict[str, Any]:
         "snapshot_id": result.get("snapshot_id"),
         "trade_date": result.get("trade_date"),
         "staging_dir": result.get("staging_dir"),
+        "resumed_staging": result.get("resumed_staging") is True,
         "bootstrap": {
             key: bootstrap.get(key)
             for key in (
@@ -63,6 +64,9 @@ def _rebuild_summary(result: dict[str, Any]) -> dict[str, Any]:
                 "failed",
                 "coverage_ratio",
                 "remaining_count",
+                "pass_count",
+                "failure_reason_counts",
+                "passes",
             )
             if key in bootstrap
         },
