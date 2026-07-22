@@ -1,23 +1,10 @@
+"""生产策略包。
+
+生产决策只通过 ``utils.policy_engine`` 调用 Super B1。旧 BowlRebound 源码仅供
+显式开启的隔离研究入口使用，源码也已移至 ``research/legacy``，
+不在这里导出或自动注册。
 """
-策略模块
 
-自动注册所有策略类
-"""
-import sys
-from pathlib import Path
+STRATEGIES: dict[str, type] = {}
 
-# 添加项目根目录到路径
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-# 导入策略
-from strategy.bowl_rebound import BowlReboundStrategy
-
-# 策略类映射
-STRATEGIES = {
-    'BowlReboundStrategy': BowlReboundStrategy,
-}
-
-__all__ = [
-    'BowlReboundStrategy',
-    'STRATEGIES'
-]
+__all__ = ["STRATEGIES"]

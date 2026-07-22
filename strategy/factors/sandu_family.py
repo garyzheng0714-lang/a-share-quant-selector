@@ -25,13 +25,16 @@
   trend_pressure_safe；trend_pressure_lookback 参数文档给出但积木未使用
   （factor_lib 按"收盘须站上趋势均线"实现），原样保留在 PARAMS 中。
 """
+
 import numpy as np
-import pandas as pd
 
 from strategy.factor_lib import (
-    FactorContext, hit_payload,
-    top_pressure_safe, gap_pressure_safe, trend_pressure_safe,
-    MA, LLV,
+    hit_payload,
+    top_pressure_safe,
+    gap_pressure_safe,
+    trend_pressure_safe,
+    MA,
+    LLV,
 )
 
 
@@ -74,11 +77,15 @@ def _upper_body_ok(ctx, i, max_ratio):
 def _pressures_ok(ctx, p):
     """三度系量时空安全：顶部压力 + 下跳缺口压力 + 趋势压力，全过才 True."""
     return (
-        top_pressure_safe(ctx, p["top_pressure_lookback"],
-                          p["top_pressure_volume_ratio"],
-                          p["top_pressure_price_dist"])
-        and gap_pressure_safe(ctx, p["gap_pressure_lookback"],
-                              p["gap_pressure_volume_min_ratio"])
+        top_pressure_safe(
+            ctx,
+            p["top_pressure_lookback"],
+            p["top_pressure_volume_ratio"],
+            p["top_pressure_price_dist"],
+        )
+        and gap_pressure_safe(
+            ctx, p["gap_pressure_lookback"], p["gap_pressure_volume_min_ratio"]
+        )
         and trend_pressure_safe(ctx, p["trend_pressure_ma"])
     )
 
@@ -90,8 +97,14 @@ def _has_surge(ctx, lookback, ratio):
     return bool(cond.iloc[-lookback:].any())
 
 
-def _yang_stats_ok(ctx, lookback, min_ratio, cluster_window=None,
-                   cluster_min_ratio=None, vol_min_ratio=None):
+def _yang_stats_ok(
+    ctx,
+    lookback,
+    min_ratio,
+    cluster_window=None,
+    cluster_min_ratio=None,
+    vol_min_ratio=None,
+):
     """三阳控三阴三件套（窗口含当日）：
 
     1) 近 lookback 日阳线占比 >= min_ratio；
@@ -168,25 +181,29 @@ def compute_sandu_a_zone(ctx, params=None):
         if not _pressures_ok(ctx, p):
             return None
         # 三阳控三阴
-        if not _yang_stats_ok(ctx, p["sanyang_lookback"],
-                              p["sanyang_count_min_ratio"],
-                              p["sanyang_cluster_window"],
-                              p["sanyang_cluster_min_ratio"],
-                              p["sanyang_vol_min_ratio"]):
+        if not _yang_stats_ok(
+            ctx,
+            p["sanyang_lookback"],
+            p["sanyang_count_min_ratio"],
+            p["sanyang_cluster_window"],
+            p["sanyang_cluster_min_ratio"],
+            p["sanyang_vol_min_ratio"],
+        ):
             return None
         # 量价异动：近20日存在连续 k 日的（涨幅>=3% & 放量1.6倍 & 上影受控）
         pct = ctx.pct_change()
         vb = _vol_base(ctx)
         upper, _, body = _candle_parts(ctx)
-        shadow_ratio = upper / body.replace(0, np.nan)   # 实体0 → NaN → False
+        shadow_ratio = upper / body.replace(0, np.nan)  # 实体0 → NaN → False
         cond = (
             (pct >= p["yidong_price_min_pct"])
-            & (vb > 0) & (ctx.V >= vb * p["yidong_volume_surge_ratio"])
+            & (vb > 0)
+            & (ctx.V >= vb * p["yidong_volume_surge_ratio"])
             & (shadow_ratio <= p["yidong_max_upper_shadow_ratio"])
         )
         k = int(p["yidong_consecutive_days"])
         runs = cond.astype(float).rolling(k, min_periods=k).sum() >= k
-        if not bool(runs.iloc[-p["yidong_lookback"]:].any()):
+        if not bool(runs.iloc[-p["yidong_lookback"] :].any()):
             return None
         # 均线粘合归位 + 近5日翘头
         mas = [ctx.ma(m) for m in p["ma_combo_large"]]
@@ -262,11 +279,13 @@ def compute_sandu_b_zone(ctx, params=None):
             return None
         pct = ctx.pct_change()
         vb = _vol_base(ctx)
-        yang3 = (ctx.C > ctx.O).astype(float).rolling(
-            3, min_periods=1, center=True).sum()
+        yang3 = (
+            (ctx.C > ctx.O).astype(float).rolling(3, min_periods=1, center=True).sum()
+        )
         surge = (
             (pct >= p["prior_surge_price_min"])
-            & (vb > 0) & (ctx.V >= vb * p["prior_surge_volume_ratio"])
+            & (vb > 0)
+            & (ctx.V >= vb * p["prior_surge_volume_ratio"])
             & (yang3 >= p["prior_surge_yang_days"])
         )
         sa = surge.fillna(False).to_numpy()
@@ -275,24 +294,24 @@ def compute_sandu_b_zone(ctx, params=None):
         cand = np.where(sa[lo:t])[0]
         if cand.size == 0:
             return None
-        d = lo + int(cand[-1])                       # 最后一个异动日
-        surge_vol = float(ctx.V.iloc[max(0, d - 1): d + 2].mean())
+        d = lo + int(cand[-1])  # 最后一个异动日
+        surge_vol = float(ctx.V.iloc[max(0, d - 1) : d + 2].mean())
         if not surge_vol > 0:
             return None
         # 回调结构：异动后高点 → 缩量回调
         c_arr = ctx.C.to_numpy(dtype=float)
-        h = d + int(np.argmax(c_arr[d:t]))           # 异动日..昨日 收盘最高
+        h = d + int(np.argmax(c_arr[d:t]))  # 异动日..昨日 收盘最高
         if t - h > int(p["pullback_max_days"]):
             return None
-        if h > t - 2:                                # 至少 1 天真实回调
+        if h > t - 2:  # 至少 1 天真实回调
             return None
         peak = c_arr[h]
         if not peak > 0:
             return None
-        pull = c_arr[h + 1: t]
+        pull = c_arr[h + 1 : t]
         if (peak - float(pull.min())) / peak > p["pullback_max_pct"]:
             return None
-        pull_vol = float(ctx.V.iloc[h + 1: t].mean())
+        pull_vol = float(ctx.V.iloc[h + 1 : t].mean())
         if not pull_vol <= surge_vol * p["pullback_volume_shrink_ratio"]:
             return None
         # 关键均线支撑
@@ -302,12 +321,18 @@ def compute_sandu_b_zone(ctx, params=None):
         for m in p["ma_support_list"]:
             ma_s = ctx.ma(m)
             mv_t, mv_p = _f(ma_s, -1), _f(ma_s, -2)
-            if mv_t == mv_t and mv_t > 0 and \
-                    abs(today_low / mv_t - 1) <= p["ma_support_pct"]:
+            if (
+                mv_t == mv_t
+                and mv_t > 0
+                and abs(today_low / mv_t - 1) <= p["ma_support_pct"]
+            ):
                 support = True
                 break
-            if mv_p == mv_p and mv_p > 0 and \
-                    abs(prev_close / mv_p - 1) <= p["ma_support_pct"]:
+            if (
+                mv_p == mv_p
+                and mv_p > 0
+                and abs(prev_close / mv_p - 1) <= p["ma_support_pct"]
+            ):
                 support = True
                 break
         if not support:
@@ -321,10 +346,13 @@ def compute_sandu_b_zone(ctx, params=None):
         if not _upper_body_ok(ctx, -1, p["reversal_max_upper_shadow"]):
             return None
         pullback_pct = (peak - float(pull.min())) / peak
-        return hit_payload(ctx, extra={
-            "pullback_pct": round(pullback_pct * 100, 2),
-            "pullback_days": int(t - h),
-        })
+        return hit_payload(
+            ctx,
+            extra={
+                "pullback_pct": round(pullback_pct * 100, 2),
+                "pullback_days": int(t - h),
+            },
+        )
     except Exception:
         return None
 
@@ -386,8 +414,12 @@ def compute_sandu_washout(ctx, params=None):
             return None
         # 昨日洗盘K线（三选一）
         pct = ctx.pct_change()
-        o_p, h_p, l_p, c_p = (_f(ctx.O, -2), _f(ctx.H, -2),
-                              _f(ctx.L, -2), _f(ctx.C, -2))
+        o_p, h_p, l_p, c_p = (
+            _f(ctx.O, -2),
+            _f(ctx.H, -2),
+            _f(ctx.L, -2),
+            _f(ctx.C, -2),
+        )
         v_p, v_pp, c_pp = _f(ctx.V, -2), _f(ctx.V, -3), _f(ctx.C, -3)
         if not all(x == x for x in (o_p, h_p, l_p, c_p, v_p)):
             return None
@@ -399,20 +431,31 @@ def compute_sandu_washout(ctx, params=None):
         # 1) 中大阴线：必须是阴线(close<open)、跌幅[-7,-0.5]、下影/实体<=0.15、缩量
         #    低开高走的阳线是承接形态不是洗盘——规格的"阴线"是形态要件
         if c_p < o_p and p["wash_yin_min_pct"] <= pct_p <= p["wash_yin_max_pct"]:
-            vol_ma5 = _f(MA(ctx.V, 5).shift(1), -2)   # 昨日之前5日均量
-            if (body_p > 0 and lower_p / body_p <= p["wash_max_lower_shadow"]
-                    and vol_ma5 == vol_ma5 and vol_ma5 > 0
-                    and v_p <= vol_ma5 * p["wash_volume_shrink"]):
+            vol_ma5 = _f(MA(ctx.V, 5).shift(1), -2)  # 昨日之前5日均量
+            if (
+                body_p > 0
+                and lower_p / body_p <= p["wash_max_lower_shadow"]
+                and vol_ma5 == vol_ma5
+                and vol_ma5 > 0
+                and v_p <= vol_ma5 * p["wash_volume_shrink"]
+            ):
                 wash_type = "mid_yin"
         # 2) 长上影：上影/实体>=1（实体0且有上影 → 满足）
-        if wash_type is None and upper_p > 0 and (
-                body_p <= 0 or upper_p / body_p >= p["wash_upper_shadow_min"]):
+        if (
+            wash_type is None
+            and upper_p > 0
+            and (body_p <= 0 or upper_p / body_p >= p["wash_upper_shadow_min"])
+        ):
             wash_type = "long_upper"
         # 3) 黑太阳：高开1.02、收盘<=开盘*0.98、放量1.2倍
         if wash_type is None and c_pp == c_pp and v_pp == v_pp:
-            if (c_pp > 0 and o_p >= c_pp * p["black_sun_open_ratio"]
-                    and c_p <= o_p * p["black_sun_close_ratio"]
-                    and v_pp > 0 and v_p >= v_pp * p["black_sun_volume_ratio"]):
+            if (
+                c_pp > 0
+                and o_p >= c_pp * p["black_sun_open_ratio"]
+                and c_p <= o_p * p["black_sun_close_ratio"]
+                and v_pp > 0
+                and v_p >= v_pp * p["black_sun_volume_ratio"]
+            ):
                 wash_type = "black_sun"
         if wash_type is None:
             return None
@@ -420,13 +463,12 @@ def compute_sandu_washout(ctx, params=None):
         near = False
         for m in p["pos_ma_list"]:
             mv = _f(ctx.ma(m), -2)
-            if mv == mv and mv > 0 and \
-                    abs(c_p / mv - 1) <= p["pos_ma_nearby_pct"]:
+            if mv == mv and mv > 0 and abs(c_p / mv - 1) <= p["pos_ma_nearby_pct"]:
                 near = True
                 break
         if not near:
             lb = int(p["pos_prior_high_lookback"])
-            hh = float(ctx.H.iloc[-(lb + 1):-1].max())   # 截至昨日的30日前高
+            hh = float(ctx.H.iloc[-(lb + 1) : -1].max())  # 截至昨日的30日前高
             if hh > 0 and abs(c_p / hh - 1) <= p["pos_prior_high_pct"]:
                 near = True
         if not near:
@@ -499,12 +541,12 @@ def compute_sandu_neckline(ctx, params=None):
         # 颈位窗口截至昨日（不含当日）：若含当日，突破日自身的新高会成为
         # 新"颈位"，close>neck 的真突破在数学上永不可达——突破越真越必被拒
         # （review 数值复现确认的高危缺陷，2026-07-13 修复）
-        h_arr = ctx.H.to_numpy(dtype=float)[-(lb + 1):-1]
-        l_arr = ctx.L.to_numpy(dtype=float)[-(lb + 1):-1]
+        h_arr = ctx.H.to_numpy(dtype=float)[-(lb + 1) : -1]
+        l_arr = ctx.L.to_numpy(dtype=float)[-(lb + 1) : -1]
         if np.isnan(h_arr).any() or np.isnan(l_arr).any():
             return None
         neck = float(h_arr.max())
-        p_rel = int(np.where(h_arr == neck)[0][-1])      # 平局取最近
+        p_rel = int(np.where(h_arr == neck)[0][-1])  # 平局取最近
         p_abs = (t - len(h_arr)) + p_rel
         if t - p_abs < int(p["neckline_min_dist"]):
             return None
@@ -517,7 +559,7 @@ def compute_sandu_neckline(ctx, params=None):
             return None
         if not (float(l_arr[:p_rel].min()) <= pull_line):
             return None
-        if not (float(l_arr[p_rel + 1:].min()) <= pull_line):
+        if not (float(l_arr[p_rel + 1 :].min()) <= pull_line):
             return None
         # 充分整理：颈位后 >= 12 天（min_dist=20 已覆盖，仍显式检查）
         if t - p_abs < int(p["min_consolidation"]):
@@ -552,10 +594,13 @@ def compute_sandu_neckline(ctx, params=None):
         leg = ctx.C / LLV(ctx.C, 20) - 1
         if not (float(leg.iloc[-lb:].max()) <= p["max_single_leg_pct"]):
             return None
-        return hit_payload(ctx, extra={
-            "neckline": round(neck, 2),
-            "days_since_neck": int(t - p_abs),
-        })
+        return hit_payload(
+            ctx,
+            extra={
+                "neckline": round(neck, 2),
+                "days_since_neck": int(t - p_abs),
+            },
+        )
     except Exception:
         return None
 
@@ -615,12 +660,11 @@ def compute_sandu_star(ctx, params=None):
             return None
         # 星线序列（向量化）
         upper, lower, body = _candle_parts(ctx)
-        rng = (ctx.H - ctx.L)
-        body_ratio = body / rng.replace(0, np.nan)       # 一字板 → False
+        rng = ctx.H - ctx.L
+        body_ratio = body / rng.replace(0, np.nan)  # 一字板 → False
         shadow_ratio = (upper + lower) / body.replace(0, np.nan)
         star = (body_ratio <= p["star_body_max_pct"]) & (
-            (shadow_ratio >= p["star_shadow_ratio"])
-            | ((body == 0) & (rng > 0))
+            (shadow_ratio >= p["star_shadow_ratio"]) | ((body == 0) & (rng > 0))
         )
         sa = star.fillna(False).to_numpy()
         # 平台：截至昨日连续星线天数 ∈ [min, max]
@@ -639,25 +683,27 @@ def compute_sandu_star(ctx, params=None):
         near = False
         for m in p["pos_ma_list"]:
             mv = _f(ctx.ma(m), -2)
-            if mv == mv and mv > 0 and \
-                    abs(c_p / mv - 1) <= p["pos_nearby_pct"]:
+            if mv == mv and mv > 0 and abs(c_p / mv - 1) <= p["pos_nearby_pct"]:
                 near = True
                 break
         if not near:
             return None
         # 前期强势能量：阳占比 + 阳线聚集 + 阳阴量比
-        if not _yang_stats_ok(ctx, p["prior_lookback"], p["prior_yang_ratio"],
-                              p["prior_cluster_window"],
-                              p["prior_cluster_min_ratio"],
-                              p["prior_yang_volume_ratio"]):
+        if not _yang_stats_ok(
+            ctx,
+            p["prior_lookback"],
+            p["prior_yang_ratio"],
+            p["prior_cluster_window"],
+            p["prior_cluster_min_ratio"],
+            p["prior_yang_volume_ratio"],
+        ):
             return None
         # 位置安全：close/MA60 <= 1.25、整体涨幅 <= 60%
         close = _f(ctx.C)
         ma60 = _f(ctx.ma(60))
-        if not (ma60 == ma60 and ma60 > 0 and
-                close / ma60 <= p["max_close_vs_ma60"]):
+        if not (ma60 == ma60 and ma60 > 0 and close / ma60 <= p["max_close_vs_ma60"]):
             return None
-        c_min = float(ctx.C.iloc[-p["prior_lookback"]:].min())
+        c_min = float(ctx.C.iloc[-p["prior_lookback"] :].min())
         if not (c_min > 0 and close / c_min - 1 <= p["max_rally_pct"]):
             return None
         # 确认：平台突破 或 攻击星线
@@ -665,17 +711,24 @@ def compute_sandu_star(ctx, params=None):
         v_t, v_p = _f(ctx.V, -1), _f(ctx.V, -2)
         breakout = (
             _f(pct) >= p["breakout_pct_min"]
-            and v_p > 0 and v_t >= v_p * p["breakout_volume_min_ratio"]
+            and v_p > 0
+            and v_t >= v_p * p["breakout_volume_min_ratio"]
             and _upper_body_ok(ctx, -1, p["breakout_max_upper_shadow"])
         )
-        attack = bool(sa[-1]) and c_p > 0 and \
-            _f(ctx.O) >= c_p * (1 + p["attack_star_gap_min"])
+        attack = (
+            bool(sa[-1])
+            and c_p > 0
+            and _f(ctx.O) >= c_p * (1 + p["attack_star_gap_min"])
+        )
         if not (breakout or attack):
             return None
-        return hit_payload(ctx, extra={
-            "platform_days": int(run),
-            "confirm": "breakout" if breakout else "attack_star",
-        })
+        return hit_payload(
+            ctx,
+            extra={
+                "platform_days": int(run),
+                "confirm": "breakout" if breakout else "attack_star",
+            },
+        )
     except Exception:
         return None
 
@@ -685,23 +738,38 @@ def compute_sandu_star(ctx, params=None):
 
 FACTORS = {
     "sandu_a_zone": {
-        "name": "三度A区", "group": "三度系", "min_bars": 140,
-        "params": SANDU_A_ZONE_PARAMS, "fn": compute_sandu_a_zone,
+        "name": "三度A区",
+        "group": "三度系",
+        "min_bars": 140,
+        "params": SANDU_A_ZONE_PARAMS,
+        "fn": compute_sandu_a_zone,
     },
     "sandu_b_zone": {
-        "name": "三度B区", "group": "三度系", "min_bars": 200,
-        "params": SANDU_B_ZONE_PARAMS, "fn": compute_sandu_b_zone,
+        "name": "三度B区",
+        "group": "三度系",
+        "min_bars": 200,
+        "params": SANDU_B_ZONE_PARAMS,
+        "fn": compute_sandu_b_zone,
     },
     "sandu_washout": {
-        "name": "三度洗盘", "group": "三度系", "min_bars": 170,
-        "params": SANDU_WASHOUT_PARAMS, "fn": compute_sandu_washout,
+        "name": "三度洗盘",
+        "group": "三度系",
+        "min_bars": 170,
+        "params": SANDU_WASHOUT_PARAMS,
+        "fn": compute_sandu_washout,
     },
     "sandu_neckline": {
-        "name": "三度颈位", "group": "三度系", "min_bars": 170,
-        "params": SANDU_NECKLINE_PARAMS, "fn": compute_sandu_neckline,
+        "name": "三度颈位",
+        "group": "三度系",
+        "min_bars": 170,
+        "params": SANDU_NECKLINE_PARAMS,
+        "fn": compute_sandu_neckline,
     },
     "sandu_star": {
-        "name": "三度星线", "group": "三度系", "min_bars": 170,
-        "params": SANDU_STAR_PARAMS, "fn": compute_sandu_star,
+        "name": "三度星线",
+        "group": "三度系",
+        "min_bars": 170,
+        "params": SANDU_STAR_PARAMS,
+        "fn": compute_sandu_star,
     },
 }

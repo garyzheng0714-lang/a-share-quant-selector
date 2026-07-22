@@ -6,25 +6,32 @@
 每个因子的参数配置值与文档逐字一致；文档含糊处的实现假设写在各函数 docstring。
 所有 compute 函数经 @_safe 兜底：任何输入（NaN/短数据/零成交量）不抛异常，返回 None。
 """
+
 import functools
 
 import numpy as np
-import pandas as pd
 
 from strategy.factor_lib import (
-    FactorContext, hit_payload, adaptive_trend_selector, amplitude_pct,
-    _last, CROSS, LLV, HHV,
+    hit_payload,
+    adaptive_trend_selector,
+    amplitude_pct,
+    _last,
+    CROSS,
+    LLV,
+    HHV,
 )
 
 
 def _safe(fn):
     """异常兜底装饰器：脏数据/短数据引发的任何异常一律吞掉返回 None。"""
+
     @functools.wraps(fn)
     def wrapper(ctx, params=None):
         try:
             return fn(ctx, params)
         except Exception:
             return None
+
     return wrapper
 
 
@@ -40,17 +47,26 @@ def _zx_lines(ctx, p, k1="M1", k2="M2", k3="M3", k4="M4"):
 # ====================================================================
 
 NEW_B2_PARAMS = {
-    "kdj_n": 9, "kdj_m1": 3, "kdj_m2": 3,
-    "brick_fast": 4, "brick_slow": 6,
-    "long_window_1": 14, "long_window_2": 28,
-    "long_window_3": 57, "long_window_4": 114,
-    "b1_count_limit": 3, "b1_count_window": 5,
+    "kdj_n": 9,
+    "kdj_m1": 3,
+    "kdj_m2": 3,
+    "brick_fast": 4,
+    "brick_slow": 6,
+    "long_window_1": 14,
+    "long_window_2": 28,
+    "long_window_3": 57,
+    "long_window_4": 114,
+    "b1_count_limit": 3,
+    "b1_count_window": 5,
     "b2_pct_threshold": 3.7,
-    "bottom_line_ratio": 0.95, "trend_guard_ratio": 0.9,
-    "b2_prev_j_threshold": 39, "recent_listing_days": 120,
-    "short_trend_window_1": 10, "short_trend_window_2": 10,
-    "white_b1_j_threshold": 16,    # 文档标注"保留"，本因子不参与计算
-    "golden_b1_j_threshold": 29,   # 文档标注"保留"，本因子不参与计算
+    "bottom_line_ratio": 0.95,
+    "trend_guard_ratio": 0.9,
+    "b2_prev_j_threshold": 39,
+    "recent_listing_days": 120,
+    "short_trend_window_1": 10,
+    "short_trend_window_2": 10,
+    "white_b1_j_threshold": 16,  # 文档标注"保留"，本因子不参与计算
+    "golden_b1_j_threshold": 29,  # 文档标注"保留"，本因子不参与计算
 }
 
 
@@ -65,8 +81,9 @@ def _new_b2_series(ctx, p):
     """
     pct = ctx.C.pct_change() * 100
     _, _, j = ctx.kdj(p["kdj_n"], p["kdj_m1"], p["kdj_m2"])
-    yellow = ctx.yellow_line(p["long_window_1"], p["long_window_2"],
-                             p["long_window_3"], p["long_window_4"])
+    yellow = ctx.yellow_line(
+        p["long_window_1"], p["long_window_2"], p["long_window_3"], p["long_window_4"]
+    )
     thr = p["b2_pct_threshold"]
     base = (
         (pct > thr)
@@ -76,9 +93,8 @@ def _new_b2_series(ctx, p):
         & (j.shift(1) < p["b2_prev_j_threshold"])
         & ((ctx.C - ctx.O) > (ctx.H - ctx.C))
     )
-    env = (
-        (ctx.C >= yellow * p["bottom_line_ratio"])
-        & (yellow >= yellow.shift(1) * p["trend_guard_ratio"])
+    env = (ctx.C >= yellow * p["bottom_line_ratio"]) & (
+        yellow >= yellow.shift(1) * p["trend_guard_ratio"]
     )
     return base, env
 
@@ -101,10 +117,13 @@ def compute_new_b2(ctx, params=None):
         return None
     _, _, j = ctx.kdj(p["kdj_n"], p["kdj_m1"], p["kdj_m2"])
     prev_j = float(j.iloc[-2])
-    return hit_payload(ctx, extra={
-        "is_sub_new": bool(sub_new),
-        "prev_J": round(prev_j, 2) if prev_j == prev_j else None,
-    })
+    return hit_payload(
+        ctx,
+        extra={
+            "is_sub_new": bool(sub_new),
+            "prev_J": round(prev_j, 2) if prev_j == prev_j else None,
+        },
+    )
 
 
 # ====================================================================
@@ -112,11 +131,17 @@ def compute_new_b2(ctx, params=None):
 # ====================================================================
 
 ZX_WHITE_B1_PARAMS = {
-    "M1": 14, "M2": 28, "M3": 57, "M4": 114,
+    "M1": 14,
+    "M2": 28,
+    "M3": 57,
+    "M4": 114,
     "B1_params": {
-        "j_threshold": 15, "j_q_threshold": 0.1,
-        "bbi_min_window": 20, "bbi_q_threshold": 0.3,
-        "price_range_pct": 1, "trend_max_period": 60,
+        "j_threshold": 15,
+        "j_q_threshold": 0.1,
+        "bbi_min_window": 20,
+        "bbi_q_threshold": 0.3,
+        "price_range_pct": 1,
+        "trend_max_period": 60,
     },
     "require_long_short": False,
     "price_deviation_pct": 0.05,
@@ -134,7 +159,7 @@ def compute_zx_white_b1(ctx, params=None):
     c = _last(ctx.C)
     w = _last(white)
     y = _last(yellow)
-    if not (c > w and w > y):          # NaN 比较自然 False
+    if not (c > w and w > y):  # NaN 比较自然 False
         return None
     if p["require_long_short"] and not (c > y):
         return None
@@ -151,11 +176,17 @@ def compute_zx_white_b1(ctx, params=None):
 # ====================================================================
 
 ZX_YELLOW_B1_PARAMS = {
-    "M1": 14, "M2": 28, "M3": 57, "M4": 114,
+    "M1": 14,
+    "M2": 28,
+    "M3": 57,
+    "M4": 114,
     "B1_params": {
-        "j_threshold": 15, "j_q_threshold": 0.1,
-        "bbi_min_window": 20, "bbi_q_threshold": 0.3,
-        "price_range_pct": 1, "trend_max_period": 60,
+        "j_threshold": 15,
+        "j_q_threshold": 0.1,
+        "bbi_min_window": 20,
+        "bbi_q_threshold": 0.3,
+        "price_range_pct": 1,
+        "trend_max_period": 60,
     },
     "price_deviation_pct": 0.05,
 }
@@ -187,9 +218,14 @@ def compute_zx_yellow_b1(ctx, params=None):
 # ====================================================================
 
 ZX_BRICK_PARAMS = {
-    "M1": 14, "M2": 28, "M3": 57, "M4": 114,
-    "brick_fast": 4, "brick_slow": 6,
-    "brick_max_value": 100, "red_strength_ratio": 1,
+    "M1": 14,
+    "M2": 28,
+    "M3": 57,
+    "M4": 114,
+    "brick_fast": 4,
+    "brick_slow": 6,
+    "brick_max_value": 100,
+    "red_strength_ratio": 1,
 }
 
 
@@ -218,9 +254,13 @@ def compute_zx_brick(ctx, params=None):
     bv = _last(brick)
     if not (bv <= p["brick_max_value"]):
         return None
-    return hit_payload(ctx, extra={
-        "brick": round(bv, 2), "red_strength": round(abs(d1), 2),
-    })
+    return hit_payload(
+        ctx,
+        extra={
+            "brick": round(bv, 2),
+            "red_strength": round(abs(d1), 2),
+        },
+    )
 
 
 # ====================================================================
@@ -228,18 +268,26 @@ def compute_zx_brick(ctx, params=None):
 # ====================================================================
 
 DOUBLE_LINE_PARAMS = {
-    "M1": 14, "M2": 28, "M3": 57, "M4": 114,
-    "top_volume_ratio": 0.7, "amplitude_threshold": 9,
+    "M1": 14,
+    "M2": 28,
+    "M3": 57,
+    "M4": 114,
+    "top_volume_ratio": 0.7,
+    "amplitude_threshold": 9,
     "volume_shrink_ratio": 0.8,
-    "oscillation_max_days": 20, "oscillation_min_days": 5,
-    "pct_change_threshold": 3, "huge_volume_threshold": 1.5,
-    "oscillation_tolerance": 0.05, "max_after_volume_ratio": 0.7,
-    "volume_surge_threshold": 1, "support_break_tolerance": 0.95,
+    "oscillation_max_days": 20,
+    "oscillation_min_days": 5,
+    "pct_change_threshold": 3,
+    "huge_volume_threshold": 1.5,
+    "oscillation_tolerance": 0.05,
+    "max_after_volume_ratio": 0.7,
+    "volume_surge_threshold": 1,
+    "support_break_tolerance": 0.95,
     # ---- 以下为实现口径参数（文档未给数值，见 docstring 假设） ----
-    "max_break_count": 2,      # 破黄线支撑/越白线上轨的次数上限（规格"<=2次口径"）
-    "start_lookback": 10,      # 启动日搜索：震荡窗口首日前推天数
-    "prev_vol_window": 20,     # 启动日"前期均量"窗口
-    "calm_days": 3,            # 缩量/小阴小阳检查的近日数
+    "max_break_count": 2,  # 破黄线支撑/越白线上轨的次数上限（规格"<=2次口径"）
+    "start_lookback": 10,  # 启动日搜索：震荡窗口首日前推天数
+    "prev_vol_window": 20,  # 启动日"前期均量"窗口
+    "calm_days": 3,  # 缩量/小阴小阳检查的近日数
 }
 
 
@@ -274,10 +322,18 @@ def compute_double_line(ctx, params=None):
             continue
         if not bool((wh > yl).all()):
             continue
-        breaks = int((ctx.L.iloc[-w:].to_numpy()
-                      < yl.to_numpy() * p["support_break_tolerance"]).sum())
-        overs = int((ctx.C.iloc[-w:].to_numpy()
-                     > wh.to_numpy() * (1 + p["oscillation_tolerance"])).sum())
+        breaks = int(
+            (
+                ctx.L.iloc[-w:].to_numpy()
+                < yl.to_numpy() * p["support_break_tolerance"]
+            ).sum()
+        )
+        overs = int(
+            (
+                ctx.C.iloc[-w:].to_numpy()
+                > wh.to_numpy() * (1 + p["oscillation_tolerance"])
+            ).sum()
+        )
         if breaks <= p["max_break_count"] and overs <= p["max_break_count"]:
             w_found = w
             break
@@ -286,14 +342,14 @@ def compute_double_line(ctx, params=None):
     # 2. 启动日
     idx0 = n - w_found
     lo = max(0, idx0 - p["start_lookback"])
-    seg = ctx.V.iloc[lo:idx0 + 1].to_numpy()
+    seg = ctx.V.iloc[lo : idx0 + 1].to_numpy()
     if seg.size == 0:
         return None
     s = lo + int(np.argmax(seg))
     if s < p["prev_vol_window"]:
         return None
     v0 = float(ctx.V.iloc[s])
-    prev_mean = float(ctx.V.iloc[s - p["prev_vol_window"]:s].mean())
+    prev_mean = float(ctx.V.iloc[s - p["prev_vol_window"] : s].mean())
     if not (v0 > 0 and prev_mean > 0):
         return None
     if v0 < prev_mean * p["volume_surge_threshold"]:
@@ -305,7 +361,7 @@ def compute_double_line(ctx, params=None):
     if float(ctx.V.iloc[ti]) > v0 * p["top_volume_ratio"]:
         return None
     # 4. 启动后不再放量
-    after = ctx.V.iloc[s + 1:].to_numpy()
+    after = ctx.V.iloc[s + 1 :].to_numpy()
     if after.size and float(after.max()) > v0 * p["max_after_volume_ratio"]:
         return None
     # 5. 缩量
@@ -315,18 +371,23 @@ def compute_double_line(ctx, params=None):
     # 6. 小阴小阳
     pct_tail = (ctx.C.pct_change() * 100).iloc[-k:]
     if pct_tail.isna().any() or not bool(
-            (pct_tail.abs() <= p["pct_change_threshold"]).all()):
+        (pct_tail.abs() <= p["pct_change_threshold"]).all()
+    ):
         return None
-    return hit_payload(ctx, extra={
-        "osc_days": int(w_found), "huge_start": bool(huge),
-    })
+    return hit_payload(
+        ctx,
+        extra={
+            "osc_days": int(w_found),
+            "huge_start": bool(huge),
+        },
+    )
 
 
 # ====================================================================
 # 9. 砖型+B1（brick_b1）
 # ====================================================================
 
-BRICK_B1_PARAMS = {**NEW_B2_PARAMS}   # 文档参数与新B2完全一致（逐字同值）
+BRICK_B1_PARAMS = {**NEW_B2_PARAMS}  # 文档参数与新B2完全一致（逐字同值）
 
 
 @_safe
@@ -340,8 +401,9 @@ def compute_brick_b1(ctx, params=None):
     """
     p = {**BRICK_B1_PARAMS, **(params or {})}
     white = ctx.white_line()
-    yellow = ctx.yellow_line(p["long_window_1"], p["long_window_2"],
-                             p["long_window_3"], p["long_window_4"])
+    yellow = ctx.yellow_line(
+        p["long_window_1"], p["long_window_2"], p["long_window_3"], p["long_window_4"]
+    )
     brick = ctx.brick(p["brick_fast"], p["brick_slow"])
     _, _, j = ctx.kdj(p["kdj_n"], p["kdj_m1"], p["kdj_m2"])
     d = brick.diff()
@@ -356,12 +418,16 @@ def compute_brick_b1(ctx, params=None):
     sig = env & turn & j_low & ~(b2_base & b2_env)
     if not bool(sig.iloc[-1]):
         return None
-    cnt = int(sig.iloc[-p["b1_count_window"]:].sum())
+    cnt = int(sig.iloc[-p["b1_count_window"] :].sum())
     if cnt > p["b1_count_limit"]:
         return None
-    return hit_payload(ctx, extra={
-        "brick": round(_last(brick), 2), "count_in_window": cnt,
-    })
+    return hit_payload(
+        ctx,
+        extra={
+            "brick": round(_last(brick), 2),
+            "count_in_window": cnt,
+        },
+    )
 
 
 # ====================================================================
@@ -369,14 +435,20 @@ def compute_brick_b1(ctx, params=None):
 # ====================================================================
 
 CROSS_STEP_YELLOW_PARAMS = {
-    "M1": 14, "M2": 28, "M3": 57, "M4": 114,
+    "M1": 14,
+    "M2": 28,
+    "M3": 57,
+    "M4": 114,
     "B1_params": {
-        "j_threshold": 15, "j_q_threshold": 0.1,
-        "bbi_min_window": 20, "bbi_q_threshold": 0.3,
-        "price_range_pct": 1, "trend_max_period": 60,
+        "j_threshold": 15,
+        "j_q_threshold": 0.1,
+        "bbi_min_window": 20,
+        "bbi_q_threshold": 0.3,
+        "price_range_pct": 1,
+        "trend_max_period": 60,
     },
     "lookback_days": 160,
-    "touch_tolerance": 0.03,   # 回踩容忍度（规格注明 tol=0.03 口径）
+    "touch_tolerance": 0.03,  # 回踩容忍度（规格注明 tol=0.03 口径）
 }
 
 
@@ -400,11 +472,11 @@ def compute_cross_step_yellow(ctx, params=None):
         return None
     gi = int(idxs[-1])
     n = len(ctx.df)
-    if gi >= n - 1:                       # 金叉当日不视为回踩日
+    if gi >= n - 1:  # 金叉当日不视为回踩日
         return None
     if n - 1 - gi > p["lookback_days"]:
         return None
-    if bool(touch.iloc[gi + 1:n - 1].any()):   # 金叉后已回踩过 → 非首次
+    if bool(touch.iloc[gi + 1 : n - 1].any()):  # 金叉后已回踩过 → 非首次
         return None
     if not adaptive_trend_selector(ctx, p["B1_params"]):
         return None
@@ -416,19 +488,27 @@ def compute_cross_step_yellow(ctx, params=None):
 # ====================================================================
 
 NANA_CHART_PARAMS = {
-    "M1": 14, "M2": 28, "M3": 57, "M4": 114,
+    "M1": 14,
+    "M2": 28,
+    "M3": 57,
+    "M4": 114,
     "B1_params": {
-        "j_threshold": 15, "j_q_threshold": 0.1,
-        "bbi_min_window": 20, "bbi_q_threshold": 0.5,
-        "price_range_pct": 1, "trend_max_period": 60,
+        "j_threshold": 15,
+        "j_q_threshold": 0.1,
+        "bbi_min_window": 20,
+        "bbi_q_threshold": 0.5,
+        "price_range_pct": 1,
+        "trend_max_period": 60,
     },
-    "amplitude_threshold": 7, "volume_shrink_ratio": 0.3,
-    "pct_change_threshold": 2, "volume_surge_threshold": 2,
+    "amplitude_threshold": 7,
+    "volume_shrink_ratio": 0.3,
+    "pct_change_threshold": 2,
+    "volume_surge_threshold": 2,
     # ---- 实现口径参数（文档未给数值，见 docstring 假设） ----
-    "pattern_window": 30,      # 量价模式回看天数（规格"近30日"）
-    "prev_vol_window": 20,     # 启动日"前期均量"窗口
-    "calm_days": 3,            # 地量/小阴小阳检查的近日数
-    "min_days_after_surge": 3, # 启动日距当日的最少天数
+    "pattern_window": 30,  # 量价模式回看天数（规格"近30日"）
+    "prev_vol_window": 20,  # 启动日"前期均量"窗口
+    "calm_days": 3,  # 地量/小阴小阳检查的近日数
+    "min_days_after_surge": 3,  # 启动日距当日的最少天数
 }
 
 
@@ -462,7 +542,7 @@ def compute_nana_chart(ctx, params=None):
     if s < p["prev_vol_window"]:
         return None
     v0 = float(ctx.V.iloc[s])
-    prev_mean = float(ctx.V.iloc[s - p["prev_vol_window"]:s].mean())
+    prev_mean = float(ctx.V.iloc[s - p["prev_vol_window"] : s].mean())
     if not (v0 > 0 and prev_mean > 0):
         return None
     if v0 < prev_mean * p["volume_surge_threshold"]:
@@ -472,14 +552,18 @@ def compute_nana_chart(ctx, params=None):
         return None
     pct_tail = (ctx.C.pct_change() * 100).iloc[-k:]
     if pct_tail.isna().any() or not bool(
-            (pct_tail.abs() <= p["pct_change_threshold"]).all()):
+        (pct_tail.abs() <= p["pct_change_threshold"]).all()
+    ):
         return None
     if not adaptive_trend_selector(ctx, p["B1_params"]):
         return None
-    return hit_payload(ctx, extra={
-        "surge_ratio": round(v0 / prev_mean, 2),
-        "days_after_surge": int(n - 1 - s),
-    })
+    return hit_payload(
+        ctx,
+        extra={
+            "surge_ratio": round(v0 / prev_mean, 2),
+            "days_after_surge": int(n - 1 - s),
+        },
+    )
 
 
 # ====================================================================
@@ -487,9 +571,14 @@ def compute_nana_chart(ctx, params=None):
 # ====================================================================
 
 ZX_PULLBACK_BRICK_PARAMS = {
-    "M1": 14, "M2": 28, "M3": 57, "M4": 114,
-    "brick_fast": 4, "brick_slow": 6,
-    "rsi_period": 3, "short_window": 3,
+    "M1": 14,
+    "M2": 28,
+    "M3": 57,
+    "M4": 114,
+    "brick_fast": 4,
+    "brick_slow": 6,
+    "rsi_period": 3,
+    "short_window": 3,
 }
 
 
@@ -529,9 +618,13 @@ def compute_zx_pullback_brick(ctx, params=None):
     s1, s0 = float(short_val.iloc[-1]), float(short_val.iloc[-2])
     if not (s1 == s1 and s0 == s0 and s1 >= s0):
         return None
-    return hit_payload(ctx, extra={
-        "brick": round(_last(brick), 2), "RSI3": round(r1, 2),
-    })
+    return hit_payload(
+        ctx,
+        extra={
+            "brick": round(_last(brick), 2),
+            "RSI3": round(r1, 2),
+        },
+    )
 
 
 # ====================================================================
@@ -540,39 +633,66 @@ def compute_zx_pullback_brick(ctx, params=None):
 
 FACTORS = {
     "new_b2": {
-        "name": "新B2", "group": "知行系", "min_bars": 20,
-        "params": NEW_B2_PARAMS, "fn": compute_new_b2,
+        "name": "新B2",
+        "group": "知行系",
+        "min_bars": 20,
+        "params": NEW_B2_PARAMS,
+        "fn": compute_new_b2,
     },
     "zx_white_b1": {
-        "name": "知行白线B1", "group": "知行系", "min_bars": 134,
-        "params": ZX_WHITE_B1_PARAMS, "fn": compute_zx_white_b1,
+        "name": "知行白线B1",
+        "group": "知行系",
+        "min_bars": 134,
+        "params": ZX_WHITE_B1_PARAMS,
+        "fn": compute_zx_white_b1,
     },
     "zx_yellow_b1": {
-        "name": "知行黄线B1", "group": "知行系", "min_bars": 134,
-        "params": ZX_YELLOW_B1_PARAMS, "fn": compute_zx_yellow_b1,
+        "name": "知行黄线B1",
+        "group": "知行系",
+        "min_bars": 134,
+        "params": ZX_YELLOW_B1_PARAMS,
+        "fn": compute_zx_yellow_b1,
     },
     "zx_brick": {
-        "name": "知行砖图", "group": "知行系", "min_bars": 134,
-        "params": ZX_BRICK_PARAMS, "fn": compute_zx_brick,
+        "name": "知行砖图",
+        "group": "知行系",
+        "min_bars": 134,
+        "params": ZX_BRICK_PARAMS,
+        "fn": compute_zx_brick,
     },
     "double_line": {
-        "name": "双线", "group": "知行系", "min_bars": 164,
-        "params": DOUBLE_LINE_PARAMS, "fn": compute_double_line,
+        "name": "双线",
+        "group": "知行系",
+        "min_bars": 164,
+        "params": DOUBLE_LINE_PARAMS,
+        "fn": compute_double_line,
     },
     "brick_b1": {
-        "name": "砖型+B1", "group": "知行系", "min_bars": 134,
-        "params": BRICK_B1_PARAMS, "fn": compute_brick_b1,
+        "name": "砖型+B1",
+        "group": "知行系",
+        "min_bars": 134,
+        "params": BRICK_B1_PARAMS,
+        "fn": compute_brick_b1,
     },
     "cross_step_yellow": {
-        "name": "金叉踩黄", "group": "知行系", "min_bars": 134,
-        "params": CROSS_STEP_YELLOW_PARAMS, "fn": compute_cross_step_yellow,
+        "name": "金叉踩黄",
+        "group": "知行系",
+        "min_bars": 134,
+        "params": CROSS_STEP_YELLOW_PARAMS,
+        "fn": compute_cross_step_yellow,
     },
     "nana_chart": {
-        "name": "娜娜图", "group": "知行系", "min_bars": 164,
-        "params": NANA_CHART_PARAMS, "fn": compute_nana_chart,
+        "name": "娜娜图",
+        "group": "知行系",
+        "min_bars": 164,
+        "params": NANA_CHART_PARAMS,
+        "fn": compute_nana_chart,
     },
     "zx_pullback_brick": {
-        "name": "知行趋势回踩砖", "group": "知行系", "min_bars": 134,
-        "params": ZX_PULLBACK_BRICK_PARAMS, "fn": compute_zx_pullback_brick,
+        "name": "知行趋势回踩砖",
+        "group": "知行系",
+        "min_bars": 134,
+        "params": ZX_PULLBACK_BRICK_PARAMS,
+        "fn": compute_zx_pullback_brick,
     },
 }

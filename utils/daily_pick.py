@@ -1,89 +1,56 @@
-"""LLM 历史荐股档案与版本化决策解释器。
+"""受控 LLM 解释器。
 
-生产中的 LLM 没有挑票、排序或改写策略动作的权限：
-- ``generate_daily_pick`` 仅为旧数据兼容保留，定时任务和 POST API 均已停用。
-- ``generate_quant_comment`` 只解释版本化决策中已通过复核的候选，并绑定 ``run_id``。
-- 未配置 API Key 时返回 ``available: false``，不影响量化决策。
+生产中的 LLM 只能解释已落账的量化候选，不能挑票、排序或改变动作。旧版
+``llm_picks``/多视图荐股链已经移出生产实现；兼容入口只返回永久停用状态。
 
-支持两种大模型服务（config.yaml 的 llm.provider 切换）：
-- ark（默认）：火山方舟 GLM 等 OpenAI 兼容接口，requests 直调，无额外依赖
-- anthropic：Claude 官方 SDK
-
-API Key 来源（按优先级）：config/config.yaml 的 llm.api_key > provider 对应的环境变量
-（Ark 使用 ARK_API_KEY，Anthropic 使用 ANTHROPIC_API_KEY）。
+API Key 只从 ``ARK_API_KEY[_FILE]`` 或 ``ANTHROPIC_API_KEY[_FILE]`` 读取，
+不从仓库配置文件读取真值。
 """
+
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
-from uuid import uuid4
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 import orjson
 import pandas as pd
 import requests
 import yaml
 
-from views.view_manager import _get_conn
+from views.view_manager import _get_conn, _get_migration_conn, _get_read_conn
+
 
 logger = logging.getLogger(__name__)
 
 _CONFIG_PATH = Path(__file__).parent.parent / "config" / "config.yaml"
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
 DEFAULT_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
-
-SYSTEM_PROMPT = (
-    "你是一位资深A股分析师，服务的用户没有金融专业背景。"
-    "请用简体中文回复，思考过程也用中文。"
-    "你的任务：基于提供的宏观数据、行业板块数据和每只候选股的完整技术面数据，"
-    "做真正的综合研判，从候选中选出相对最优的一只，回答'如果只买一只，买哪只'。"
-    "分析要求："
-    "1. 用户自己能看到所有原始数字——你的价值是跨维度交叉分析（量价关系、位置与趋势的矛盾、"
-    "行业景气与个股形态的共振），说出数字背后的含义，不要复述数字本身；"
-    "2. 以提供的量化数据为事实基础，可以结合你对A股运行规律、行业景气周期、资金轮动的经验做推断，"
-    "但经验推断要用'从经验看''通常'这类措辞标明，禁止编造具体新闻、公告、业绩数据；"
-    "3. '该不该出手、仓位多少'由系统温度计负责，不归你管——环境再差也要选出相对最优的一只，"
-    "环境风险和应对（轻仓、止损位）写进风险提示。"
-)
-
-PICK_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "code": {"type": "string", "description": "推荐股票的6位代码，必须从候选列表中选"},
-        "name": {"type": "string"},
-        "macro_view": {"type": "string", "description": "宏观面研判：指数结构、板块轮动、市场风格对本次选择的影响，2-4句"},
-        "technical_view": {"type": "string", "description": "技术面研判：所选个股的量价、位置、形态交叉分析，及与其他候选的关键对比，2-4句"},
-        "reason": {"type": "string", "description": "综合结论：为什么是它，2-3句"},
-        "risk": {"type": "string", "description": "风险提示（含环境风险和应对建议，如轻仓、止损位），1-3句"},
-        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-    },
-    "required": ["code", "name", "macro_view", "technical_view", "reason", "risk", "confidence"],
-    "additionalProperties": False,
-}
+COMMENT_PROMPT_VERSION = "quant-explainer-v3"
 
 
 def _load_llm_config() -> dict:
     try:
-        with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-        return cfg.get("llm", {}) or {}
-    except Exception:
+        with open(_CONFIG_PATH, encoding="utf-8") as file:
+            config = yaml.safe_load(file) or {}
+        return config.get("llm", {}) or {}
+    except (OSError, TypeError, yaml.YAMLError):
         return {}
 
 
 def _get_llm_provider(llm_cfg: dict | None = None) -> str | None:
-    if llm_cfg is None:
-        llm_cfg = _load_llm_config()
+    llm_cfg = _load_llm_config() if llm_cfg is None else llm_cfg
     provider = str(llm_cfg.get("provider") or "ark").strip().lower()
     return provider if provider in {"ark", "anthropic"} else None
 
 
-def get_api_key(llm_cfg: dict | None = None):
-    if llm_cfg is None:
-        llm_cfg = _load_llm_config()
+def get_api_key(llm_cfg: dict | None = None) -> str | None:
+    llm_cfg = _load_llm_config() if llm_cfg is None else llm_cfg
     provider = _get_llm_provider(llm_cfg)
     env_name = {
         "ark": "ARK_API_KEY",
@@ -91,373 +58,65 @@ def get_api_key(llm_cfg: dict | None = None):
     }.get(provider)
     if env_name is None:
         return None
-    return llm_cfg.get("api_key") or os.environ.get(env_name)
-
-
-_PICKS_SCHEMA = """
-    CREATE TABLE IF NOT EXISTS llm_picks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        pick_date TEXT NOT NULL,
-        session TEXT NOT NULL DEFAULT 'close',
-        code TEXT,
-        name TEXT,
-        macro_view TEXT,
-        technical_view TEXT,
-        reason TEXT,
-        risk TEXT,
-        confidence TEXT,
-        skipped INTEGER DEFAULT 0,
-        skip_reason TEXT,
-        thermometer_json TEXT,
-        model TEXT,
-        created_at TEXT NOT NULL,
-        UNIQUE(pick_date, session)
-    )
-"""
-
-
-def init_picks_table() -> None:
-    with _get_conn() as conn:
-        conn.execute(_PICKS_SCHEMA)
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(llm_picks)")]
-        # 幂等迁移：旧表（pick_date 列级 UNIQUE、无 session）→ 新表（UNIQUE(pick_date, session)）
-        if "session" not in cols:
-            conn.execute("ALTER TABLE llm_picks RENAME TO llm_picks_old")
-            conn.execute(_PICKS_SCHEMA.replace("IF NOT EXISTS ", ""))
-            old_cols = [r[1] for r in conn.execute("PRAGMA table_info(llm_picks_old)")]
-            keep = [c for c in old_cols if c != "id"]
-            conn.execute(
-                f"INSERT INTO llm_picks ({', '.join(keep)}, session) "
-                f"SELECT {', '.join(keep)}, 'close' FROM llm_picks_old"
-            )
-            conn.execute("DROP TABLE llm_picks_old")
-
-
-def _latest_candidates() -> tuple:
-    """取 results 表最新一天的选股结果（只保留用户有权限的板块）。返回 (run_date, stocks).
-
-    同一天可能有多个活跃视图各写一行 results：全部合并、按 code 去重（保留先出现的），
-    与 /api/ranking 的"今日候选"口径一致——AI 挑票的池子必须等于用户看到的池子。
-    """
-    from utils.market_filter import is_main_board, main_board_only
-
-    with _get_conn() as conn:
-        # 只看活跃视图：与 /api/ranking 一致，停用视图的旧结果不进 AI 候选池
-        latest = conn.execute(
-            """SELECT MAX(r.run_date) AS d FROM results r
-               JOIN views v ON v.id = r.view_id AND v.is_active = 1"""
-        ).fetchone()
-        if latest is None or latest["d"] is None:
-            return None, []
-        rows = conn.execute(
-            """SELECT r.stocks_json FROM results r
-               JOIN views v ON v.id = r.view_id AND v.is_active = 1
-               WHERE r.run_date = ? ORDER BY r.view_id""",
-            (latest["d"],),
-        ).fetchall()
-
-    seen = set()
-    stocks = []
-    for row in rows:
-        try:
-            batch = orjson.loads(row["stocks_json"]) if row["stocks_json"] else []
-        except Exception:
-            continue
-        for s in batch:
-            code = s.get("code")
-            if code and code not in seen:
-                seen.add(code)
-                stocks.append(s)
-    if main_board_only():
-        stocks = [s for s in stocks if is_main_board(s.get("code", ""))]
-    return latest["d"], stocks
-
-
-def _build_prompt(run_date, candidates, thermometer, perf_summary, csv_manager) -> str:
-    """组装给大模型的完整上下文：宏观数据包 + 行业热度 + 每只候选的完整技术特征包."""
-    from utils.market_context import build_macro_brief, get_industry_heat, match_industry
-    from utils.stock_features import describe_features, extract_features
-
-    # ---- 宏观面 ----
-    lines = ["## 一、宏观面数据（实时真实行情）", ""]
+    value = os.environ.get(env_name, "").strip()
+    if value:
+        return value
+    secret_path = os.environ.get(f"{env_name}_FILE", "").strip()
+    if not secret_path:
+        return None
     try:
-        lines.append(build_macro_brief())
-    except Exception as e:
-        logger.warning("宏观数据包获取失败: %s", e)
-        lines.append("（宏观数据暂不可用）")
-
-    if thermometer.get("available"):
-        fit = thermometer.get("fitness", {})
-        if fit.get("available"):
-            lines.append(
-                f"\n### 本系统策略适应度\n- 最近{fit['samples']}个信号 T+5 胜率 {fit['win_rate_t5']}%"
-                f"（{fit['status']}，failing=失效中/weak=偏弱/healthy=健康）"
-            )
-
-    # ---- 策略战绩 ----
-    lines += ["", "## 二、本系统策略历史战绩（真实回填）", ""]
-    for cat, agg in (perf_summary.get("by_category") or {}).items():
-        a = agg.get("ret_20") or {}
-        if a.get("count"):
-            lines.append(f"- {cat}: T+20 胜率 {a['win_rate']}%，平均 {a['avg']:+.2f}%（{a['count']}条）")
-
-    # ---- 候选票完整技术面 ----
-    heat = get_industry_heat()
-    lines += ["", f"## 三、今日候选股票（{run_date}，碗口反弹策略筛出）", ""]
-    for s in candidates:
-        sim = s.get("similarity_score")
-        code = s.get("code")
-        lines.append(
-            f"### {code} {s.get('name')}"
-            f"｜分类: {s.get('category')}｜J值: {s.get('J')}"
-            f"｜B1相似度: {sim if sim is not None else '未评分'}"
-        )
-        try:
-            feats = extract_features(csv_manager.read_stock(code)) if csv_manager else {}
-            lines.append(f"- 技术面: {describe_features(feats)}")
-        except Exception as e:
-            logger.debug("提取 %s 技术特征失败: %s", code, e)
-        ind = s.get("industry") or ""
-        matched = match_industry(ind, heat)
-        if matched:
-            lines.append(
-                f"- 所属行业 {ind}: 今日{matched['chg_pct']:+}%，"
-                f"换手{matched['turnover']}%，主力净流入{matched['main_inflow_yi']:+}亿"
-            )
-        elif ind:
-            lines.append(f"- 所属行业: {ind}（今日板块数据未匹配到）")
-        lines.append("")
-
-    lines += [
-        "## 四、你的任务",
-        "综合以上宏观面、行业面、技术面，从候选中选出【相对最优的 1 只】。",
-        "要求：",
-        "1. 必须选且只选 1 只，只能从候选列表中选",
-        "2. macro_view 写宏观和板块层面的研判（当前市场风格/资金去向对选择的影响）",
-        "3. technical_view 写所选个股的跨维度技术分析（量价、位置、形态的交叉解读）及与其他候选的关键对比",
-        "4. 不要复述用户已能看到的数字，要给出数字背后的判断；用大白话",
-        "5. 环境风险与应对（轻仓/止损位）写进 risk",
-    ]
-    return "\n".join(lines)
+        return Path(secret_path).read_text(encoding="utf-8").strip() or None
+    except OSError:
+        logger.error("Cannot read secret file configured by %s_FILE", env_name)
+        return None
 
 
 def _extract_json(text: str) -> dict:
-    """从模型输出提取 JSON（容错处理 markdown 代码块和前后杂文字）."""
+    """从模型输出中提取一个 JSON 对象。"""
     text = text.strip()
     fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fence:
         return json.loads(fence.group(1))
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end <= start:
-        raise ValueError(f"模型输出中未找到 JSON: {text[:200]}")
-    return json.loads(text[start:end + 1])
+        raise ValueError("llm_response_missing_json_object")
+    return json.loads(text[start : end + 1])
 
 
-def _call_ark(api_key: str, llm_cfg: dict, prompt: str) -> tuple:
-    """调用火山方舟（OpenAI 兼容格式，GLM 等）. 返回 (result_dict, model_name)."""
-    model = llm_cfg.get("model")
-    if not model:
-        raise ValueError("config.yaml 的 llm.model 未配置（火山方舟的接入点 ID，形如 ep-...）")
-    base_url = (llm_cfg.get("base_url") or DEFAULT_ARK_BASE_URL).rstrip("/")
-
-    schema_hint = (
-        "\n\n请只输出一个 JSON 对象（不要 markdown 代码块、不要多余文字），字段如下：\n"
-        '{"code": "6位股票代码（必须从候选列表中选）", "name": "股票名",'
-        ' "macro_view": "宏观面研判2-4句", "technical_view": "所选个股技术面交叉分析2-4句",'
-        ' "reason": "综合结论：为什么是它，2-3句",'
-        ' "risk": "风险提示（含环境风险和应对建议）1-3句", "confidence": "high/medium/low"}'
-    )
-    resp = requests.post(
-        f"{base_url}/chat/completions",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        json={
-            "model": model,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt + schema_hint},
-            ],
-            "temperature": 0.3,
-        },
-        timeout=180,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    text = data["choices"][0]["message"]["content"]
-    return _extract_json(text), model
+def generate_daily_pick(
+    force: bool = False,
+    candidates: list | None = None,
+    run_date: str | None = None,
+    session: str = "close",
+) -> dict:
+    """旧 LLM 自主荐股入口永久停用；参数只用于兼容旧调用签名。"""
+    del force, candidates, run_date, session
+    return {
+        "available": False,
+        "reason": "legacy_generation_disabled",
+        "replacement": "canonical_decision_plus_explanation",
+    }
 
 
-def _call_anthropic(api_key: str, llm_cfg: dict, prompt: str) -> tuple:
-    """调用 Claude 官方 API（结构化输出）. 返回 (result_dict, model_name)."""
-    import anthropic
-
-    model = llm_cfg.get("model") or DEFAULT_ANTHROPIC_MODEL
-    client = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model=model,
-        max_tokens=16000,
-        thinking={"type": "adaptive"},
-        system=SYSTEM_PROMPT,
-        output_config={"format": {"type": "json_schema", "schema": PICK_SCHEMA}},
-        messages=[{"role": "user", "content": prompt}],
-    )
-    if response.stop_reason == "refusal":
-        raise RuntimeError("模型拒绝了本次请求")
-    text = next(b.text for b in response.content if b.type == "text")
-    return json.loads(text), model
+def _call_ark(*_args, **_kwargs):
+    """保留旧私有符号，任何直接调用都会明确失败。"""
+    raise RuntimeError("legacy_generation_disabled")
 
 
-def generate_daily_pick(force: bool = False, candidates: list = None,
-                        run_date: str = None, session: str = "close") -> dict:
-    """生成推荐。已有同日同场次推荐时直接返回（force=True 强制重新生成）.
-
-    Args:
-        candidates: 外部候选；None 时取 results 表最新一天的收盘候选池
-        session: 保留字段，恒为 'close'（收盘版）
-    """
-    init_picks_table()
-
-    llm_cfg = _load_llm_config()
-    provider = _get_llm_provider(llm_cfg)
-    if provider is None:
-        return {"available": False, "reason": "不支持的大模型 provider"}
-    api_key = get_api_key(llm_cfg)
-    if not api_key:
-        return {
-            "available": False,
-            "reason": "未配置大模型 API Key。请在 config/config.yaml 添加:\n"
-                      "llm:\n  provider: ark\n  api_key: ...\n  model: ep-...",
-        }
-
-    if candidates is None:
-        run_date, candidates = _latest_candidates()
-    if not candidates:
-        return {"available": False, "reason": "暂无候选股票（今日策略未筛出票或未执行选股）"}
-
-    # 已有同日同场次推荐则复用
-    if not force:
-        existing = get_pick(run_date, session=session)
-        if existing:
-            return {"available": True, "pick": existing, "cached": True}
-
-    from utils.csv_manager import CSVManager
-    from utils.market_thermometer import get_thermometer
-    from utils.performance_tracker import get_summary
-
-    thermometer = get_thermometer()
-    perf_summary = get_summary()
-    csv_manager = CSVManager("data")
-    prompt = _build_prompt(run_date, candidates, thermometer, perf_summary, csv_manager)
-
-    try:
-        if provider == "anthropic":
-            result, model = _call_anthropic(api_key, llm_cfg, prompt)
-        else:
-            result, model = _call_ark(api_key, llm_cfg, prompt)
-    except Exception as e:
-        logger.error("大模型荐票失败: %s", e)
-        return {"available": False, "reason": f"大模型调用失败: {e}"}
-
-    # 防幻觉校验：推荐的票必须在候选列表里
-    valid_codes = {str(s.get("code")) for s in candidates}
-    if str(result.get("code")) not in valid_codes:
-        logger.error("模型推荐了候选之外的股票 %s", result.get("code"))
-        return {"available": False, "reason": "模型输出异常（推荐了候选之外的股票），请重试"}
-
-    now = datetime.now().isoformat()
-    with _get_conn() as conn:
-        conn.execute(
-            "DELETE FROM llm_picks WHERE pick_date = ? AND session = ?",
-            (run_date, session),
-        )
-        conn.execute(
-            """INSERT INTO llm_picks
-               (pick_date, session, code, name, macro_view, technical_view, reason, risk,
-                confidence, skipped, skip_reason, thermometer_json, model, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)""",
-            (
-                run_date,
-                session,
-                result.get("code"),
-                result.get("name"),
-                result.get("macro_view"),
-                result.get("technical_view"),
-                result.get("reason"),
-                result.get("risk"),
-                result.get("confidence"),
-                orjson.dumps(thermometer).decode(),
-                model,
-                now,
-            ),
-        )
-    return {"available": True, "pick": get_pick(run_date, session=session), "cached": False}
+def _call_anthropic(*_args, **_kwargs):
+    """保留旧私有符号，任何直接调用都会明确失败。"""
+    raise RuntimeError("legacy_generation_disabled")
 
 
-def get_pick(pick_date: str, session: str = None):
-    """取某日推荐（session=None 时取当日最新一条），关联战绩表带出后续真实涨跌."""
-    init_picks_table()
-    with _get_conn() as conn:
-        if session:
-            row = conn.execute(
-                "SELECT * FROM llm_picks WHERE pick_date = ? AND session = ?",
-                (pick_date, session),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT * FROM llm_picks WHERE pick_date = ? ORDER BY created_at DESC LIMIT 1",
-                (pick_date,),
-            ).fetchone()
-        if row is None:
-            return None
-        d = dict(row)
-        d["skipped"] = bool(d["skipped"])
-        d["thermometer"] = (
-            orjson.loads(d.pop("thermometer_json")) if d.get("thermometer_json") else None
-        )
-        if d.get("code"):
-            perf = conn.execute(
-                """SELECT buy_price, ret_1, ret_5, ret_10, ret_20,
-                          max_gain, max_drawdown, status,
-                          category, similarity_score
-                   FROM performance WHERE run_date = ? AND code = ? LIMIT 1""",
-                (pick_date, d["code"]),
-            ).fetchone()
-            if perf:
-                p = dict(perf)
-                # 分类/B1分提到顶层：前端用它查"同类信号历史战绩"（证据链）
-                d["category"] = p.pop("category", None)
-                d["similarity_score"] = p.pop("similarity_score", None)
-                d["performance"] = p
-            else:
-                d["performance"] = None
-    return d
+def get_pick(*_args, **_kwargs):
+    """旧荐股档案不再由生产代码读取。"""
+    return None
 
 
-def get_pick_history(limit: int = 30) -> list:
-    """推荐历史（含每次推荐的后续表现，用于考核大模型）."""
-    init_picks_table()
-    with _get_conn() as conn:
-        rows = conn.execute(
-            "SELECT pick_date, session FROM llm_picks ORDER BY created_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-    return [get_pick(r["pick_date"], r["session"]) for r in rows]
+def get_pick_history(*_args, **_kwargs) -> list:
+    """旧荐股档案不再由生产代码读取。"""
+    return []
 
-
-# ============================================================================
-# AI 点评（取代 AI 自主荐票）
-#
-# 用户 2026-07-14：「主页塞那么多信息没有用」——页面上同时存在两个「今日一票」
-# （量化版推丸美生物、AI 版推密尔克卫），互相打架，等于没给答案。
-#
-# 定位改变：**AI 不再挑票，只解释量化系统已经挑出的票**。
-# - 挑票是数学的活：云阶是 28 个因子里唯一经双周期验证的，凭什么让模型推翻它？
-# - 解释是语言的活：用户看不懂"缩量横盘18天后放量突破"，这才是模型该干的。
-# 所以 AI 的输入是「已确定的票」，输出只有点评和风险，**没有选择权**——
-# 它连推荐哪只都不能改，从结构上杜绝了它和量化结论打架。
-# ============================================================================
 
 _COMMENTS_SCHEMA = """
     CREATE TABLE IF NOT EXISTS quant_comment_runs (
@@ -472,32 +131,24 @@ _COMMENTS_SCHEMA = """
 
 COMMENT_SYSTEM_PROMPT = (
     "你是A股量化决策的解释器，服务的用户没有金融专业背景。"
-    "请用简体中文回复，思考过程也用中文。"
-    "重要：股票及其动作已经由分层量化系统确定。你无权挑选、排序或改变 buy/observe/avoid 动作。"
-    "你的唯一任务是解释候选为何进入研究池及其风险；不得输出直接买入指令或保证性结论。"
-    "要求："
-    "1. 讲人话。不要甩术语——非用不可的词（如'缩量''突破前高'）要顺手解释成生活比喻；"
-    "2. 说数字背后的含义，不要复述用户已经能看到的数字；"
-    "3. 只能使用输入里截至决策日的量化证据，禁止编造新闻、公告、业绩数据；"
-    "4. 风险提示要具体，但必须区分研究观察条件与个人化交易建议。"
+    "请用简体中文回复。"
+    "股票及其动作已经由分层量化系统确定；你无权挑选、排序或改变 buy/observe/avoid 动作。"
+    "你的唯一任务是解释候选为何进入研究池及其风险，不得输出直接买入指令或保证性结论。"
+    "只能使用输入里截至决策日的量化证据，禁止编造新闻、公告或业绩数据。"
 )
 
 COMMENT_SCHEMA = {
     "type": "object",
     "properties": {
-        "market_note": {
-            "type": "string",
-            "description": "本次候选的整体研究提示，1-2句大白话",
-        },
+        "market_note": {"type": "string"},
         "comments": {
             "type": "array",
-            "description": "对每只已选定股票的点评，必须每只都有，顺序不限",
             "items": {
                 "type": "object",
                 "properties": {
-                    "code": {"type": "string", "description": "6位股票代码，必须是给定列表里的"},
-                    "comment": {"type": "string", "description": "解释为何进入研究池，2-3句大白话，不得擅自荐买"},
-                    "risk": {"type": "string", "description": "具体风险和需要继续观察的价格/趋势条件，1-2句"},
+                    "code": {"type": "string"},
+                    "comment": {"type": "string"},
+                    "risk": {"type": "string"},
                 },
                 "required": ["code", "comment", "risk"],
                 "additionalProperties": False,
@@ -510,69 +161,92 @@ COMMENT_SCHEMA = {
 
 
 def init_comments_table() -> None:
-    with _get_conn() as conn:
-        conn.execute(_COMMENTS_SCHEMA)
+    with _get_migration_conn() as connection:
+        connection.execute(_COMMENTS_SCHEMA)
+        connection.executescript("""
+            CREATE TRIGGER IF NOT EXISTS quant_comment_runs_no_update
+            BEFORE UPDATE ON quant_comment_runs
+            BEGIN
+                SELECT RAISE(ABORT, 'immutable_quant_comment_run');
+            END;
+            CREATE TRIGGER IF NOT EXISTS quant_comment_runs_no_delete
+            BEFORE DELETE ON quant_comment_runs
+            BEGIN
+                SELECT RAISE(ABORT, 'immutable_quant_comment_run');
+            END;
+        """)
 
 
-def _build_comment_prompt(trade_date, stocks, csv_manager, decision_run_id=None) -> str:
-    """组装截至决策日的结构化候选证据，不混入无时点标记的外部材料."""
+def _build_comment_prompt(
+    trade_date: str,
+    stocks: list,
+    csv_manager,
+    decision_run_id: str,
+) -> str:
+    """只从绑定快照构造候选解释输入。"""
     from utils.stock_features import describe_features, extract_features
 
     lines = [
-        f"## 一、决策截止日 {trade_date}",
-        f"- 决策 run_id: {decision_run_id or '未提供'}",
+        f"## 决策截止日 {trade_date}",
+        f"- 决策 run_id: {decision_run_id}",
         "",
-        "以下股票由超级 B1 规则命中，并通过当前已启用的分层门禁。",
-        "未验证层和影子门槛只记录证据，不改变本次结果。",
-        "",
-        "## 二、通过复核的候选（不得重排或增删）",
+        "以下股票由量化策略选定。不得重排、增删或改变动作。",
         "",
     ]
-    for s in stocks:
-        code = s.get("code")
-        lines.append(f"### {code} {s.get('name')}｜现价 {s.get('close')}｜行业 {s.get('industry') or '未知'}")
-        sec = s.get("sector") or {}
-        if sec:
+    for stock in stocks:
+        code = str(stock.get("code") or "")
+        lines.append(
+            f"### {code} {stock.get('name')}｜现价 {stock.get('close')}｜"
+            f"行业 {stock.get('industry') or '未知'}"
+        )
+        sector = stock.get("sector") or {}
+        if sector:
+            delta = sector.get("delta3")
+            delta_text = f"{delta:+}" if isinstance(delta, (int, float)) else "未知"
             lines.append(
-                f"- 所属板块热度: {sec.get('score')} 分（{sec.get('stage')}，"
-                f"在全部 {sec.get('total')} 个行业里排第 {sec.get('rank')}，近3日变化 {sec.get('delta3'):+}）"
+                f"- 所属板块热度: {sector.get('score')} 分（{sector.get('stage')}，"
+                f"排名 {sector.get('rank')}/{sector.get('total')}，近3日变化 {delta_text}）"
             )
         try:
-            frame = csv_manager.read_stock(code) if csv_manager else None
-            if frame is not None and not frame.empty:
-                frame = frame[pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d") <= trade_date]
-            feats = extract_features(frame) if frame is not None and not frame.empty else {}
-            lines.append(f"- 技术面: {describe_features(feats)}")
-        except Exception as e:
-            logger.debug("提取 %s 技术特征失败: %s", code, e)
+            frame = csv_manager.read_stock(code)
+            if not frame.empty:
+                frame = frame[
+                    pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d") <= trade_date
+                ]
+            features = extract_features(frame) if not frame.empty else {}
+            lines.append(f"- 技术面: {describe_features(features)}")
+        except Exception as exc:
+            logger.debug("提取 %s 技术特征失败: %s", code, exc)
         lines.append("")
 
-    lines += [
-        "## 三、你的任务",
-        "1. market_note：用1-2句说明这是研究候选，不是确定性收益结论；",
-        "2. comments：对上面**每一只**票解释入池证据，并写出需要继续观察的具体风险条件；",
-        "3. 不许挑选、不许排序、不许说'这几只里我更看好X'——量化系统已经验证过无法区分优劣。",
-    ]
+    lines.extend(
+        [
+            "## 输出要求",
+            "1. market_note：说明这些是研究候选，不是确定性收益结论；",
+            "2. comments：逐一覆盖上面的每只股票，解释入池证据和具体风险条件；",
+            "3. 不得挑选、排序、增加或遗漏股票。",
+        ]
+    )
     return "\n".join(lines)
 
 
-def _call_ark_comment(api_key: str, llm_cfg: dict, prompt: str) -> tuple:
-    """火山方舟（OpenAI 兼容）出点评。返回 (result_dict, model)."""
+def _call_ark_comment(api_key: str, llm_cfg: dict, prompt: str) -> tuple[dict, str]:
     model = llm_cfg.get("model")
     if not model:
-        raise ValueError("config.yaml 的 llm.model 未配置（火山方舟的接入点 ID，形如 ep-...）")
+        raise ValueError("llm_model_missing")
     base_url = (llm_cfg.get("base_url") or DEFAULT_ARK_BASE_URL).rstrip("/")
-
     schema_hint = (
-        "\n\n请只输出一个 JSON 对象（不要 markdown 代码块、不要多余文字），字段如下：\n"
-        '{"market_note": "候选的整体研究提示1-2句",'
-        ' "comments": [{"code": "6位代码", "comment": "为什么进入研究池2-3句大白话",'
-        ' "risk": "具体风险与应对1-2句"}]}\n'
-        "comments 必须覆盖上面列出的每一只票。"
+        "\n\n只输出 JSON 对象："
+        '{"market_note":"...","comments":['
+        '{"code":"6位代码","comment":"...","risk":"..."}]}。'
+        "comments 必须完整覆盖输入股票。"
     )
-    resp = requests.post(
+    response = requests.post(
         f"{base_url}/chat/completions",
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
         json={
             "model": model,
             "messages": [
@@ -583,16 +257,19 @@ def _call_ark_comment(api_key: str, llm_cfg: dict, prompt: str) -> tuple:
         },
         timeout=180,
     )
-    resp.raise_for_status()
-    text = resp.json()["choices"][0]["message"]["content"]
-    return _extract_json(text), model
+    response.raise_for_status()
+    text = response.json()["choices"][0]["message"]["content"]
+    return _extract_json(text), str(model)
 
 
-def _call_anthropic_comment(api_key: str, llm_cfg: dict, prompt: str) -> tuple:
-    """Claude 官方 API（结构化输出）出点评。返回 (result_dict, model)."""
+def _call_anthropic_comment(
+    api_key: str,
+    llm_cfg: dict,
+    prompt: str,
+) -> tuple[dict, str]:
     import anthropic
 
-    model = llm_cfg.get("model") or DEFAULT_ANTHROPIC_MODEL
+    model = str(llm_cfg.get("model") or DEFAULT_ANTHROPIC_MODEL)
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model=model,
@@ -603,29 +280,25 @@ def _call_anthropic_comment(api_key: str, llm_cfg: dict, prompt: str) -> tuple:
         messages=[{"role": "user", "content": prompt}],
     )
     if response.stop_reason == "refusal":
-        raise RuntimeError("模型拒绝了本次请求")
-    text = next(b.text for b in response.content if b.type == "text")
+        raise RuntimeError("llm_refused")
+    text = next(block.text for block in response.content if block.type == "text")
     return json.loads(text), model
 
 
-def get_quant_comment(trade_date: str):
-    """取某日的 AI 点评（没有则 None）."""
-    init_comments_table()
-    with _get_conn() as conn:
-        row = conn.execute(
+def get_quant_comment(trade_date: str) -> dict | None:
+    """只读取当前不可变点评表，不混入旧荐股档案。"""
+    with _get_read_conn() as connection:
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='quant_comment_runs'"
+        ).fetchone()
+        if not exists:
+            return None
+        row = connection.execute(
             "SELECT payload_json, model, created_at FROM quant_comment_runs "
             "WHERE trade_date = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
             (trade_date,),
         ).fetchone()
-        if row is None:
-            legacy_exists = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='quant_comments'"
-            ).fetchone()
-            if legacy_exists:
-                row = conn.execute(
-                    "SELECT payload_json, model, created_at FROM quant_comments "
-                    "WHERE trade_date = ?", (trade_date,),
-                ).fetchone()
     if row is None:
         return None
     payload = orjson.loads(row["payload_json"])
@@ -634,71 +307,119 @@ def get_quant_comment(trade_date: str):
     return payload
 
 
+def _verify_comment_snapshot(csv_manager, trade_date: str) -> tuple[bool, str | None]:
+    from utils.market_snapshot import load_market_snapshot
+
+    snapshot_id = getattr(csv_manager, "snapshot_id", None)
+    data_dir = getattr(csv_manager, "base_data_dir", None)
+    if not snapshot_id or data_dir is None:
+        return False, "market_snapshot_unavailable"
+    snapshot = load_market_snapshot(data_dir, snapshot_id, verify_files=True)
+    if not snapshot.get("available"):
+        return False, str(snapshot.get("reason") or "market_snapshot_unavailable")
+    if (snapshot.get("manifest") or {}).get("trade_date") != trade_date:
+        return False, "decision_snapshot_trade_date_mismatch"
+    return True, None
+
+
 def generate_quant_comment(
-    trade_date: str, stocks: list, force: bool = False, decision_run_id: str | None = None,
+    trade_date: str,
+    stocks: list,
+    force: bool = False,
+    decision_run_id: str | None = None,
+    csv_manager=None,
 ) -> dict:
-    """为量化选出的票生成 AI 点评。同日已生成则复用（force=True 强制重算）.
-
-    stocks: 版本化分层决策中已通过复核的票，每只需含 code/name/close/industry/sector。
-    今天没有命中时不调用模型——没有票可点评，硬生成一段小作文是浪费和噪音。
-    """
-    init_comments_table()
-
+    """解释已确定的候选；输入、快照或输出不完整时失败关闭。"""
     if not stocks:
-        return {"available": False, "reason": "今天没有命中的票，无需点评"}
+        return {"available": False, "reason": "no_candidates"}
+    if not decision_run_id:
+        return {"available": False, "reason": "decision_run_id_required"}
 
     if not force:
         existing = get_quant_comment(trade_date)
-        if existing:
-            # 票变了（盘中重扫出新票）就重算，否则复用
-            if (
-                existing.get("decision_run_id") == decision_run_id
-                and set(existing.get("by_code", {})) == {str(s.get("code")) for s in stocks}
-            ):
-                return {"available": True, "cached": True, **existing}
+        if (
+            existing
+            and existing.get("decision_run_id") == decision_run_id
+            and set(existing.get("by_code", {}))
+            == {str(stock.get("code")) for stock in stocks}
+        ):
+            return {"available": True, "cached": True, **existing}
 
     llm_cfg = _load_llm_config()
     provider = _get_llm_provider(llm_cfg)
     if provider is None:
-        return {"available": False, "reason": "不支持的大模型 provider"}
+        return {"available": False, "reason": "unsupported_llm_provider"}
     api_key = get_api_key(llm_cfg)
     if not api_key:
-        return {"available": False, "reason": "未配置大模型 API Key"}
+        return {"available": False, "reason": "llm_unconfigured"}
 
-    from utils.csv_manager import CSVManager
+    if csv_manager is None:
+        from utils.csv_manager import CSVManager
+
+        csv_manager = CSVManager("data", writable=False)
+    verified, reason = _verify_comment_snapshot(csv_manager, trade_date)
+    if not verified:
+        return {"available": False, "reason": reason}
+
     prompt = _build_comment_prompt(
-        trade_date, stocks, CSVManager("data"), decision_run_id=decision_run_id,
+        trade_date,
+        stocks,
+        csv_manager,
+        decision_run_id,
     )
+    prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     try:
         if provider == "anthropic":
             result, model = _call_anthropic_comment(api_key, llm_cfg, prompt)
         else:
             result, model = _call_ark_comment(api_key, llm_cfg, prompt)
-    except Exception as e:
-        logger.error("AI 点评失败: %s", e)
-        return {"available": False, "reason": f"大模型调用失败: {e}"}
+    except Exception as exc:
+        logger.error("AI 点评失败: %s", exc)
+        return {"available": False, "reason": "llm_call_failed"}
 
-    # 防幻觉：只保留确实在选定名单里的点评，模型编出来的代码一律丢弃
-    valid = {str(s.get("code")) for s in stocks}
-    by_code = {}
-    for c in (result.get("comments") or []):
-        code = str(c.get("code", ""))
-        if code in valid:
-            by_code[code] = {"comment": c.get("comment", ""), "risk": c.get("risk", "")}
-    if not by_code:
-        return {"available": False, "reason": "模型输出异常（没有一条点评对应到选定的票）"}
+    valid_codes = {str(stock.get("code") or "") for stock in stocks}
+    by_code: dict[str, dict[str, str]] = {}
+    for comment in result.get("comments") or []:
+        code = str(comment.get("code") or "")
+        if code in valid_codes:
+            by_code[code] = {
+                "comment": str(comment.get("comment") or ""),
+                "risk": str(comment.get("risk") or ""),
+            }
+    if set(by_code) != valid_codes:
+        return {"available": False, "reason": "llm_output_incomplete"}
+
+    verified, reason = _verify_comment_snapshot(csv_manager, trade_date)
+    if not verified:
+        return {"available": False, "reason": reason}
 
     payload = {
-        "market_note": result.get("market_note", ""), "by_code": by_code,
+        "market_note": str(result.get("market_note") or ""),
+        "by_code": by_code,
         "decision_run_id": decision_run_id,
+        "prompt_version": COMMENT_PROMPT_VERSION,
+        "prompt_hash": prompt_hash,
+        "snapshot_id": csv_manager.snapshot_id,
     }
-    now = datetime.now().isoformat()
-    with _get_conn() as conn:
-        conn.execute(
+    created_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    with _get_conn() as connection:
+        connection.execute(
             "INSERT INTO quant_comment_runs "
             "(comment_id, trade_date, decision_run_id, payload_json, model, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (uuid4().hex[:24], trade_date, decision_run_id,
-             orjson.dumps(payload).decode(), model, now),
+            (
+                uuid4().hex[:24],
+                trade_date,
+                decision_run_id,
+                orjson.dumps(payload).decode(),
+                model,
+                created_at,
+            ),
         )
-    return {"available": True, "cached": False, "model": model, "created_at": now, **payload}
+    return {
+        "available": True,
+        "cached": False,
+        "model": model,
+        "created_at": created_at,
+        **payload,
+    }

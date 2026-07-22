@@ -1,72 +1,70 @@
 # A 股量化研究与分层决策系统
 
-基于 Python、AkShare、Flask、SQLite 和 React 的个人 A 股研究工具。它负责行情更新、规则候选生成、版本化分层决策、盘前事件复核、模拟盘、样本外复盘与可视化。
+这是一个基于 Python、AkShare、Flask、SQLite 和 React 的 A 股研究工具。它负责构建不可变行情快照、生成 Super B1 候选、执行分层决策、记录模拟盘和样本外证据。
 
-> 本项目只用于研究和自动化分析，不构成投资建议，也不承诺收益。模型、回测和页面提示都不能替代独立判断。
+> 本项目只用于研究和自动化分析，不构成投资建议，不承诺收益，不允许接入真实交易。
 
 ## 当前状态
 
-- GitHub Actions 只在 `main` push 后自动部署到 `/opt/a-share-quant`；以线上健康检查和 Git SHA 判断实际发布状态。
-- 每日任务会处理前一交易日的模拟委托、更新净值与对账、回填标签、登记 shadow 挑战策略，再生成当日收盘决策和 AI 留痕。
-- 每日任务无权自动替换生产策略；完整策略必须作为一个原子 policy 通过样本外证据、统计功效和人工批准后才能发布。
-- `config/config.yaml` 仍存在历史跟踪风险。不要打印或提交其中的真实凭证；安全处置见 [已知限制](docs/known-limitations.md)。
+审查报告中的本地代码整改已纳入专用修复分支，但不能因此推断线上已更新。线上状态必须同时核对完整 Git SHA、镜像 digest、`/api/version` 和当前 snapshot ID。
 
-## 决策链路
+重新开放无人值守模拟盘前，仍有两类必须在仓库外完成的操作：
+
+1. 从可信数据源全量重建行情与参考快照，不复用真实性存疑的旧数据。
+2. 在目标生产环境完成备份恢复、上游故障、磁盘满、SQLite 锁和告警回滚演练。
+
+详细操作见 [运维手册](docs/operator-runbook.md)。
+
+## 可信边界
+
+- 外部数据失败时直接失败，不生成随机或模拟行情。
+- 全市场先写 staging，通过日期、OHLC、交易日历、覆盖率、来源和哈希校验后，再原子切换当前快照。
+- freshness 必须等于预期已完成交易日，覆盖率不低于 98%，锚定股和独立数据源必须达到规定数量。
+- 生产、回放、walk-forward 和模拟盘共用同一决策/成交规则，并绑定 snapshot、policy、代码和数据版本。
+- Web 不抓行情、不跑策略、不调用 LLM、不运行调度器；GET 只读 worker 已发布的结果。
+- 任务失败和租约耗尽会追加不可修改的告警事件，受保护的只读接口可供生产监控消费。
+- 持久任务队列有硬容量上限；管理员只能取消尚未开始的任务，运行中的任务不会被虚假标记为已取消。
+- 写接口使用 Bearer Token 的 viewer/publisher/admin 角色、短时 HMAC 验签和 nonce 防重放，并持久限流、请求 ID、变更原因和审计记录。
+- 未经独立校准、样本外证据、前向观察和双人审批的完整 policy 不能激活；shadow 不能进入生产。
+- LLM 只解释已确定的动作，不能选股、改排名或改写 buy/observe/avoid。
+
+## 进程和数据流
 
 ```mermaid
 flowchart LR
-    A["AkShare 日线与参考快照"] --> B["Super B1 纯规则候选"]
-    B --> C["T 日 15:00 收盘决策"]
-    C --> D["周线 / 市场 / 板块 / 个股风险分层"]
-    D --> E["T+1 08:45 公告风险复核"]
-    E --> F["buy / observe / avoid"]
-    F --> G["版本化决策账本"]
-    F --> H["LLM 只解释，不改动作"]
-    F --> I["A 股规则模拟盘"]
-    I --> J["成交 / 持仓 / 现金 / 净值 / 对账"]
-    J --> K["每日样本外复盘与 shadow 挑战策略"]
-    K --> L["完整 policy 人工审核发布"]
+    S["外部数据源"] --> I["staging + 数据契约校验"]
+    I --> M["不可变 snapshot + manifest"]
+    M --> W["单 writer worker"]
+    W --> D["统一 policy engine"]
+    D --> L["决策/模拟盘账本"]
+    W --> C["按 snapshot + policy 缓存的产物"]
+    L --> A["只读 Web/API"]
+    C --> A
+    A --> F["React 前端"]
 ```
 
-关键边界：
-
-- 本地行情不新鲜时，收盘决策拒绝生成。
-- 规则 baseline 使用 Super B1；周线四均线默认只做 shadow 记录。
-- 未经 point-in-time 快照与 purged walk-forward 验证的市场/板块/风险/质量完整 policy 不能 active；不允许逐层拼接生产策略。
-- `strict_unvalidated_gate=true` 时，没有已验证的 market 模型只输出 `observe`。
-- 多只候选在没有已验证质量模型时不伪造精确 top-1；超过 3 只会降级观察。
-- 盘前复核只使用截止时点已公开的公告；来源缺失时降级观察。
-- LLM 只做结构化公告标签、候选解释和可审计留痕，没有自由排序权；无合格候选或未配置时也会记录 `not_called`/`abstained` 原因。
-- 模拟盘遵守 100 股整数手、T+1、涨跌停不可成交、佣金/印花税/过户费与滑点；缺行情时延期，不制造成交。
-
-完整方法与证据边界见 [模型治理](docs/model-governance.md)。
-
-## 产品界面
-
-React 前端当前路由：
-
-- `/sectors`：默认入口，单页板块工作台；在同一页完成排名、趋势、指标、候选、证据和系统状态查看；
-- `/stocks`：当前候选与决策；
-- `/review`：历史结果、战绩、策略因子、板块和模型复盘；
-- `/stock/:code`：个股资料、日/周 K 与历史信号。
-
-旧 `/today`、`/performance`、`/history` 会重定向到当前页面。视觉规范见 [DESIGN.md](DESIGN.md)。
+SQLite 只适用于当前单机、单行情/决策 writer、低并发边界。operations DB 还会接收单个 Web 进程和 worker 的短事务，由 WAL、`BEGIN IMMEDIATE` 与 busy timeout 串行化；它不是多机队列。数据库迁移是独立一次性命令，Web、worker 和普通业务写入只校验已有 schema，不会隐式建表。
 
 ## 快速开始
 
-建议使用 Python 3.11+ 与 Node.js 22：
+建议使用 Python 3.11.9 和 Node.js 22.17.1。
 
 ```bash
-python3 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements.lock
 
-cp config/config.yaml.template config/config.yaml
-python3 main.py init
-python3 main.py web
+# 首次运行和每次升级后都先执行
+python main.py migrate
+
+# 终端 1：只读 Web/API
+python main.py web --host 127.0.0.1 --port 5000
+
+# 终端 2：唯一 worker 和调度 leader
+python main.py worker
 ```
 
-另开终端运行前端：
+前端开发：
 
 ```bash
 cd frontend
@@ -74,61 +72,60 @@ npm ci
 npm run dev
 ```
 
-Flask 默认监听 `0.0.0.0:5000`。项目没有应用层登录或 CSRF 防护，本地开发与生产都必须用防火墙、反向代理或私网限制访问，不能把端口直接暴露给不可信网络。
+管理凭证必须至少 32 个字符、三个角色互不相同。本地可以使用 `QUANT_VIEWER_TOKEN`、`QUANT_PUBLISHER_TOKEN` 和 `QUANT_ADMIN_TOKEN`；生产必须使用只读 secret file 及对应的 `*_FILE` 变量，不要写进仓库或命令行历史。
 
-## CLI
-
-`main.py` 当前只接受以下命令：
+## 生产 CLI
 
 | 命令 | 作用 |
 | --- | --- |
-| `python3 main.py init` | 初始化历史行情 |
-| `python3 main.py update` | 更新本地行情 |
-| `python3 main.py run` | 更新、运行既有选股流程并记录结果 |
-| `python3 main.py track` | 回填并查看历史战绩 |
-| `python3 main.py backtest` | 运行历史回测 |
-| `python3 main.py web` | 启动 Flask、调度器与前端静态服务 |
+| `python main.py migrate` | 显式迁移两个 SQLite 账本并做只读复验 |
+| `python main.py web` | 启动只读 Web/API |
+| `python main.py worker` | 启动任务 worker 和唯一调度 leader |
+| `python main.py enqueue-ingestion` | 提交每日行情快照任务 |
+| `python main.py enqueue-close` | 提交完整收盘 DAG |
+| `python main.py enqueue-rebuild --years 6` | 提交可信数据全量重建 |
+| `python main.py legacy-location` | 只显示已隔离的旧研究 CLI 位置 |
 
-旧文档中的 `select` 与 `schedule` 已不是合法 CLI 命令。
+所有长任务都写入持久任务队列，不在 Web 请求里执行。
 
 ## 验证
 
 ```bash
-python3 -m pytest -q
+ruff check main.py worker.py web_server.py utils views strategy tools tests
+ruff format --check main.py worker.py web_server.py utils views strategy tools tests
+mypy --follow-imports=skip utils/api_security.py utils/data_contracts.py \
+  utils/artifact_integrity.py utils/decision_ledger.py utils/market_snapshot.py \
+  utils/operations_store.py utils/runtime_schema.py utils/task_submission.py \
+  utils/probability_model.py tools/hierarchical_walk_forward.py \
+  tools/migration_dry_run.py
+python -m pytest -q \
+  --cov=utils.api_security --cov=utils.artifact_integrity \
+  --cov=utils.csv_manager --cov=utils.data_contracts \
+  --cov=utils.data_freshness --cov=utils.decision_ledger \
+  --cov=utils.execution_model --cov=utils.market_snapshot \
+  --cov=utils.operations_store --cov=utils.paper_trading \
+  --cov=utils.probability_model --cov=utils.reference_snapshots \
+  --cov=utils.runtime_schema --cov-report=term-missing --cov-fail-under=75
 
 cd frontend
+npm ci
 npm run lint
+npm run test
 npm run build
-
-cd ..
-git diff --check
+npm audit --audit-level=high
 ```
 
-验证基线以本次 `pytest`、前端 lint 和生产构建的实际输出为准。ECharts chunk 仍可能超过 Vite 500 kB 警告阈值。
-
-测试不得调用真实通知、LLM 或生产部署。涉及行情、公告和回测的结论还必须核对 as-of 时点、历史证券宇宙、交易成本与成交可执行性。
-
-## 配置与数据
-
-- `config/config.yaml.template`：运行配置模板；真实 `config.yaml` 不应被 Git 跟踪。
-- `config/strategy_params.yaml`：传统策略与 B1 参数。
-- `data/`：行情、参考快照、回测产物与主 `views.db`；属于运行数据，不进入 Git。
-- `views/views.db`：不是运行数据库；正确位置是 `data/views.db`。
-- LLM 可使用 Ark 或 Anthropic；未配置凭证时解释功能停用，不影响规则决策。
+CI 还执行 pip-audit、Bandit、Hadolint 和 Trivy。详细发布门禁见 [运维手册](docs/operator-runbook.md)。
 
 ## 部署
 
-Docker Compose 将容器 5000 映射到宿主机 18321，并用 volume 持久化 `data/`。GitHub workflow 在 `main` 更新后拉取代码、构建容器、检查 `/api/stats`，再更新行情并生成收盘决策；常驻服务的 APScheduler 负责每日模拟盘、复盘、AI 留痕与盘前委托。
-
-生产操作、回滚与数据保全见 [运维手册](docs/operator-runbook.md)。`deploy.sh` 包含 SSH、`rsync --delete` 与远端重建动作，只能在明确授权并完成备份核对后手动执行。
+生产 Compose 只将 Web 绑定到 `127.0.0.1:18321`，Web 对市场数据 volume 只读，运行账本使用独立 state volume。默认启动一次性 `migrate`、`web` 和 `worker`，另有只在发布时启用、对 data/state 都只读的 `canary` profile。发布 workflow 只接受人工输入的 40 位完整 SHA，从该 SHA 构建一次，按 digest 部署，并生成 SBOM/来源证明、签名和漏洞扫描。人工触发后，流程按“暂停旧 writer → 一致备份 → 临时副本迁移演练 → 显式迁移 → 只读检查 → canary → 切换 → SHA/readiness 校验”执行；切换前失败会重启旧服务，切换后失败会回退应用镜像。
 
 ## 文档
 
-- [开发记忆](CLAUDE.md)
 - [文档索引](docs/INDEX.md)
 - [系统架构](docs/architecture.md)
 - [模型治理](docs/model-governance.md)
 - [运维手册](docs/operator-runbook.md)
 - [已知限制](docs/known-limitations.md)
 - [设计规范](DESIGN.md)
-- [B1 图形匹配参考](B1_PATTERN_MATCH.md)

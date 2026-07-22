@@ -3,6 +3,7 @@
 FACTOR_REGISTRY: {key: {"name", "group", "min_bars", "params", "fn"}}
 fn(ctx: FactorContext, params=None) -> dict | None
 """
+
 from strategy.factors.b1_family import FACTORS as _b1
 from strategy.factors.zhixing_family import FACTORS as _zx
 from strategy.factors.momentum_family import FACTORS as _mo

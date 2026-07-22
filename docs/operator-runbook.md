@@ -1,113 +1,177 @@
 # 运维手册
 
-更新时间：2026-07-17。
+更新时间：2026-07-23。
 
-## 本地运行
+## 运行前提
+
+- Python 3.11.9、Node.js 22.17.1，或使用仓库中已按 digest 固定的 Docker 镜像。
+- `data/` 所在磁盘有足够空间，且只有一个生产 worker 写入。
+- viewer、publisher、admin 三个 token 长度至少 32 字符且彼此不同。生产使用 root 只读 secret file，文件权限建议 `0600`；不要在文档、日志、工单或命令行中写真值。
+- 数据已从可信源重建。
+
+## 本地安装和启动
 
 ```bash
-python3 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-cp config/config.yaml.template config/config.yaml
+python -m pip install --require-hashes -r requirements.lock
 
-python3 main.py init
-python3 main.py web
+python main.py migrate
+python main.py web --host 127.0.0.1 --port 5000
 ```
 
-另开终端：
+另开一个终端：
 
 ```bash
+source .venv/bin/activate
+python main.py worker
+```
+
+数据库未迁移、schema 版本过旧、表/列缺失、完整性失败或默认模拟账户不完整时，Web 和 worker 都会拒绝启动。不要绕过这个检查。
+
+## 本地验证
+
+```bash
+ruff check main.py worker.py web_server.py utils views strategy tools tests
+ruff format --check main.py worker.py web_server.py utils views strategy tools tests
+mypy --follow-imports=skip utils/api_security.py utils/artifact_integrity.py \
+  utils/data_contracts.py \
+  utils/decision_ledger.py utils/market_snapshot.py utils/operations_store.py \
+  utils/runtime_schema.py utils/task_submission.py utils/probability_model.py \
+  tools/hierarchical_walk_forward.py tools/migration_dry_run.py
+pytest -q --cov=utils.api_security --cov=utils.artifact_integrity \
+  --cov=utils.csv_manager \
+  --cov=utils.data_contracts --cov=utils.data_freshness \
+  --cov=utils.decision_ledger --cov=utils.execution_model \
+  --cov=utils.market_snapshot --cov=utils.operations_store \
+  --cov=utils.paper_trading --cov=utils.probability_model \
+  --cov=utils.reference_snapshots --cov=utils.runtime_schema \
+  --cov-report=term-missing --cov-fail-under=75
+bandit -q -r main.py web_server.py worker.py utils views tools -lll
+pip-audit --disable-pip --require-hashes -r requirements.lock
+pip-audit --disable-pip --require-hashes -r requirements-dev.lock
+
 cd frontend
 npm ci
-npm run dev
-```
-
-真实配置不得提交、打印或复制进报告。若只验证 UI，可设置 `VITE_API_BASE` 指向受控测试 API。
-
-## 验证
-
-```bash
-python3 -m pytest -q
-
-cd frontend
 npm run lint
+npm run test
 npm run build
-
-cd ..
-git diff --check
+npm audit --audit-level=high
 ```
 
-手机视口工具：
+CI 使用带 hash 的 Python 锁文件，生产与开发/CI 两份 lock 都执行 pip-audit，并额外执行 Hadolint 和 Trivy。
+
+## 运行状态
+
+- `GET /healthz`：只表示 Web 进程能回应，不读全市场文件，不访问外部网络。
+- `GET /readyz`：同时要求市场快照 freshness 和 scheduler leader 正常。
+- `GET /api/version`：核对完整 Git SHA、strategy version 和 snapshot ID。
+- `GET /api/stats`：常数级返回快照、决策和 scheduler 摘要。
+- `GET /api/decision/system-status`：查看 freshness、当前 policy、模拟盘、AI 和演进状态。
+- `GET /api/scheduler/status` 和 `GET /api/tasks/<task_id>`：需要 viewer token。
+- `GET /api/alerts`：需要 viewer token，返回最近的不可变运行告警事件和 24 小时 warning/critical 汇总；可用 `limit=1..200`、`severity=warning|critical` 过滤。
+
+`healthz` 成功不代表数据可用；对外展示决策前必须要求 `readyz.ready=true`。
+`readyz` 同时带出最近 24 小时告警计数，但历史告警本身不自动改变 readiness；生产监控必须按 `alert_id` 去重消费 `/api/alerts`，critical 立即通知值班人员，并保留通知送达与处置工单。认证 GET 不写限流、nonce 或审计表，因此监控轮询不会改变运行状态。
+
+## 任务操作
+
+本地 CLI 只会入队，不会在当前进程扫描全市场：
 
 ```bash
-node frontend/scripts/mobile-shot.mjs \
-  http://127.0.0.1:5000 /tmp/quant-mobile \
-  /sectors,/stocks,/review
+python main.py enqueue-ingestion --trade-date YYYY-MM-DD
+python main.py enqueue-close --trade-date YYYY-MM-DD
+python main.py enqueue-rebuild --years 6
 ```
 
-该脚本依赖本机 Google Chrome 与 `puppeteer-core`，输出目录必须在仓库外。
-
-## 运行检查
-
-- `GET /api/stats`：进程、股票数、视图和 scheduler。
-- `GET /api/data/coverage`：行情 universe 覆盖。
-- `GET /api/decision/latest`：最新版本化决策。
-- `GET /api/decision/system-status`：行情时效、决策候选数、active policy、模拟盘、AI 和每日演进的统一状态。
-- 决策不可用时先检查 `freshness`、数据日期、baseline、active model 与 reason codes。
-- LLM 未配置只影响解释；不应阻断规则账本。
-- `daily_auto_promotion` 必须始终为 `false`；如果出现自动晋级迹象，立即停止 scheduler 并保全账本。
-
-手动写接口会改变数据或调度状态，调用前需要备份 `data/views.db` 并确认网络边界。
-
-## Docker
+通过 API 提交时，必须使用适当角色的 Bearer Token、唯一 `Idempotency-Key`、可追溯 `X-Change-Reason` 和 5 分钟内有效的 HMAC 请求签名。不得通过重复换 key 的方式绕过任务幂等。请使用仓库内客户端，避免把 token 真值写进 shell 历史：
 
 ```bash
-docker compose up -d --build
-docker compose logs --tail 100
-curl -fsS http://127.0.0.1:18321/api/stats
+python tools/signed_request.py \
+  --url http://127.0.0.1:18321/api/data/update \
+  --token-file /secure/path/admin-token \
+  --idempotency-key daily-update-YYYY-MM-DD \
+  --reason "operator approved daily ingestion"
 ```
 
-`quant-data` volume 保存行情、快照和 SQLite。重建容器前确认 volume 存在；不要用空本地目录覆盖它。
+收盘 DAG 的任何上游阶段失败都会阻断下游决策。不允许手工修改任务状态、决策账本或 NAV 来伪造恢复。
 
-## 自动部署
+调度 leader 每 30 秒对账任务，不依赖某个 cron 瞬间：收盘任务在 16:00 后或翌日可按原交易日补齐；盘前复核只能在当日 08:45–09:25 执行。请求的交易日与当前/快照日期不同时会失败关闭。
 
-`.github/workflows/deploy.yml` 只响应 `main`。它会：
+任务详情中的 `attempts` 是不可用新任务覆盖的尝试历史。可重试失败指数退避（上限 15 分钟）；非可重试错误或达到 `max_attempts` 后终止。租约过期会把未完成 attempt 记为 `lease_expired` 后才由新 worker 接管。
+每次可重试失败或租约接管会在 `alert_events` 追加 warning；不可重试失败、重试耗尽或最终租约耗尽会追加 critical。任务状态与告警在同一事务提交，告警表由 trigger 禁止更新和删除。
 
-1. 在远端 `/opt/a-share-quant` fetch/reset `origin/main`；
-2. 构建并重启 Compose；
-3. 等待 `/api/stats`；
-4. 更新行情并要求 freshness 通过；
-5. 生成收盘决策与参考数据；
-6. API 或数据刷新失败时退出并打印有限日志。
+queued/running 任务总量默认上限为 1000，可用 `QUANT_MAX_PENDING_TASKS` 在 1–100000 内调整。重复提交同一业务幂等键仍返回原任务，不占新名额；新任务超过上限会返回 `task_queue_capacity_exceeded`、追加 critical 告警，但不会让 worker 退出。
 
-候选分支必须先合并到 `main` 才可能进入这条部署链路。不能用本地 HEAD 推断线上版本。
+只取消尚未开始的任务：
 
-常驻服务的交易日任务顺序是：
+```bash
+python tools/signed_request.py \
+  --url http://127.0.0.1:18321/api/tasks/TASK_ID/cancel \
+  --token-file /secure/path/admin-token \
+  --idempotency-key cancel-TASK_ID \
+  --reason "operator cancelled obsolete task"
+```
 
-1. 16:00 更新行情与 point-in-time 快照；
-2. 处理前一盘前登记的模拟委托，写入成交/拒绝/延期，计算净值并对账；
-3. 刷新规则候选、战绩、板块与因子；
-4. 回填演进数据并只登记 shadow 完整 policy；
-5. 生成收盘决策并记录 AI 是否调用及原因；
-6. 下一交易日 08:45 复核公告风险，并登记下一开盘模拟委托。
+running/succeeded/failed/cancelled 任务会返回 409，不会假装已中止。确需停止正在运行的长任务时，应先隔离写入口并停止专用 worker，保留 staging、任务、租约和日志证据；确认副作用边界后，再按事故流程处置，不能直接改任务状态。
 
-部署后首次启动只会建立模拟账户；首个净值日和首笔成交要等日任务按交易日运行。不得手工补造历史成交。
+`enqueue-ingestion` 只允许从已验证的可信快照继续；如果没有可信基础，必须使用 `enqueue-rebuild`。全量重建从空 staging 开始，不会复制旧 CSV。两种流程都要求同日完整证券状态，快照 payload 出现任何 manifest 外文件都不会发布。
 
-`deploy.sh` 是独立的手工部署入口，包含 `rsync --delete` 与远端 Docker 操作。执行前必须明确核对目标主机、目录、config 备份、volume 与回滚点；本轮文档整理不会执行它。
+## 备份、迁移和恢复
 
-## 回滚
+发布前检查：
 
-1. 记录当前 Git SHA、容器镜像、行情日期与 `data/views.db` 备份。
-2. 将 `main` 恢复到已知良好提交并重新走 workflow，或在远端明确 checkout 该提交后重建。
-3. 不回滚/覆盖数据 volume，除非数据库格式不兼容且已有验证过的备份。
-4. 决策异常时可用环境变量关闭 hierarchy，或把各层保持 shadow/off；不要删除决策账本来伪造恢复。
-5. 外部行情或公告来源失败时降级观察，不发布过期推荐。
+```bash
+python tools/backup_databases.py
+GIT_COMMIT_SHA="$(git rev-parse HEAD)" python tools/migration_dry_run.py
+python tools/migrate_databases.py
+python tools/predeploy_check.py
+```
 
-## 事故优先级
+`backup_databases.py` 使用 SQLite online backup API，对每个备份执行完整性检查，并在本地 `data/backups/<UTC timestamp>/manifest.json` 或生产 `/app/state/backups/<UTC timestamp>/manifest.json` 记录文件大小和 SHA-256。`migration_dry_run.py` 再用 online backup 把当前两个账本复制到一次性目录，在副本上完整执行 migration 和 predeploy；它不会修改线上源库，首次部署没有旧 DB 时也会演练从空状态建库。只有副本演练通过后才可迁移正式库，最后再做只读检查。生产发布会先停止旧 web/worker，确保最终备份、演练和正式迁移期间没有旧进程写入；切换前失败会恢复旧发布文件并重启旧服务。备份目录不得和主数据库使用同一个无冗余磁盘作为唯一副本。
 
-- 凭证泄露：先轮换，再清理 Git 历史和部署配置。
-- 未授权访问：先用防火墙/反向代理封端口，再查写接口与 scheduler 日志。
-- stale data：停止当前推荐，修复更新链路与交易日历。
-- 模型异常：取消 active、保留 baseline/账本与 evidence，重新 walk-forward。
-- 模拟盘对账失败：停止新增委托，备份 `data/views.db`，核对最后一条现金事件、持仓批次、成交与净值；不得直接改净值掩盖差异。
-- 数据库损坏：停止写入，复制原文件后再做 WAL/SQLite 恢复。
+迁移会保留旧模拟盘事件，但不会为它们伪造 `snapshot_id` 或执行版本。只读预检发现这类旧 fill/NAV 时会以 `runtime_unverified_legacy_paper_evidence` 阻止启动；应将旧账本完整归档，经批准后从新账户开始可验证运行，不得手工补写快照来绕过门禁。
+
+数据库恢复不自动执行，因为覆盖数据可能丢失备份后的新事件。需要恢复时：
+
+1. 停止 worker 和所有写请求，记录当前 SHA、镜像 digest、snapshot ID 和数据库文件哈希。
+2. 复制当前 DB/WAL/SHM 到独立取证目录，不在原文件上尝试修复。
+3. 在临时目录恢复备份，验证 manifest hash、`PRAGMA integrity_check`、外键、schema 和关键账本余额。
+4. 明确评估会丢失的新写入，经变更批准后再替换生产 DB。
+5. 重新执行 `python tools/migrate_databases.py` 和全部 ready/对账检查。
+
+## Docker Compose
+
+生产环境变量必须包含不可变镜像 digest、40 位 SHA 和三个 secret file 绝对路径。然后执行：
+
+```bash
+docker compose --env-file .release.env pull
+docker compose --env-file .release.env up -d --remove-orphans
+docker compose --env-file .release.env ps
+```
+
+Compose 会先运行一次性 `migrate`，只有成功后才启动 web/worker。Web 只读挂载市场数据 volume，对独立 state volume 保留审计、限流和任务写权，并只绑定 `127.0.0.1:18321`；若需远程访问，必须通过受控反向代理/VPN，不得改为公网 `0.0.0.0`。`canary` profile 不常驻、不发布端口，对 data/state 两个 volume 都只读，只供发布流程在正式切换前验证候选 digest。
+
+## 发布和回滚
+
+`.github/workflows/release.yml` 只接受人工输入的完整 SHA，由仓库所有者手动触发。流程会：
+
+1. 再次验证后端/前端门禁；
+2. 只构建一次，推送 SHA tag，生成 provenance/SBOM，按 digest 签名和扫描；
+3. 停止旧 web/worker，在线备份静止账本，在临时数据库副本上完成迁移演练，再使用新镜像显式迁移正式库并执行只读预检；
+4. 启动不发布端口、只读挂载 data/state 的候选 canary，核对镜像 digest、`/healthz`、`/api/version`、snapshot 和 `/api/stats` 后删除 canary；
+5. 按 digest 切换 web/worker，并验证线上 digest、预期 SHA、snapshot、readiness、关键只读查询和 scheduler leader；
+6. canary 或切换前检查失败时清理候选容器、恢复旧发布文件并重启旧服务；切换或线上健康检查失败时回退上一个 Compose/镜像。
+
+当前 migration 只允许向前兼容变更。回滚应用默认保留数据 volume；只有数据库已损坏或经评审确认 schema 不兼容时，才进入人工恢复流程。
+
+policy 回退不是“改一个 active 字段”：只能回到当前 policy 激活时已预批的上一 policy，必须提供不同的 operator/reviewer、工单、变更原因和 `expected_current_policy`。回退会新增不可变发布/审计事件，不删除或改写旧记录。
+
+## 故障处置
+
+- stale/future/mixed snapshot：停止展示当前决策，修复数据源和快照链，不手工改 manifest。
+- scheduler 无 leader 或多 leader：停止多余 worker，保留 `scheduler_leases`、任务和日志证据，核对幂等键后再恢复。
+- 模型异常：拒绝/回退 active policy，保留注册、验证和发布事件，不删账本。
+- 模拟盘对账失败：停止新委托，备份 DB，独立重建现金、持仓和净值；不直接改 NAV 或差额。
+- 数据库损坏/锁死/磁盘满：停止 writer，保全 DB/WAL/SHM 和磁盘证据，在副本上分析。
+- `/api/alerts` 出现 critical：先按 `subject_id` 查看对应任务和 attempts，确认是否仍在重试；不得删除或修改告警来制造恢复，恢复后在外部工单记录处置结果。

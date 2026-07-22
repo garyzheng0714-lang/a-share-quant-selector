@@ -35,7 +35,7 @@ def test_unknown_provider_fails_closed_even_with_configured_key(monkeypatch):
     assert daily_pick.get_api_key() is None
 
 
-def test_provider_specific_configured_key_takes_precedence(monkeypatch):
+def test_yaml_key_is_ignored_and_environment_key_is_used(monkeypatch):
     monkeypatch.setenv("ARK_API_KEY", "ark-environment-key")
     monkeypatch.setattr(
         daily_pick,
@@ -43,7 +43,7 @@ def test_provider_specific_configured_key_takes_precedence(monkeypatch):
         lambda: {"provider": "ark", "api_key": "configured-test-key"},
     )
 
-    assert daily_pick.get_api_key() == "configured-test-key"
+    assert daily_pick.get_api_key() == "ark-environment-key"
 
 
 def test_provider_name_is_normalized_once_for_key_and_dispatch(monkeypatch):
@@ -67,3 +67,12 @@ def test_explicit_config_snapshot_is_not_reloaded(monkeypatch):
     )
 
     assert daily_pick.get_api_key({"provider": "ark", "api_key": ""}) == "ark-test-key"
+
+
+def test_provider_secret_file_is_supported(monkeypatch, tmp_path):
+    secret = tmp_path / "ark-key"
+    secret.write_text("file-test-key\n", encoding="utf-8")
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+    monkeypatch.setenv("ARK_API_KEY_FILE", str(secret))
+
+    assert daily_pick.get_api_key({"provider": "ark"}) == "file-test-key"

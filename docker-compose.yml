@@ -1,21 +1,84 @@
+x-quant-common: &quant-common
+  image: ${QUANT_IMAGE:?QUANT_IMAGE must be an immutable image digest}
+  restart: unless-stopped
+  environment:
+    TZ: Asia/Shanghai
+    PYTHONUNBUFFERED: "1"
+    PYTHONDONTWRITEBYTECODE: "1"
+    GIT_COMMIT_SHA: ${GIT_COMMIT_SHA:?GIT_COMMIT_SHA is required}
+    QUANT_STATE_DIR: /app/state
+    QUANT_VIEWS_DB: /app/state/views.db
+    QUANT_OPERATIONS_DB: /app/state/operations.db
+    QUANT_MAX_PENDING_TASKS: ${QUANT_MAX_PENDING_TASKS:-1000}
+    QUANT_ADMIN_TOKEN_FILE: /run/secrets/quant_admin_token
+    QUANT_PUBLISHER_TOKEN_FILE: /run/secrets/quant_publisher_token
+    QUANT_VIEWER_TOKEN_FILE: /run/secrets/quant_viewer_token
+  secrets:
+    - quant_admin_token
+    - quant_publisher_token
+    - quant_viewer_token
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp:size=256m,noexec,nosuid,nodev
+
 services:
-  quant:
-    build: .
-    container_name: a-share-quant
-    restart: unless-stopped
+  migrate:
+    <<: *quant-common
+    restart: "no"
+    command: ["python", "tools/migrate_databases.py"]
+    volumes:
+      - quant-state:/app/state
+
+  web:
+    <<: *quant-common
+    container_name: a-share-quant-web
+    command: ["gunicorn", "--bind=0.0.0.0:5000", "--workers=1", "--threads=8", "--timeout=60", "web_server:create_app()"]
+    volumes:
+      - quant-data:/app/data:ro
+      - quant-state:/app/state
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     ports:
-      - "18321:5000"
+      - "127.0.0.1:18321:5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  canary:
+    <<: *quant-common
+    profiles: ["canary"]
+    restart: "no"
+    command: ["gunicorn", "--bind=0.0.0.0:5000", "--workers=1", "--threads=8", "--timeout=60", "web_server:create_app()"]
+    volumes:
+      - quant-data:/app/data:ro
+      - quant-state:/app/state:ro
+
+  worker:
+    <<: *quant-common
+    container_name: a-share-quant-worker
+    command: ["python", "worker.py"]
     volumes:
       - quant-data:/app/data
-      - ./config:/app/config
-    environment:
-      - TZ=Asia/Shanghai
-      - PYTHONUNBUFFERED=1
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/stats')"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
+      - quant-state:/app/state
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   quant-data:
+  quant-state:
+
+secrets:
+  quant_admin_token:
+    file: ${QUANT_ADMIN_TOKEN_FILE:?set QUANT_ADMIN_TOKEN_FILE}
+  quant_publisher_token:
+    file: ${QUANT_PUBLISHER_TOKEN_FILE:?set QUANT_PUBLISHER_TOKEN_FILE}
+  quant_viewer_token:
+    file: ${QUANT_VIEWER_TOKEN_FILE:?set QUANT_VIEWER_TOKEN_FILE}

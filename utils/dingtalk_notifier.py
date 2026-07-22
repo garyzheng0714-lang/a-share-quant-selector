@@ -1,9 +1,8 @@
 """
 钉钉群通知模块
 """
-import os
+
 import requests
-import json
 import time
 import hmac
 import hashlib
@@ -11,6 +10,8 @@ import base64
 import urllib.parse
 from datetime import datetime
 from pathlib import Path
+
+import pandas as pd
 
 
 def _split_utf8_bytes_safely(line_bytes: bytes, chunk_size: int):
@@ -27,7 +28,9 @@ def _split_utf8_bytes_safely(line_bytes: bytes, chunk_size: int):
             except UnicodeDecodeError:
                 end -= 1
         else:
-            yield line_bytes[start : start + chunk_size].decode("utf-8", errors="ignore")
+            yield line_bytes[start : start + chunk_size].decode(
+                "utf-8", errors="ignore"
+            )
             start += chunk_size
 
 
@@ -35,11 +38,13 @@ def _split_utf8_bytes_safely(line_bytes: bytes, chunk_size: int):
 try:
     # 优先使用快速版
     from utils.kline_chart_fast import generate_kline_chart_fast as generate_kline_chart
+
     KLINE_CHART_AVAILABLE = True
     print("✓ 使用快速K线图生成")
 except ImportError:
     try:
         from utils.kline_chart import generate_kline_chart
+
         KLINE_CHART_AVAILABLE = True
     except ImportError:
         KLINE_CHART_AVAILABLE = False
@@ -48,7 +53,7 @@ except ImportError:
 
 class RateLimiter:
     """限流器 - 控制每分钟发送数量"""
-    
+
     def __init__(self, max_per_minute=20, min_interval=2.0):
         """
         Args:
@@ -58,36 +63,38 @@ class RateLimiter:
         self.max_per_minute = max_per_minute
         self.min_interval = min_interval
         self.send_times = []  # 记录每次发送的时间戳
-        self._lock_time = 0   # 锁定时间（遇到限速错误时延长）"
-    
+        self._lock_time = 0  # 锁定时间（遇到限速错误时延长）"
+
     def acquire(self):
         """
         获取发送许可，必要时阻塞等待
         Returns: 实际等待的秒数
         """
         now = time.time()
-        
+
         # 清理1分钟前的记录
         self.send_times = [t for t in self.send_times if now - t < 60]
-        
+
         # 检查是否处于锁定状态（遇到过限速错误）
         if now < self._lock_time:
             wait = self._lock_time - now
             time.sleep(wait)
             now = time.time()
-        
+
         # 检查每分钟限制
         if len(self.send_times) >= self.max_per_minute:
             # 需要等到最早一条记录超过1分钟
             oldest = self.send_times[0]
             wait = 60 - (now - oldest) + 0.1  # 多等0.1秒确保
             if wait > 0:
-                print(f"    ⏱️ 限流: 已达到每分钟{self.max_per_minute}条限制，等待{wait:.1f}秒...")
+                print(
+                    f"    ⏱️ 限流: 已达到每分钟{self.max_per_minute}条限制，等待{wait:.1f}秒..."
+                )
                 time.sleep(wait)
                 now = time.time()
                 # 重新清理
                 self.send_times = [t for t in self.send_times if now - t < 60]
-        
+
         # 检查最小间隔
         if self.send_times:
             last_send = self.send_times[-1]
@@ -96,18 +103,18 @@ class RateLimiter:
                 wait = self.min_interval - elapsed
                 time.sleep(wait)
                 now = time.time()
-        
+
         # 记录本次发送时间
         self.send_times.append(now)
         return now
-    
+
     def on_rate_limit_error(self, retry_count=0):
         """
         遇到限速错误时的处理 - 指数退避
         Args:
             retry_count: 当前重试次数
         """
-        backoff = min(2 ** retry_count, 30)  # 最大等待30秒
+        backoff = min(2**retry_count, 30)  # 最大等待30秒
         self._lock_time = time.time() + backoff
         print(f"    ⏱️ 遇到限速，退避等待{backoff}秒...")
         time.sleep(backoff)
@@ -115,30 +122,32 @@ class RateLimiter:
 
 class DingTalkNotifier:
     """钉钉通知器"""
-    
+
     def __init__(self, webhook_url=None, secret=None):
         self.webhook_url = webhook_url
         self.secret = secret
         self._last_send_time = 0
         self._min_interval = 2.0  # 最小发送间隔2秒
         self._rate_limiter = RateLimiter(max_per_minute=20, min_interval=2.0)  # 限流器
-    
+
     def _generate_sign(self):
         """生成钉钉签名"""
         if not self.secret:
             return "", ""
 
         timestamp = str(round(time.time() * 1000))
-        secret_enc = self.secret.encode('utf-8')
-        string_to_sign = f'{timestamp}\n{self.secret}'
-        string_to_sign_enc = string_to_sign.encode('utf-8')
-        hmac_code = hmac.new(secret_enc, string_to_sign_enc, digestmod=hashlib.sha256).digest()
+        secret_enc = self.secret.encode("utf-8")
+        string_to_sign = f"{timestamp}\n{self.secret}"
+        string_to_sign_enc = string_to_sign.encode("utf-8")
+        hmac_code = hmac.new(
+            secret_enc, string_to_sign_enc, digestmod=hashlib.sha256
+        ).digest()
         sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
         return timestamp, sign
 
     def _send_request(self, data: dict, max_retries=3) -> bool:
         """发送HTTP请求到钉钉（带速率限制和重试）
-        
+
         Args:
             data: 要发送的数据
             max_retries: 最大重试次数
@@ -146,7 +155,7 @@ class DingTalkNotifier:
         for attempt in range(max_retries + 1):
             # 使用限流器获取发送许可
             self._rate_limiter.acquire()
-            
+
             timestamp, sign = self._generate_sign()
 
             if self.secret:
@@ -158,26 +167,30 @@ class DingTalkNotifier:
                 response = requests.post(
                     webhook_url,
                     json=data,
-                    headers={'Content-Type': 'application/json'},
-                    timeout=30
+                    headers={"Content-Type": "application/json"},
+                    timeout=30,
                 )
-                
+
                 # 更新最后发送时间
                 self._last_send_time = time.time()
 
                 if response.status_code == 200:
                     result = response.json()
-                    if result.get('errcode') == 0:
+                    if result.get("errcode") == 0:
                         return True
                     else:
                         # 如果是限速错误，使用退避策略重试
-                        if result.get('errcode') == 660026:
+                        if result.get("errcode") == 660026:
                             if attempt < max_retries:
-                                print(f"    ⚠️ 触发钉钉限速(660026)，第{attempt+1}次重试...")
+                                print(
+                                    f"    ⚠️ 触发钉钉限速(660026)，第{attempt + 1}次重试..."
+                                )
                                 self._rate_limiter.on_rate_limit_error(attempt)
                                 continue
                             else:
-                                print(f"    ✗ 重试{max_retries}次后仍触发限速，跳过此消息")
+                                print(
+                                    f"    ✗ 重试{max_retries}次后仍触发限速，跳过此消息"
+                                )
                                 return False
                         else:
                             print(f"    ✗ 钉钉返回错误: {result}")
@@ -185,19 +198,19 @@ class DingTalkNotifier:
                 else:
                     print(f"    ✗ HTTP错误: {response.status_code}")
                     if attempt < max_retries:
-                        time.sleep(2 ** attempt)
+                        time.sleep(2**attempt)
                         continue
                     return False
 
             except Exception as e:
                 print(f"    ✗ 请求异常: {e}")
                 if attempt < max_retries:
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
                     continue
                 return False
-        
+
         return False
-    
+
     def _send_single_markdown(self, title, content, part_info="", max_retries=3):
         """
         发送单条 Markdown 格式消息（带速率限制和重试）
@@ -205,53 +218,47 @@ class DingTalkNotifier:
         if not self.webhook_url:
             print("警告: 未配置钉钉 webhook")
             return False
-        
+
         for attempt in range(max_retries + 1):
             # 使用限流器获取发送许可
             self._rate_limiter.acquire()
-            
+
             # 生成签名
             timestamp, sign = self._generate_sign()
-            
+
             # 构建带签名的URL
             if self.secret:
                 webhook_url = f"{self.webhook_url}&timestamp={timestamp}&sign={sign}"
             else:
                 webhook_url = self.webhook_url
-            
+
             # 添加分段信息到内容
             text = content
             if part_info:
                 text = f"> {part_info}\n\n{text}"
-            
-            data = {
-                "msgtype": "markdown",
-                "markdown": {
-                    "title": title,
-                    "text": text
-                }
-            }
-            
+
+            data = {"msgtype": "markdown", "markdown": {"title": title, "text": text}}
+
             try:
                 response = requests.post(
                     webhook_url,
                     json=data,
-                    headers={'Content-Type': 'application/json'},
-                    timeout=10
+                    headers={"Content-Type": "application/json"},
+                    timeout=10,
                 )
-                
+
                 # 更新最后发送时间
                 self._last_send_time = time.time()
-                
+
                 if response.status_code == 200:
                     result = response.json()
-                    if result.get('errcode') == 0:
+                    if result.get("errcode") == 0:
                         return True
                     else:
                         # 如果是限速错误，使用退避策略重试
-                        if result.get('errcode') == 660026:
+                        if result.get("errcode") == 660026:
                             if attempt < max_retries:
-                                print(f"    ⚠️ 触发限速，第{attempt+1}次重试...")
+                                print(f"    ⚠️ 触发限速，第{attempt + 1}次重试...")
                                 self._rate_limiter.on_rate_limit_error(attempt)
                                 continue
                             else:
@@ -263,17 +270,17 @@ class DingTalkNotifier:
                 else:
                     print(f"    ✗ HTTP错误: {response.status_code}")
                     if attempt < max_retries:
-                        time.sleep(2 ** attempt)
+                        time.sleep(2**attempt)
                         continue
                     return False
-                    
+
             except Exception as e:
                 print(f"    ✗ 发送异常: {e}")
                 if attempt < max_retries:
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
                     continue
                 return False
-        
+
         return False
 
     def send_markdown(self, title, content):
@@ -283,82 +290,84 @@ class DingTalkNotifier:
         """
         # 钉钉限制：消息体大小不超过20000字节
         MAX_SIZE = 18000  # 留足够余量（预留 ~2000 字节给 part_info 和 JSON 包装）
-        
+
         # 计算内容字节数
-        content_bytes = content.encode('utf-8')
+        content_bytes = content.encode("utf-8")
         content_size = len(content_bytes)
-        
+
         if content_size <= MAX_SIZE:
             # 单条发送
             if self._send_single_markdown(title, content):
                 print("✓ 钉钉通知发送成功")
                 return True
             return False
-        
+
         # 需要分段发送
         print(f"消息大小 {content_size} 字节，超过限制，将分段发送...")
-        
+
         # 按行分割内容
-        lines = content.split('\n')
+        lines = content.split("\n")
         parts = []
         current_part = []
         current_size = 0
-        
+
         for line in lines:
-            line_bytes = line.encode('utf-8')
+            line_bytes = line.encode("utf-8")
             line_size = len(line_bytes) + 1  # +1 for newline
-            
+
             # 处理超长行：如果单行超过限制，安全截断
             if line_size > MAX_SIZE:
                 chunk_size = 15000
                 for chunk in _split_utf8_bytes_safely(line_bytes, chunk_size):
                     if current_part:
-                        parts.append('\n'.join(current_part))
+                        parts.append("\n".join(current_part))
                         current_part = []
                         current_size = 0
                     parts.append(chunk)
                 continue
-            
+
             if current_size + line_size > MAX_SIZE and current_part:
                 # 当前部分已满，保存并开始新部分
-                parts.append('\n'.join(current_part))
+                parts.append("\n".join(current_part))
                 current_part = [line]
                 current_size = line_size
             else:
                 current_part.append(line)
                 current_size += line_size
-        
+
         # 添加最后一部分
         if current_part:
-            parts.append('\n'.join(current_part))
-        
+            parts.append("\n".join(current_part))
+
         # 分段发送（带重试）
         total_parts = len(parts)
         success_count = 0
         max_retries = 3
-        
+
         for i, part in enumerate(parts, 1):
             part_info = f"📨 消息分段 ({i}/{total_parts})"
-            
+
             # 重试机制
             for attempt in range(max_retries):
                 if self._send_single_markdown(title, part, part_info):
                     success_count += 1
                     break
                 else:
-                    print(f"  第 {i}/{total_parts} 段发送失败，重试 {attempt + 1}/{max_retries}...")
+                    print(
+                        f"  第 {i}/{total_parts} 段发送失败，重试 {attempt + 1}/{max_retries}..."
+                    )
                     time.sleep(1 + attempt)
-            
+
             time.sleep(1)  # 段间延迟增加到 1 秒
-        
+
         if success_count == total_parts:
             print(f"✓ 钉钉通知分段发送成功 ({total_parts}条)")
             return True
         else:
             print(f"✗ 部分消息发送失败 ({success_count}/{total_parts})")
             return False
-    
-    def format_stock_results(self, results, stock_names=None, category_filter='all'):
+
+    def format_stock_results(self, results, stock_names=None, category_filter="all"):
         """
         格式化选股结果为 Markdown (适配手机端)
         :param results: {strategy_name: [signals]} 格式的结果
@@ -367,93 +376,99 @@ class DingTalkNotifier:
         """
         if stock_names is None:
             stock_names = {}
-        
+
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        
+
         # 分类名称映射
         category_names = {
-            'bowl_center': '🥣 回落碗中',
-            'near_duokong': '📊 靠近多空线',
-            'near_short_trend': '📈 靠近短期趋势线'
+            "bowl_center": "🥣 回落碗中",
+            "near_duokong": "📊 靠近多空线",
+            "near_short_trend": "📈 靠近短期趋势线",
         }
-        
+
         # 筛选标签
-        filter_label = "全部" if category_filter == 'all' else category_names.get(category_filter, category_filter)
-        
-        content = f"📊 A股量化选股结果\n\n"
+        filter_label = (
+            "全部"
+            if category_filter == "all"
+            else category_names.get(category_filter, category_filter)
+        )
+
+        content = "📊 A股量化选股结果\n\n"
         content += f"⏰ 时间: {now}\n"
         content += f"🔍 筛选: {filter_label}\n"
         content += "━" * 30 + "\n\n"
-        
+
         total_signals = 0
         # 按分类统计
-        category_count = {'bowl_center': 0, 'near_duokong': 0, 'near_short_trend': 0}
-        
+        category_count = {"bowl_center": 0, "near_duokong": 0, "near_short_trend": 0}
+
         for strategy_name, signals in results.items():
             content += f"🎯 {strategy_name}\n\n"
-            
+
             if not signals:
                 content += "暂无选股信号\n\n"
                 continue
-            
+
             # 按分类分组，并根据 category_filter 过滤
             category_groups = {}
             for signal in signals:
-                for s in signal['signals']:
-                    cat = s.get('category', 'unknown')
+                for s in signal["signals"]:
+                    cat = s.get("category", "unknown")
                     # 如果指定了分类筛选，只保留对应分类
-                    if category_filter != 'all' and cat != category_filter:
+                    if category_filter != "all" and cat != category_filter:
                         continue
                     if cat not in category_groups:
                         category_groups[cat] = []
                     category_groups[cat].append((signal, s))
                     category_count[cat] = category_count.get(cat, 0) + 1
-            
+
             total_signals += sum(len(group) for group in category_groups.values())
-            
+
             # 按优先级顺序显示分类
-            display_order = ['bowl_center', 'near_duokong', 'near_short_trend']
+            display_order = ["bowl_center", "near_duokong", "near_short_trend"]
             # 如果指定了分类，只显示该分类
-            if category_filter != 'all' and category_filter in display_order:
+            if category_filter != "all" and category_filter in display_order:
                 display_order = [category_filter]
-            
+
             for cat in display_order:
                 if cat in category_groups:
                     group_signals = category_groups[cat]
                     cat_name = category_names.get(cat, cat)
                     content += f"{cat_name} ({len(group_signals)}只)\n"
                     content += "-" * 20 + "\n"
-                    
+
                     for i, (signal, s) in enumerate(group_signals, 1):
-                        code = signal['code']
-                        name = signal.get('name', stock_names.get(code, '未知'))
-                        close = s.get('close', '-')
-                        j_val = s.get('J', '-')
-                        key_date = s.get('key_candle_date', '-')
+                        code = signal["code"]
+                        name = signal.get("name", stock_names.get(code, "未知"))
+                        close = s.get("close", "-")
+                        j_val = s.get("J", "-")
+                        key_date = s.get("key_candle_date", "-")
                         if isinstance(key_date, pd.Timestamp):
                             key_date = key_date.strftime("%m-%d")
-                        reasons = ' '.join(s.get('reasons', []))
-                        
+                        reasons = " ".join(s.get("reasons", []))
+
                         # 手机端友好的格式
                         content += f"{i}. {code} {name}\n"
                         content += f"   💰 价格: {close}  |  J值: {j_val}\n"
                         content += f"   📅 关键K线: {key_date}\n"
                         content += f"   📝 {reasons}\n\n"
-                    
+
                     content += "\n"
-            
+
             content += "━" * 30 + "\n\n"
-        
+
         # 显示分类统计
         content += "📊 分类统计:\n"
         content += f"   🥣 回落碗中: {category_count.get('bowl_center', 0)} 只\n"
         content += f"   📊 靠近多空线: {category_count.get('near_duokong', 0)} 只\n"
-        content += f"   📈 靠近短期趋势线: {category_count.get('near_short_trend', 0)} 只\n"
+        content += (
+            f"   📈 靠近短期趋势线: {category_count.get('near_short_trend', 0)} 只\n"
+        )
         content += f"   📈 共选出: {total_signals} 只\n\n"
         content += "⚠️ 提示: 以上结果仅供参考，不构成投资建议"
-        
+
         return content
-    
+
     def _send_single_text(self, content, part_info="", max_retries=3):
         """
         发送单条纯文本消息（带速率限制和重试）
@@ -461,51 +476,46 @@ class DingTalkNotifier:
         if not self.webhook_url:
             print("警告: 未配置钉钉 webhook")
             return False
-        
+
         for attempt in range(max_retries + 1):
             # 使用限流器获取发送许可
             self._rate_limiter.acquire()
-            
+
             # 生成签名
             timestamp, sign = self._generate_sign()
-            
+
             # 构建带签名的URL
             if self.secret:
                 webhook_url = f"{self.webhook_url}&timestamp={timestamp}&sign={sign}"
             else:
                 webhook_url = self.webhook_url
-            
+
             # 添加分段信息
             if part_info:
                 content = f"{part_info}\n{content}"
-            
-            data = {
-                "msgtype": "text",
-                "text": {
-                    "content": content
-                }
-            }
-            
+
+            data = {"msgtype": "text", "text": {"content": content}}
+
             try:
                 response = requests.post(
                     webhook_url,
                     json=data,
-                    headers={'Content-Type': 'application/json'},
-                    timeout=10
+                    headers={"Content-Type": "application/json"},
+                    timeout=10,
                 )
-                
+
                 # 更新最后发送时间
                 self._last_send_time = time.time()
-                
+
                 if response.status_code == 200:
                     result = response.json()
-                    if result.get('errcode') == 0:
+                    if result.get("errcode") == 0:
                         return True
                     else:
                         # 如果是限速错误，使用退避策略重试
-                        if result.get('errcode') == 660026:
+                        if result.get("errcode") == 660026:
                             if attempt < max_retries:
-                                print(f"    ⚠️ 触发限速，第{attempt+1}次重试...")
+                                print(f"    ⚠️ 触发限速，第{attempt + 1}次重试...")
                                 self._rate_limiter.on_rate_limit_error(attempt)
                                 continue
                             else:
@@ -517,19 +527,19 @@ class DingTalkNotifier:
                 else:
                     print(f"    ✗ HTTP错误: {response.status_code}")
                     if attempt < max_retries:
-                        time.sleep(2 ** attempt)
+                        time.sleep(2**attempt)
                         continue
                     return False
-                    
+
             except Exception as e:
                 print(f"    ✗ 发送异常: {e}")
                 if attempt < max_retries:
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
                     continue
                 return False
-        
+
         return False
-    
+
     def send_text(self, content):
         """
         发送纯文本消息（手机端兼容性更好）
@@ -537,75 +547,77 @@ class DingTalkNotifier:
         """
         # 钉钉限制：消息体大小不超过20000字节
         MAX_SIZE = 18000  # 留足够余量（预留 ~2000 字节给 part_info 和 JSON 包装）
-        
+
         # 计算内容字节数
-        content_bytes = content.encode('utf-8')
+        content_bytes = content.encode("utf-8")
         content_size = len(content_bytes)
-        
+
         if content_size <= MAX_SIZE:
             # 单条发送
             if self._send_single_text(content):
                 print("✓ 钉钉通知发送成功")
                 return True
             return False
-        
+
         # 需要分段发送
         print(f"消息大小 {content_size} 字节，超过限制，将分段发送...")
-        
+
         # 按行分割内容
-        lines = content.split('\n')
+        lines = content.split("\n")
         parts = []
         current_part = []
         current_size = 0
-        
+
         for line in lines:
-            line_bytes = line.encode('utf-8')
+            line_bytes = line.encode("utf-8")
             line_size = len(line_bytes) + 1  # +1 for newline
-            
+
             # 处理超长行：如果单行超过限制，安全截断
             if line_size > MAX_SIZE:
                 # 将超长行分段（每段约 15000 字节）
                 chunk_size = 15000
                 for chunk in _split_utf8_bytes_safely(line_bytes, chunk_size):
                     if current_part:
-                        parts.append('\n'.join(current_part))
+                        parts.append("\n".join(current_part))
                         current_part = []
                         current_size = 0
                     parts.append(chunk)  # 单独作为一段
                 continue
-            
+
             if current_size + line_size > MAX_SIZE and current_part:
                 # 当前部分已满，保存并开始新部分
-                parts.append('\n'.join(current_part))
+                parts.append("\n".join(current_part))
                 current_part = [line]
                 current_size = line_size
             else:
                 current_part.append(line)
                 current_size += line_size
-        
+
         # 添加最后一部分
         if current_part:
-            parts.append('\n'.join(current_part))
-        
+            parts.append("\n".join(current_part))
+
         # 分段发送（带重试）
         total_parts = len(parts)
         success_count = 0
         max_retries = 3
-        
+
         for i, part in enumerate(parts, 1):
             part_info = f"📨 消息分段 ({i}/{total_parts})"
-            
+
             # 重试机制
             for attempt in range(max_retries):
                 if self._send_single_text(part, part_info):
                     success_count += 1
                     break
                 else:
-                    print(f"  第 {i}/{total_parts} 段发送失败，重试 {attempt + 1}/{max_retries}...")
+                    print(
+                        f"  第 {i}/{total_parts} 段发送失败，重试 {attempt + 1}/{max_retries}..."
+                    )
                     time.sleep(1 + attempt)  # 递增延迟
-            
+
             time.sleep(1)  # 段间延迟增加到 1 秒，避免限流
-        
+
         if success_count == total_parts:
             print(f"✓ 钉钉通知分段发送成功 ({total_parts}条)")
             return True
@@ -613,7 +625,7 @@ class DingTalkNotifier:
             print(f"✗ 部分消息发送失败 ({success_count}/{total_parts})")
             return False
 
-    def send_stock_selection(self, results, stock_names=None, category_filter='all'):
+    def send_stock_selection(self, results, stock_names=None, category_filter="all"):
         """
         发送选股结果到钉钉（按分类单独发送，避免截断）
         :param results: 选股结果
@@ -622,84 +634,88 @@ class DingTalkNotifier:
         """
         if stock_names is None:
             stock_names = {}
-        
+
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         category_names = {
-            'bowl_center': '🥣 回落碗中',
-            'near_duokong': '📊 靠近多空线',
-            'near_short_trend': '📈 靠近短期趋势线'
+            "bowl_center": "🥣 回落碗中",
+            "near_duokong": "📊 靠近多空线",
+            "near_short_trend": "📈 靠近短期趋势线",
         }
-        
+
         total_sent = 0
         total_failed = 0
-        
+
         # 先发送汇总消息
         summary = f"📊 A股量化选股结果\n⏰ {now}\n"
-        if category_filter != 'all':
-            summary += f"🔍 筛选: {category_names.get(category_filter, category_filter)}\n"
+        if category_filter != "all":
+            summary += (
+                f"🔍 筛选: {category_names.get(category_filter, category_filter)}\n"
+            )
         summary += "━" * 20 + "\n\n"
-        
+
         # 统计各分类数量
-        category_count = {'bowl_center': 0, 'near_duokong': 0, 'near_short_trend': 0}
+        category_count = {"bowl_center": 0, "near_duokong": 0, "near_short_trend": 0}
         for strategy_name, signals in results.items():
             for signal in signals:
-                for s in signal['signals']:
-                    cat = s.get('category', 'unknown')
-                    if category_filter == 'all' or cat == category_filter:
+                for s in signal["signals"]:
+                    cat = s.get("category", "unknown")
+                    if category_filter == "all" or cat == category_filter:
                         category_count[cat] = category_count.get(cat, 0) + 1
-        
+
         summary += f"🥣 回落碗中: {category_count.get('bowl_center', 0)} 只\n"
         summary += f"📊 靠近多空线: {category_count.get('near_duokong', 0)} 只\n"
-        summary += f"📈 靠近短期趋势线: {category_count.get('near_short_trend', 0)} 只\n"
+        summary += (
+            f"📈 靠近短期趋势线: {category_count.get('near_short_trend', 0)} 只\n"
+        )
         total = sum(category_count.values())
         summary += f"📈 共选出: {total} 只\n\n"
         summary += "详细列表见下方消息 👇"
-        
+
         if self.send_text(summary):
             total_sent += 1
         else:
             total_failed += 1
-        
+
         time.sleep(1)  # 间隔1秒
-        
+
         # 按分类单独发送详细列表
         for strategy_name, signals in results.items():
             # 按分类分组
             category_groups = {}
             for signal in signals:
-                for s in signal['signals']:
-                    cat = s.get('category', 'unknown')
-                    if category_filter != 'all' and cat != category_filter:
+                for s in signal["signals"]:
+                    cat = s.get("category", "unknown")
+                    if category_filter != "all" and cat != category_filter:
                         continue
                     if cat not in category_groups:
                         category_groups[cat] = []
                     category_groups[cat].append((signal, s))
-            
+
             # 按优先级顺序发送
-            for cat in ['bowl_center', 'near_duokong', 'near_short_trend']:
+            for cat in ["bowl_center", "near_duokong", "near_short_trend"]:
                 if cat not in category_groups or not category_groups[cat]:
                     continue
-                
+
                 group = category_groups[cat]
                 cat_name = category_names.get(cat, cat)
-                
+
                 # 构建该分类的消息
                 content = f"{cat_name} ({len(group)}只)\n"
                 content += "━" * 20 + "\n\n"
-                
+
                 for i, (signal, s) in enumerate(group, 1):
-                    code = signal['code']
-                    name = signal.get('name', stock_names.get(code, '未知'))
-                    close = s.get('close', '-')
-                    j_val = s.get('J', '-')
-                    key_date = s.get('key_candle_date', '-')
+                    code = signal["code"]
+                    name = signal.get("name", stock_names.get(code, "未知"))
+                    close = s.get("close", "-")
+                    j_val = s.get("J", "-")
+                    key_date = s.get("key_candle_date", "-")
                     if isinstance(key_date, pd.Timestamp):
                         key_date = key_date.strftime("%m-%d")
-                    
+
                     # 紧凑格式
                     content += f"{i}. {code} {name}\n"
                     content += f"   价格:{close} J:{j_val} 关键K:{key_date}\n\n"
-                    
+
                     # 每20只分段发送，避免单条过长
                     if i % 20 == 0 and i < len(group):
                         if self.send_text(content):
@@ -707,9 +723,9 @@ class DingTalkNotifier:
                         else:
                             total_failed += 1
                         time.sleep(1)
-                        content = f"{cat_name} (续 {i+1}-{len(group)}只)\n"
+                        content = f"{cat_name} (续 {i + 1}-{len(group)}只)\n"
                         content += "━" * 20 + "\n\n"
-                
+
                 # 发送该分类的最后一段
                 if content.strip():
                     if self.send_text(content):
@@ -717,14 +733,14 @@ class DingTalkNotifier:
                     else:
                         total_failed += 1
                     time.sleep(1)
-        
+
         # 发送结束提示
         footer = f"⚠️ 提示: 以上结果仅供参考\n共 {total} 只股票"
         if self.send_text(footer):
             total_sent += 1
         else:
             total_failed += 1
-        
+
         print(f"✓ 钉钉通知发送完成 ({total_sent}条成功, {total_failed}条失败)")
         return total_failed == 0
 
@@ -751,15 +767,15 @@ class DingTalkNotifier:
 
         try:
             # 读取图片
-            with open(image_path, 'rb') as f:
+            with open(image_path, "rb") as f:
                 image_data = f.read()
 
             # 转为base64
-            image_base64 = base64.b64encode(image_data).decode('utf-8')
+            image_base64 = base64.b64encode(image_data).decode("utf-8")
 
             # 检查大小（钉钉限制约2MB）
             if len(image_data) > 2 * 1024 * 1024:
-                print(f"⚠️ 图片超过2MB，可能发送失败")
+                print("⚠️ 图片超过2MB，可能发送失败")
 
             # 构建data URL（markdown格式）
             # 使用png格式（K线图保存为png）
@@ -771,10 +787,7 @@ class DingTalkNotifier:
 
             data = {
                 "msgtype": "markdown",
-                "markdown": {
-                    "title": title,
-                    "text": markdown_text
-                }
+                "markdown": {"title": title, "text": markdown_text},
             }
 
             # 发送
@@ -783,6 +796,7 @@ class DingTalkNotifier:
             # 发送成功后删除本地图片
             if success:
                 import os
+
                 os.remove(image_path)
                 print(f"✓ 已删除本地图片: {image_path}")
 
@@ -792,32 +806,31 @@ class DingTalkNotifier:
             print(f"✗ 图片发送失败: {e}")
             return False
 
-    def _format_stock_info_message(self, stock_code, stock_name, category, params, signal):
+    def _format_stock_info_message(
+        self, stock_code, stock_name, category, params, signal
+    ):
         """
         格式化股票信息文字消息
-        
+
         Returns:
             str: 格式化的Markdown消息
         """
         category_names = {
-            'bowl_center': '🥣 回落碗中',
-            'near_duokong': '📊 靠近多空线',
-            'near_short_trend': '📈 靠近短期趋势线'
+            "bowl_center": "🥣 回落碗中",
+            "near_duokong": "📊 靠近多空线",
+            "near_short_trend": "📈 靠近短期趋势线",
         }
         category_name = category_names.get(category, category)
-        
+
         # 格式化参数
-        cap = params.get('CAP', 4000000000)
-        cap_display = f"{cap/1e8:.0f}亿" if cap >= 1e8 else f"{cap/1e4:.0f}万"
-        
         # 获取信号数据
-        close = signal.get('close', '-')
-        j_val = signal.get('J', '-')
-        key_date = signal.get('key_candle_date', '-')
-        if hasattr(key_date, 'strftime'):
+        close = signal.get("close", "-")
+        j_val = signal.get("J", "-")
+        key_date = signal.get("key_candle_date", "-")
+        if hasattr(key_date, "strftime"):
             key_date = key_date.strftime("%m-%d")
-        reasons = ' '.join(signal.get('reasons', []))
-        
+        reasons = " ".join(signal.get("reasons", []))
+
         message = f"""### 📊 {stock_code} {stock_name}
 
 **分类**: {category_name}
@@ -830,17 +843,17 @@ class DingTalkNotifier:
         return message
 
     def send_stock_selection_with_charts(
-        self, 
-        results, 
-        stock_names=None, 
-        category_filter='all',
+        self,
+        results,
+        stock_names=None,
+        category_filter="all",
         stock_data_dict=None,
         params=None,
-        send_text_first: bool = True
+        send_text_first: bool = True,
     ):
         """
         发送选股结果（带K线图）到钉钉
-        
+
         Args:
             results: 选股结果 {strategy_name: [signals]}
             stock_names: 股票名称字典 {code: name}
@@ -848,51 +861,51 @@ class DingTalkNotifier:
             stock_data_dict: 股票数据字典 {code: DataFrame}，用于生成K线图
             params: 策略参数
             send_text_first: 是否先发送文字再发送图片（默认True，文字图片分离）
-            
+
         Returns:
             bool: 发送是否成功
         """
         if not KLINE_CHART_AVAILABLE:
             print("⚠️ K线图模块不可用，发送普通文本消息")
             return self.send_stock_selection(results, stock_names, category_filter)
-        
+
         if stock_names is None:
             stock_names = {}
-        
+
         if params is None:
             params = {
-                'N': 4,
-                'M': 15,
-                'CAP': 4000000000,
-                'J_VAL': 30,
-                'duokong_pct': 3,
-                'short_pct': 2
+                "N": 4,
+                "M": 15,
+                "CAP": 4000000000,
+                "J_VAL": 30,
+                "duokong_pct": 3,
+                "short_pct": 2,
             }
-        
+
         # 先发送汇总消息
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         category_names = {
-            'bowl_center': '🥣 回落碗中',
-            'near_duokong': '📊 靠近多空线',
-            'near_short_trend': '📈 靠近短期趋势线'
+            "bowl_center": "🥣 回落碗中",
+            "near_duokong": "📊 靠近多空线",
+            "near_short_trend": "📈 靠近短期趋势线",
         }
-        
+
         total_sent = 0
         total_failed = 0
-        
+
         # 统计各分类数量
-        category_count = {'bowl_center': 0, 'near_duokong': 0, 'near_short_trend': 0}
+        category_count = {"bowl_center": 0, "near_duokong": 0, "near_short_trend": 0}
         chart_count = 0
 
         for strategy_name, signals in results.items():
             for signal in signals:
-                for s in signal['signals']:
-                    cat = s.get('category', 'unknown')
-                    if category_filter == 'all' or cat == category_filter:
+                for s in signal["signals"]:
+                    cat = s.get("category", "unknown")
+                    if category_filter == "all" or cat == category_filter:
                         category_count[cat] = category_count.get(cat, 0) + 1
-        
+
         # 发送汇总消息
-        summary = f"🎯 BowlReboundStrategy:\n"
+        summary = "🎯 BowlReboundStrategy:\n"
         summary += f"N: {params.get('N', 4)} (成交量倍数)\n"
         summary += f"M: {params.get('M', 15)} (回溯天数)\n"
         summary += f"CAP: {params.get('CAP', 4000000000)} (40亿市值门槛)\n"
@@ -903,61 +916,65 @@ class DingTalkNotifier:
         summary += f"M2: {params.get('M2', 28)} (MA周期)\n"
         summary += f"M3: {params.get('M3', 57)} (MA周期)\n"
         summary += f"M4: {params.get('M4', 114)} (MA周期)\n\n"
-        
+
         summary += f"⏰ {now}\n"
-        if category_filter != 'all':
-            summary += f"🔍 筛选: {category_names.get(category_filter, category_filter)}\n"
+        if category_filter != "all":
+            summary += (
+                f"🔍 筛选: {category_names.get(category_filter, category_filter)}\n"
+            )
         summary += "━" * 20 + "\n\n"
         summary += f"🥣 回落碗中: {category_count.get('bowl_center', 0)} 只\n"
         summary += f"📊 靠近多空线: {category_count.get('near_duokong', 0)} 只\n"
-        summary += f"📈 靠近短期趋势线: {category_count.get('near_short_trend', 0)} 只\n"
+        summary += (
+            f"📈 靠近短期趋势线: {category_count.get('near_short_trend', 0)} 只\n"
+        )
         total = sum(category_count.values())
         summary += f"📈 共选出: {total} 只\n\n"
-        
+
         if stock_data_dict:
             summary += "📈 正在为每只股票生成K线图...\n"
             if send_text_first:
                 summary += "（文字说明与图片分离发送，节省流量）\n"
         else:
             summary += "详细列表见下方消息 👇"
-        
+
         if self.send_text(summary):
             total_sent += 1
         else:
             total_failed += 1
-        
+
         time.sleep(1)
-        
+
         # 如果提供了股票数据，生成并发送K线图
         if stock_data_dict:
             print(f"📊 准备发送 {len(stock_data_dict)} 只股票的K线图...")
             for strategy_name, signals in results.items():
                 print(f"  处理策略: {strategy_name}, {len(signals)} 只信号")
                 for signal in signals:
-                    code = signal['code']
-                    name = signal.get('name', stock_names.get(code, '未知'))
-                    
-                    for s in signal['signals']:
-                        cat = s.get('category', 'unknown')
-                        if category_filter != 'all' and cat != category_filter:
+                    code = signal["code"]
+                    name = signal.get("name", stock_names.get(code, "未知"))
+
+                    for s in signal["signals"]:
+                        cat = s.get("category", "unknown")
+                        if category_filter != "all" and cat != category_filter:
                             continue
-                        
+
                         # 获取股票数据
                         if code not in stock_data_dict:
                             print(f"  ⚠️ {code} 不在stock_data_dict中")
                             continue
-                        
+
                         df = stock_data_dict[code]
                         if df.empty:
                             print(f"  ⚠️ {code} 数据为空")
                             continue
-                        
+
                         try:
                             print(f"  📈 处理 {code} {name}...")
                             # 准备关键K线日期
-                            key_date = s.get('key_candle_date')
+                            key_date = s.get("key_candle_date")
                             key_dates = [key_date] if key_date else []
-                            
+
                             if send_text_first:
                                 # 先发送文字说明
                                 info_message = self._format_stock_info_message(
@@ -965,11 +982,11 @@ class DingTalkNotifier:
                                 )
                                 cat_name = category_names.get(cat, cat)
                                 title = f"{code} {name}"
-                                print(f"    发送文字...")
+                                print("    发送文字...")
                                 self.send_markdown(title, info_message)
                                 # 限流器会自动控制间隔，无需手动sleep
-                                
-                                print(f"    生成K线图...")
+
+                                print("    生成K线图...")
                                 t0 = time.time()
                                 # 再生成无文字版本K线图
                                 chart_path = generate_kline_chart(
@@ -979,20 +996,20 @@ class DingTalkNotifier:
                                     category=cat,
                                     params=params,
                                     key_candle_dates=key_dates,
-                                    output_dir='/tmp/kline_charts',
+                                    output_dir="/tmp/kline_charts",
                                     show_text=False,  # 无文字版本
-                                    show_legend=True
+                                    show_legend=True,
                                 )
                                 t1 = time.time()
-                                print(f"    生成K线图耗时: {t1-t0:.2f}秒")
-                                
-                                print(f"    发送图片...")
+                                print(f"    生成K线图耗时: {t1 - t0:.2f}秒")
+
+                                print("    发送图片...")
                                 t0 = time.time()
                                 # 发送图片（标题简化）
                                 if self.send_image(chart_path, f"{code} K线图"):
                                     chart_count += 1
                                 t1 = time.time()
-                                print(f"    发送图片耗时: {t1-t0:.2f}秒")
+                                print(f"    发送图片耗时: {t1 - t0:.2f}秒")
                             else:
                                 # 旧方式：生成带文字的K线图
                                 chart_path = generate_kline_chart(
@@ -1002,11 +1019,11 @@ class DingTalkNotifier:
                                     category=cat,
                                     params=params,
                                     key_candle_dates=key_dates,
-                                    output_dir='/tmp/kline_charts',
+                                    output_dir="/tmp/kline_charts",
                                     show_text=True,
-                                    show_legend=True
+                                    show_legend=True,
                                 )
-                                
+
                                 # 发送图片信息
                                 cat_name = category_names.get(cat, cat)
                                 title = f"{code} {name} - {cat_name}"
@@ -1014,11 +1031,11 @@ class DingTalkNotifier:
                                     chart_count += 1
 
                             # 限流器会自动控制间隔，无需手动sleep
-                            
+
                         except Exception as e:
                             print(f"✗ 生成 {code} 的K线图失败: {e}")
                             continue
-        
+
         # 发送普通文本详情（作为备份）
         text_result = self.send_stock_selection(results, stock_names, category_filter)
 
@@ -1026,29 +1043,29 @@ class DingTalkNotifier:
 
         return text_result
 
-
     def send_b1_match_results(self, results: list, total_selected: int):
         """
         发送带B1完美图形匹配的选股结果
-        
+
         Args:
             results: 按相似度排序的股票列表
             total_selected: 策略筛选出的总数
         """
         if not results:
             return
-        
+
         from datetime import datetime
-        from strategy.pattern_config import TOP_N_RESULTS
+        from research.legacy.pattern_config import TOP_N_RESULTS
+
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        
+
         # 分类名称映射（纯文本版，避免部分钉钉客户端表情乱码）
         category_names = {
-            'bowl_center': '[回落碗中]',
-            'near_duokong': '[靠近多空线]',
-            'near_short_trend': '[靠近短期趋势线]'
+            "bowl_center": "[回落碗中]",
+            "near_duokong": "[靠近多空线]",
+            "near_short_trend": "[靠近短期趋势线]",
         }
-        
+
         # 构建Markdown消息
         lines = [
             "## 选股结果（按B1完美图形相似度排序）",
@@ -1058,46 +1075,44 @@ class DingTalkNotifier:
             "━" * 30,
             "",
         ]
-        
+
         # 只显示前N个（从配置读取）
         for i, r in enumerate(results[:TOP_N_RESULTS], 1):
             rank = f"{i}."
-            
-            stock_code = r.get('stock_code', '')
-            stock_name = r.get('stock_name', '')
-            score = r.get('similarity_score', 0)
-            matched_case = r.get('matched_case', '')
-            matched_date = r.get('matched_date', '')
-            category = r.get('category', '')
-            close = r.get('close', '-')
-            j_val = r.get('J', '-')
-            breakdown = r.get('breakdown', {})
-            
+
+            stock_code = r.get("stock_code", "")
+            stock_name = r.get("stock_name", "")
+            score = r.get("similarity_score", 0)
+            matched_case = r.get("matched_case", "")
+            matched_date = r.get("matched_date", "")
+            category = r.get("category", "")
+            close = r.get("close", "-")
+            j_val = r.get("J", "-")
+            breakdown = r.get("breakdown", {})
+
             # 股票信息（空行分隔）
             lines.append(f"{rank} **{stock_code}** {stock_name}  **相似度: {score}%**")
             lines.append(f"   匹配: {matched_case} ({matched_date})")
-            
+
             # 分项得分
-            trend_score = breakdown.get('trend_structure', 0)
-            kdj_score = breakdown.get('kdj_state', 0)
-            vol_score = breakdown.get('volume_pattern', 0)
-            shape_score = breakdown.get('price_shape', 0)
-            lines.append(f"   分项: 趋势{trend_score}% | KDJ{kdj_score}% | 量能{vol_score}% | 形态{shape_score}%")
-            
+            trend_score = breakdown.get("trend_structure", 0)
+            kdj_score = breakdown.get("kdj_state", 0)
+            vol_score = breakdown.get("volume_pattern", 0)
+            shape_score = breakdown.get("price_shape", 0)
+            lines.append(
+                f"   分项: 趋势{trend_score}% | KDJ{kdj_score}% | 量能{vol_score}% | 形态{shape_score}%"
+            )
+
             cat_name = category_names.get(category, category)
             lines.append(f"   策略: {cat_name} | 价格: {close} | J值: {j_val}")
             lines.append("")  # 空行分隔
-        
+
         # 添加图例说明
         lines.append("---")
         lines.append("**B1匹配逻辑**: 基于双线+量比+形态三维相似度")
         lines.append("**案例来源**: 10个历史成功案例（华纳药厂、宁波韵升等）")
-        
+
         content = "\n".join(lines)
-        
+
         # 发送markdown消息
         self.send_markdown("B1完美图形匹配选股结果", content)
-
-
-# 为了处理 pandas 导入
-import pandas as pd
