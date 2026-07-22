@@ -159,7 +159,7 @@ Compose 会先运行一次性 `migrate`，只有成功后才启动 web/worker。
 1. 再次验证后端/前端门禁；
 2. 只构建一次，推送 SHA tag，生成 provenance/SBOM，按 digest 签名和扫描；
 3. GitHub runner 按源 digest 拉取镜像并复验构建 SHA，以压缩流通过 SSH 传入目标主机，只有服务器镜像 ID 与 runner 完全相同才继续；
-4. 若生产 data volume 还没有完整且新鲜的快照，先在旧服务仍在线时用独立容器从可信外部源全量重建。引导容器不复用 legacy CSV，超时后仍在服务器继续执行，再次触发发布会继续等待；
+4. 若生产 data volume 还没有完整且新鲜的快照，先在旧服务仍在线时用独立容器从可信外部源全量重建。发布会先用只具有 `CHOWN` 能力的一次性容器校正新数据卷根目录所有者，实际引导进程仍使用非 root 身份。引导容器不复用 legacy CSV，超时后仍在服务器继续执行，再次触发发布会继续等待；
 5. 停止旧 web/worker，在线备份静止账本，在临时数据库副本上完成迁移演练，再使用新镜像显式迁移正式库并执行只读预检；
 6. 启动不发布端口、只读挂载 data/state 的候选 canary，核对镜像 ID、`/healthz`、`/api/version`、snapshot 和 `/api/stats` 后删除 canary；
 7. 切换 web/worker，并验证线上镜像 ID、预期 SHA、snapshot、readiness、关键只读查询和 scheduler leader；
