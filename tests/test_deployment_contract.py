@@ -66,19 +66,32 @@ def test_release_stages_image_before_transactional_deploy() -> None:
         for index, step in enumerate(deploy_steps)
         if step.get("name", "").startswith("Deploy exact")
     )
+    bootstrap_index = next(
+        index
+        for index, step in enumerate(deploy_steps)
+        if step.get("name") == "Bootstrap trusted market snapshot before traffic switch"
+    )
     stage_step = deploy_steps[stage_index]
+    bootstrap_step = deploy_steps[bootstrap_index]
     release_step = deploy_steps[release_index]
     stage_script = stage_step["run"]
+    bootstrap_script = bootstrap_step["run"]
     release_script = release_step["run"]
 
-    assert deploy["timeout-minutes"] == 120
-    assert stage_index < release_index
+    assert deploy["timeout-minutes"] == 360
+    assert stage_index < bootstrap_index < release_index
     assert stage_step["timeout-minutes"] == 90
+    assert bootstrap_step["timeout-minutes"] == 220
     assert release_step["timeout-minutes"] == 25
     assert 'docker pull "$SOURCE_IMAGE"' in stage_script
     assert 'docker save "$RUNTIME_IMAGE" | gzip -1' in stage_script
     assert '"$USER@$HOST" "docker load >/dev/null"' in stage_script
     assert "image_id=$RUNTIME_IMAGE_ID" in stage_script
+    assert "tools/bootstrap_market_snapshot.py" in bootstrap_script
+    assert "--check-only" in bootstrap_script
+    assert "a-share-quant-snapshot-bootstrap" in bootstrap_script
+    assert "docker inspect -f '{{.Image}}'" in bootstrap_script
+    assert "run -d --interactive=false" in bootstrap_script
     assert "docker compose --env-file .release.env.next pull" not in release_script
     assert (
         "docker image inspect --format '{{.Id}}' \"$RUNTIME_IMAGE\"" in release_script
@@ -87,6 +100,32 @@ def test_release_stages_image_before_transactional_deploy() -> None:
     assert "EXPECTED_IMAGE_ID" in release_script
     assert "restore_before_switch 130" in release_script
     assert "interrupt_after_switch" in release_script
+
+
+def test_empty_snapshot_check_fails_closed_without_network(tmp_path: Path) -> None:
+    import json
+    import subprocess
+    import sys
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "tools/bootstrap_market_snapshot.py",
+            "--data-dir",
+            str(tmp_path),
+            "--check-only",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 3
+    payload = json.loads(completed.stdout)
+    assert payload["stage"] == "current_snapshot"
+    assert payload["ready"] is False
+    assert payload["reason"] == "snapshot_pointer_missing"
 
 
 def test_release_one_off_containers_cannot_consume_transaction_script() -> None:

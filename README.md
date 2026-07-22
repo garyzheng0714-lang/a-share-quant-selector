@@ -119,7 +119,7 @@ CI 还执行 pip-audit、Bandit、Hadolint 和 Trivy。详细发布门禁见 [�
 
 ## 部署
 
-生产 Compose 只将 Web 绑定到 `127.0.0.1:18321`，Web 对市场数据 volume 只读，运行账本使用独立 state volume。默认启动一次性 `migrate`、`web` 和 `worker`，另有只在发布时启用、对 data/state 都只读的 `canary` profile。发布 workflow 只接受人工输入的 40 位完整 SHA，从该 SHA 构建一次，按 digest 签名、扫描并在 GitHub runner 复验，再将完全相同的内容寻址镜像通过 SSH 传入服务器；服务器不再直连 GHCR。人工触发后，流程按“预热并校验镜像 ID → 暂停旧 writer → 一致备份 → 临时副本迁移演练 → 显式迁移 → 只读检查 → canary → 切换 → SHA/readiness 校验”执行；切换前失败会重启旧服务，切换后失败会回退应用镜像。
+生产 Compose 只将 Web 绑定到 `127.0.0.1:18321`，Web 对市场数据 volume 只读，运行账本使用独立 state volume。默认启动一次性 `migrate`、`web` 和 `worker`，另有只在发布时启用、对 data/state 都只读的 `canary` profile。发布 workflow 只接受人工输入的 40 位完整 SHA，从该 SHA 构建一次，按 digest 签名、扫描并在 GitHub runner 复验，再将完全相同的内容寻址镜像通过 SSH 传入服务器；服务器不再直连 GHCR。人工触发后，流程按“预热并校验镜像 ID → 在旧服务仍在线时引导可信快照 → 暂停旧 writer → 一致备份 → 临时副本迁移演练 → 显式迁移 → 只读检查 → canary → 切换 → SHA/readiness 校验”执行。首次部署若没有可验证快照，发布前容器会从可信外部源全量重建，不会将旧 CSV 升格为生产数据。该阶段超时时旧服务仍保持在线，再次触发同一发布会继续等待；切换前失败会重启旧服务，切换后失败会回退应用镜像。
 
 ## 文档
 

@@ -176,7 +176,7 @@ jobs:
   deploy:
     needs: [verify, build]
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -234,6 +234,105 @@ jobs:
             "test \"\$(docker image inspect --format '{{.Id}}' '$RUNTIME_IMAGE')\" = '$RUNTIME_IMAGE_ID'"
           echo "image=$RUNTIME_IMAGE" >> "$GITHUB_OUTPUT"
           echo "image_id=$RUNTIME_IMAGE_ID" >> "$GITHUB_OUTPUT"
+      - name: Bootstrap trusted market snapshot before traffic switch
+        timeout-minutes: 220
+        env:
+          HOST: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+          RELEASE_SHA: ${{ needs.verify.outputs.sha }}
+          RUNTIME_IMAGE: ${{ steps.stage.outputs.image }}
+          RUNTIME_IMAGE_ID: ${{ steps.stage.outputs.image_id }}
+        run: |
+          ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=8 "$USER@$HOST" \
+            "IMAGE='$IMAGE' DIGEST='$DIGEST' RELEASE_SHA='$RELEASE_SHA' RUNTIME_IMAGE='$RUNTIME_IMAGE' RUNTIME_IMAGE_ID='$RUNTIME_IMAGE_ID' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd /opt/a-share-quant
+          test -f docker-compose.yml.next
+          test "$(docker image inspect --format '{{.Id}}' "$RUNTIME_IMAGE")" = \
+            "$RUNTIME_IMAGE_ID"
+          install -m 700 -d secrets
+          ensure_runtime_token() {
+            path=$1
+            if ! test -s "$path"; then
+              openssl rand -hex 32 > "$path"
+            fi
+            chmod 600 "$path"
+          }
+          ensure_runtime_token secrets/admin-token
+          ensure_runtime_token secrets/publisher-token
+          ensure_runtime_token secrets/viewer-token
+          BOOTSTRAP_ENV=.bootstrap.env
+          BOOTSTRAP_NAME=a-share-quant-snapshot-bootstrap
+          cleanup_env() {
+            rm -f "$BOOTSTRAP_ENV"
+          }
+          trap cleanup_env EXIT
+          {
+            echo "QUANT_IMAGE=${RUNTIME_IMAGE}"
+            echo "QUANT_IMAGE_ID=${RUNTIME_IMAGE_ID}"
+            echo "QUANT_SOURCE_IMAGE=${IMAGE}@${DIGEST}"
+            echo "GIT_COMMIT_SHA=${RELEASE_SHA}"
+            echo "QUANT_ADMIN_TOKEN_FILE=/opt/a-share-quant/secrets/admin-token"
+            echo "QUANT_PUBLISHER_TOKEN_FILE=/opt/a-share-quant/secrets/publisher-token"
+            echo "QUANT_VIEWER_TOKEN_FILE=/opt/a-share-quant/secrets/viewer-token"
+          } > "$BOOTSTRAP_ENV"
+          chmod 600 "$BOOTSTRAP_ENV"
+          snapshot_ready() {
+            docker compose -f docker-compose.yml.next --env-file "$BOOTSTRAP_ENV" \
+              run --rm --interactive=false --no-deps worker \
+              python tools/bootstrap_market_snapshot.py --data-dir data --check-only \
+              </dev/null
+          }
+          if snapshot_ready; then
+            echo "A fresh verified market snapshot already exists."
+            exit 0
+          fi
+
+          if docker inspect "$BOOTSTRAP_NAME" >/dev/null 2>&1; then
+            if test "$(docker inspect -f '{{.State.Running}}' "$BOOTSTRAP_NAME")" != true; then
+              previous_exit=$(docker inspect -f '{{.State.ExitCode}}' "$BOOTSTRAP_NAME")
+              if test "$previous_exit" -eq 0 && snapshot_ready; then
+                docker rm "$BOOTSTRAP_NAME" >/dev/null
+                exit 0
+              fi
+              docker logs --tail 300 "$BOOTSTRAP_NAME" || true
+              docker rm "$BOOTSTRAP_NAME" >/dev/null
+            else
+              echo "A trusted snapshot rebuild is already running; continuing to wait."
+            fi
+          fi
+
+          if ! docker inspect "$BOOTSTRAP_NAME" >/dev/null 2>&1; then
+            docker compose -f docker-compose.yml.next --env-file "$BOOTSTRAP_ENV" \
+              run -d --interactive=false --name "$BOOTSTRAP_NAME" --no-deps worker \
+              python tools/bootstrap_market_snapshot.py --data-dir data --years 6 \
+              </dev/null
+            test "$(docker inspect -f '{{.Image}}' "$BOOTSTRAP_NAME")" = \
+              "$RUNTIME_IMAGE_ID"
+          fi
+
+          for attempt in $(seq 1 800); do
+            if test "$(docker inspect -f '{{.State.Running}}' "$BOOTSTRAP_NAME")" != true; then
+              break
+            fi
+            if test $((attempt % 20)) -eq 0; then
+              echo "Snapshot rebuild is still running (poll $attempt/800)."
+              docker logs --tail 10 "$BOOTSTRAP_NAME" || true
+            fi
+            sleep 15
+          done
+          if test "$(docker inspect -f '{{.State.Running}}' "$BOOTSTRAP_NAME")" = true; then
+            echo "Snapshot rebuild is still running; rerun this release to resume waiting." >&2
+            exit 124
+          fi
+          bootstrap_exit=$(docker inspect -f '{{.State.ExitCode}}' "$BOOTSTRAP_NAME")
+          docker logs --tail 300 "$BOOTSTRAP_NAME" || true
+          test "$bootstrap_exit" -eq 0
+          docker rm "$BOOTSTRAP_NAME" >/dev/null
+          snapshot_ready
+          REMOTE
       - name: Deploy exact digest with backup and rollback
         timeout-minutes: 25
         env:
