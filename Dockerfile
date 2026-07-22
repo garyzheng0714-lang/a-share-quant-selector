@@ -1,6 +1,6 @@
 # CI 通过 build args 传入已审核的 digest；生产 workflow 会拒绝非 digest 镜像。
 ARG NODE_IMAGE=node:22.17.1-bookworm-slim@sha256:2fa754a9ba4d7adbd2a51d182eaabbe355c82b673624035a38c0d42b08724854
-ARG PYTHON_IMAGE=python:3.11.9-slim-bookworm@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317
+ARG PYTHON_IMAGE=python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba
 
 # 变量默认值与发布参数都同时锁定 tag 和 digest；Hadolint 无法解析 FROM 中的 ARG。
 # hadolint ignore=DL3006
@@ -28,6 +28,14 @@ ENV GIT_COMMIT_SHA="${GIT_COMMIT_SHA}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     TZ=Asia/Shanghai
+
+# 基础镜像按 digest 固定；构建时安装该 Debian 版本已经发布的安全修复。
+# 运行期不需要 Python 打包工具，移除后同时缩小攻击面。
+# hadolint ignore=DL3005
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip uninstall --yes setuptools wheel
 
 RUN groupadd --gid 10001 quant \
     && useradd --uid 10001 --gid quant --create-home --no-log-init \

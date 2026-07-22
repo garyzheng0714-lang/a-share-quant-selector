@@ -4,7 +4,7 @@
 
 ## 运行前提
 
-- Python 3.11.9、Node.js 22.17.1，或使用仓库中已按 digest 固定的 Docker 镜像。
+- Python 3.11.15、Node.js 22.17.1，或使用仓库中已按 digest 固定的 Docker 镜像。
 - `data/` 所在磁盘有足够空间，且只有一个生产 worker 写入。
 - viewer、publisher、admin 三个 token 长度至少 32 字符且彼此不同。生产使用 root 只读 secret file，文件权限建议 `0600`；不要在文档、日志、工单或命令行中写真值。
 - 数据已从可信源重建。
