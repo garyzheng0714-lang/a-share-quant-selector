@@ -47,3 +47,36 @@ def test_release_quiesces_writers_and_validates_canary_before_switch() -> None:
     assert "PREVIOUS_STOPPED" in script
     assert "docker inspect -f '{{.Config.Image}}' \"$CANARY_NAME\"" in script
     assert "for attempt in $(seq 1 30)" in script
+
+
+def test_release_stages_image_before_transactional_deploy() -> None:
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    )
+    deploy = workflow["jobs"]["deploy"]
+    deploy_steps = deploy["steps"]
+    stage_index = next(
+        index
+        for index, step in enumerate(deploy_steps)
+        if step.get("name") == "Stage exact image digest on server"
+    )
+    release_index = next(
+        index
+        for index, step in enumerate(deploy_steps)
+        if step.get("name", "").startswith("Deploy exact")
+    )
+    stage_step = deploy_steps[stage_index]
+    release_step = deploy_steps[release_index]
+    stage_script = stage_step["run"]
+    release_script = release_step["run"]
+
+    assert deploy["timeout-minutes"] == 90
+    assert stage_index < release_index
+    assert stage_step["timeout-minutes"] == 60
+    assert release_step["timeout-minutes"] == 25
+    assert "docker pull '$IMAGE@$DIGEST'" in stage_script
+    assert "docker image inspect '$IMAGE@$DIGEST'" in stage_script
+    assert "docker compose --env-file .release.env.next pull" not in release_script
+    assert 'docker image inspect "${IMAGE}@${DIGEST}"' in release_script
+    assert "restore_before_switch 130" in release_script
+    assert "interrupt_after_switch" in release_script
