@@ -92,6 +92,12 @@ def test_release_stages_image_before_transactional_deploy() -> None:
     assert "a-share-quant-snapshot-bootstrap" in bootstrap_script
     assert "docker inspect -f '{{.Image}}'" in bootstrap_script
     assert "run -d --interactive=false" in bootstrap_script
+    ownership_init = "run --rm --interactive=false --no-deps --user 0:0 --cap-add CHOWN"
+    assert ownership_init in bootstrap_script
+    assert "worker chown 10001:10001 /app/data" in bootstrap_script
+    assert bootstrap_script.index(ownership_init) < bootstrap_script.index(
+        "tools/bootstrap_market_snapshot.py"
+    )
     assert "docker compose --env-file .release.env.next pull" not in release_script
     assert (
         "docker image inspect --format '{{.Id}}' \"$RUNTIME_IMAGE\"" in release_script

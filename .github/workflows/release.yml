@@ -279,6 +279,11 @@ jobs:
             echo "QUANT_VIEWER_TOKEN_FILE=/opt/a-share-quant/secrets/viewer-token"
           } > "$BOOTSTRAP_ENV"
           chmod 600 "$BOOTSTRAP_ENV"
+          # A volume first touched by a read-only canary can retain root ownership.
+          # Grant only CHOWN for this one-off initializer; ingestion itself stays non-root.
+          docker compose -f docker-compose.yml.next --env-file "$BOOTSTRAP_ENV" \
+            run --rm --interactive=false --no-deps --user 0:0 --cap-add CHOWN \
+            worker chown 10001:10001 /app/data </dev/null
           snapshot_ready() {
             docker compose -f docker-compose.yml.next --env-file "$BOOTSTRAP_ENV" \
               run --rm --interactive=false --no-deps worker \
