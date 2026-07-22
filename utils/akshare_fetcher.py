@@ -21,6 +21,13 @@ from utils.data_contracts import FetchResult, MarketDataUnavailable
 
 
 MIN_UNIVERSE_SIZE = 3000
+MIN_EXCHANGE_DELISTED_CODES = 100
+
+
+def _codes_hash(codes) -> str:
+    canonical = json.dumps(sorted(set(codes)), separators=(",", ":")).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
 
 # 设置请求会话
 session = requests.Session()
@@ -64,7 +71,9 @@ class AKShareFetcher:
                 pass
         return {}
 
-    def _save_stock_names(self, stock_dict, source: str):
+    def _save_stock_names(
+        self, stock_dict, source: str, *, exclusions: dict | None = None
+    ):
         """保存可审计的 last-known-good 股票池及其版本元数据。"""
         if len(stock_dict) < MIN_UNIVERSE_SIZE:
             raise ValueError("universe_below_minimum_size")
@@ -88,6 +97,8 @@ class AKShareFetcher:
             "stale": False,
             "content_hash": hashlib.sha256(canonical).hexdigest(),
         }
+        if exclusions:
+            manifest["exclusions"] = exclusions
         manifest_tmp = self.universe_manifest_file.with_suffix(f".{os.getpid()}.tmp")
         manifest_tmp.write_text(
             json.dumps(manifest, ensure_ascii=False, sort_keys=True),
@@ -188,6 +199,45 @@ class AKShareFetcher:
         )
         tmp.replace(self.security_status_file)
 
+    @staticmethod
+    def _exchange_delisted_codes() -> tuple[set[str], dict]:
+        """从沪深交易所名单排除已终止上市证券。"""
+        sources = (
+            (
+                "akshare:stock_info_sh_delist",
+                ak.stock_info_sh_delist(symbol="全部"),
+                "公司代码",
+            ),
+            (
+                "akshare:stock_info_sz_delist",
+                ak.stock_info_sz_delist(symbol="终止上市公司"),
+                "证券代码",
+            ),
+        )
+        combined: set[str] = set()
+        by_source = {}
+        for source_id, frame, code_column in sources:
+            if code_column not in frame:
+                raise ValueError(f"delisted_schema_missing_code:{source_id}")
+            codes = {
+                str(value).split(".", 1)[0].zfill(6)
+                for value in frame[code_column]
+                if re.fullmatch(r"\d{1,6}(?:\.0)?", str(value))
+            }
+            if not codes:
+                raise ValueError(f"delisted_source_empty:{source_id}")
+            combined.update(codes)
+            by_source[source_id] = {"count": len(codes)}
+        if len(combined) < MIN_EXCHANGE_DELISTED_CODES:
+            raise ValueError("delisted_universe_below_minimum_size")
+        return combined, {
+            "schema_version": "exchange-delisted-catalog-v1",
+            "reason": "exchange_delisted",
+            "count": len(combined),
+            "content_hash": _codes_hash(combined),
+            "sources": by_source,
+        }
+
     def _load_provenance(self) -> dict:
         if not self.provenance_file.exists():
             return {"schema_version": "ingestion-provenance-v1", "stocks": {}}
@@ -280,6 +330,70 @@ class AKShareFetcher:
             encoding="utf-8",
         )
         tmp.replace(self.provenance_file)
+
+    def ensure_akshare_history_anchor(
+        self,
+        completed_cutoff: str,
+        *,
+        years: int = 6,
+        candidates: tuple[str, ...] = ("600519", "600036", "600030", "000001"),
+    ) -> dict:
+        """确保快照中至少有一只活跃股的全历史来自 AkShare。"""
+        provenance = self._load_provenance().get("stocks") or {}
+        universe = set(self._main_board_universe())
+        source_set = {
+            item.get(source_key)
+            for code, item in provenance.items()
+            if code in universe
+            if isinstance(item, dict)
+            for source_key in ("source_id", "history_source_id")
+            if item.get(source_key) in {"tencent", "akshare"}
+        }
+        if {"tencent", "akshare"}.issubset(source_set):
+            return {"success": True, "updated": False, "source_set": sorted(source_set)}
+
+        failures = []
+        for attempt in range(2):
+            for code in candidates:
+                if code not in universe or not self.csv_manager.stock_exists(code):
+                    continue
+                fetch = self._fetch_stock_history_akshare(code, years=years)
+                frame = fetch.data.copy() if fetch.success else pd.DataFrame()
+                if not frame.empty:
+                    frame = frame[
+                        pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d")
+                        <= completed_cutoff
+                    ].copy()
+                latest = (
+                    pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d").max()
+                    if not frame.empty and "date" in frame
+                    else None
+                )
+                if fetch.success and latest == completed_cutoff:
+                    self.csv_manager.write_stock(code, frame)
+                    self._record_fetch_provenance(code, fetch, frame, full_history=True)
+                    updated_source_set = source_set | {"akshare"}
+                    return {
+                        "success": {"tencent", "akshare"}.issubset(updated_source_set),
+                        "updated": True,
+                        "code": code,
+                        "source_set": sorted(updated_source_set),
+                    }
+                failures.append(
+                    {
+                        "code": code,
+                        "reason": fetch.reason,
+                        "returned_latest_date": latest,
+                    }
+                )
+            if attempt == 0:
+                time.sleep(2)
+        return {
+            "success": False,
+            "reason": "akshare_history_anchor_unavailable",
+            "attempts": failures,
+            "source_set": sorted(source_set),
+        }
 
     def _fetch_stock_list_http(self):
         """使用腾讯接口获取股票列表 - 覆盖5000+只A股"""
@@ -1016,32 +1130,86 @@ class AKShareFetcher:
         try:
             frames = [ak.stock_sh_a_spot_em(), ak.stock_sz_a_spot_em()]
             all_stocks = pd.concat(
-                [frame[["代码", "名称"]] for frame in frames], ignore_index=True
+                [frame[["代码", "名称", "最新价", "昨收"]] for frame in frames],
+                ignore_index=True,
             )
             all_stocks = all_stocks.drop_duplicates(subset=["代码"])
+            all_stocks["代码"] = all_stocks["代码"].astype(str).str.zfill(6)
             code_pattern = r"^(00|30|60|68|88)\d{4}$"
-            all_stocks = all_stocks[
-                all_stocks["代码"].astype(str).str.match(code_pattern)
-            ]
+            all_stocks = all_stocks[all_stocks["代码"].str.match(code_pattern)]
             excluded = ("债", "基", "ETF", "LOF", "基金", "B股", "指数", "转债", "回购")
             mask = ~all_stocks["名称"].astype(str).apply(
                 lambda name: any(word in name for word in excluded)
             )
+            special_non_equity = all_stocks["名称"].astype(str).str.contains("转换")
+            latest_price = pd.to_numeric(all_stocks["最新价"], errors="coerce")
+            previous_close = pd.to_numeric(all_stocks["昨收"], errors="coerce")
+            not_yet_traded = latest_price.isna() & previous_close.isna()
             fresh = dict(
                 zip(
-                    all_stocks.loc[mask, "代码"].astype(str),
+                    all_stocks.loc[mask, "代码"],
                     all_stocks.loc[mask, "名称"].astype(str),
                 )
             )
             if self._universe_size_is_safe(fresh, previous):
+                delisted_codes, delisted_catalog = self._exchange_delisted_codes()
+                eligible_codes = set(fresh)
+                applied_delisted = eligible_codes & delisted_codes
+                special_codes = (
+                    set(all_stocks.loc[mask & special_non_equity, "代码"])
+                    - applied_delisted
+                )
+                pending_codes = (
+                    set(all_stocks.loc[mask & not_yet_traded, "代码"])
+                    - applied_delisted
+                    - special_codes
+                )
+                excluded_codes = applied_delisted | pending_codes | special_codes
+                fresh = {
+                    code: name
+                    for code, name in fresh.items()
+                    if code not in excluded_codes
+                }
+                if len(fresh) < MIN_UNIVERSE_SIZE:
+                    raise ValueError("active_universe_below_minimum_after_exclusions")
+                exclusion_evidence = {
+                    "schema_version": "universe-exclusions-v1",
+                    "count": len(excluded_codes),
+                    "content_hash": _codes_hash(excluded_codes),
+                    "categories": {
+                        "exchange_delisted": {
+                            "count": len(applied_delisted),
+                            "content_hash": _codes_hash(applied_delisted),
+                            "catalog": delisted_catalog,
+                        },
+                        "not_yet_traded": {
+                            "count": len(pending_codes),
+                            "content_hash": _codes_hash(pending_codes),
+                            "source_id": "akshare:stock_sh_sz_a_spot_em",
+                        },
+                        "non_equity_special": {
+                            "count": len(special_codes),
+                            "content_hash": _codes_hash(special_codes),
+                            "rule": "name_contains:转换",
+                        },
+                    },
+                }
                 if trade_date:
                     suspension_frame = ak.stock_tfp_em(date=trade_date.replace("-", ""))
                     self._save_security_status(fresh, suspension_frame, trade_date)
-                self._save_stock_names(fresh, source="akshare")
+                self._save_stock_names(
+                    fresh,
+                    source="akshare",
+                    exclusions=exclusion_evidence,
+                )
                 self.universe_refresh_status = {
                     "fresh": True,
                     "source": "akshare",
                     "count": len(fresh),
+                    "excluded_count": len(excluded_codes),
+                    "excluded_delisted_count": len(applied_delisted),
+                    "excluded_pending_count": len(pending_codes),
+                    "excluded_special_count": len(special_codes),
                 }
                 return fresh
             failure_reason = "universe_shrink_exceeded"
@@ -1140,6 +1308,10 @@ class AKShareFetcher:
         attempts = state.setdefault("attempts", {})
         failures = state.setdefault("failures", {})
         short_history = state.setdefault("short_history", {})
+        for mapping in (failures, short_history):
+            for code in list(mapping):
+                if code not in universe:
+                    mapping.pop(code, None)
         existing = set(self.csv_manager.list_all_stocks())
         queue = []
         for code in sorted(universe):

@@ -67,6 +67,7 @@ def _rebuild_summary(result: dict[str, Any]) -> dict[str, Any]:
                 "pass_count",
                 "failure_reason_counts",
                 "passes",
+                "source_quorum",
             )
             if key in bootstrap
         },

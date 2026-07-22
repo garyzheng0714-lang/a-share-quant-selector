@@ -464,6 +464,21 @@ class MarketSnapshotTest(unittest.TestCase):
         self.assertFalse(quality["valid"])
         self.assertFalse(quality["source_quorum_passed"])
 
+    def test_full_history_source_preserves_quorum_after_incremental_update(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            staging = self._staging(Path(tmp))
+            provenance = self._provenance()
+            for item in provenance.values():
+                item["source_id"] = "tencent"
+                item["history_source_id"] = "tencent"
+            provenance[ANCHOR_CODES[0]]["history_source_id"] = "akshare"
+
+            quality = self._validate(staging, provenance=provenance)
+
+        self.assertTrue(quality["valid"])
+        self.assertTrue(quality["source_quorum_passed"])
+        self.assertEqual(quality["source_set"], ["akshare", "tencent"])
+
     def test_small_universe_manifest_is_never_approved(self):
         with tempfile.TemporaryDirectory() as tmp:
             staging = self._staging(Path(tmp))

@@ -213,6 +213,8 @@ class MarketDataContractTest(unittest.TestCase):
                 {
                     "代码": list(previous)[:3200],
                     "名称": list(previous.values())[:3200],
+                    "最新价": 10.0,
+                    "昨收": 9.8,
                 }
             )
             with (
@@ -238,7 +240,12 @@ class MarketDataContractTest(unittest.TestCase):
             fetcher = AKShareFetcher(tmp)
             codes = [f"{600000 + index:06d}" for index in range(3000)]
             rows = pd.DataFrame(
-                {"代码": codes, "名称": [f"股票{i}" for i in range(3000)]}
+                {
+                    "代码": codes,
+                    "名称": [f"股票{i}" for i in range(3000)],
+                    "最新价": 10.0,
+                    "昨收": 9.8,
+                }
             )
             suspensions = pd.DataFrame(
                 {
@@ -260,6 +267,20 @@ class MarketDataContractTest(unittest.TestCase):
                     "utils.akshare_fetcher.ak.stock_tfp_em",
                     return_value=suspensions,
                 ) as suspension_source,
+                patch.object(
+                    fetcher,
+                    "_exchange_delisted_codes",
+                    return_value=(
+                        set(),
+                        {
+                            "schema_version": "exchange-delisted-catalog-v1",
+                            "reason": "exchange_delisted",
+                            "count": 0,
+                            "content_hash": hashlib.sha256(b"[]").hexdigest(),
+                            "sources": {},
+                        },
+                    ),
+                ),
             ):
                 result = fetcher.refresh_stock_universe("2026-07-15")
 
@@ -271,6 +292,117 @@ class MarketDataContractTest(unittest.TestCase):
             self.assertEqual(status["suspended_count"], 1)
             self.assertEqual(status["securities"][codes[0]]["status"], "suspended")
             suspension_source.assert_called_once_with(date="20260715")
+
+    def test_live_universe_excludes_non_active_securities_with_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fetcher = AKShareFetcher(tmp)
+            codes = [f"{600000 + index:06d}" for index in range(3003)]
+            names = [f"股票{i}" for i in range(3003)]
+            names[2] = "上药转换"
+            rows = pd.DataFrame(
+                {
+                    "代码": codes,
+                    "名称": names,
+                    "最新价": 10.0,
+                    "昨收": 9.8,
+                }
+            )
+            rows.loc[1, ["最新价", "昨收"]] = float("nan")
+            evidence = {
+                "schema_version": "exchange-delisted-catalog-v1",
+                "reason": "exchange_delisted",
+                "count": 1,
+                "content_hash": hashlib.sha256(
+                    json.dumps([codes[0]], separators=(",", ":")).encode()
+                ).hexdigest(),
+                "sources": {"akshare:stock_info_sh_delist": {"count": 1}},
+            }
+            with (
+                patch(
+                    "utils.akshare_fetcher.ak.stock_sh_a_spot_em",
+                    return_value=rows.iloc[:1500],
+                ),
+                patch(
+                    "utils.akshare_fetcher.ak.stock_sz_a_spot_em",
+                    return_value=rows.iloc[1500:],
+                ),
+                patch.object(
+                    fetcher,
+                    "_exchange_delisted_codes",
+                    return_value=({codes[0]}, evidence),
+                ),
+                patch(
+                    "utils.akshare_fetcher.ak.stock_tfp_em",
+                    return_value=pd.DataFrame(columns=["代码"]),
+                ),
+            ):
+                result = fetcher.refresh_stock_universe("2026-07-15")
+
+            manifest = json.loads(
+                (Path(tmp) / "universe_manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(len(result), 3000)
+            self.assertNotIn(codes[0], result)
+            self.assertNotIn(codes[1], result)
+            self.assertNotIn(codes[2], result)
+            exclusions = manifest["exclusions"]
+            self.assertEqual(exclusions["count"], 3)
+            self.assertEqual(
+                exclusions["categories"]["exchange_delisted"]["catalog"], evidence
+            )
+            self.assertEqual(exclusions["categories"]["not_yet_traded"]["count"], 1)
+            self.assertEqual(exclusions["categories"]["non_equity_special"]["count"], 1)
+
+    def test_exchange_delisted_sources_are_combined_with_auditable_hash(self):
+        sh_codes = [f"{600000 + index:06d}" for index in range(60)]
+        sz_codes = [f"{index:06d}" for index in range(50)]
+        with (
+            patch(
+                "utils.akshare_fetcher.ak.stock_info_sh_delist",
+                return_value=pd.DataFrame({"公司代码": sh_codes}),
+            ),
+            patch(
+                "utils.akshare_fetcher.ak.stock_info_sz_delist",
+                return_value=pd.DataFrame({"证券代码": sz_codes}),
+            ),
+        ):
+            codes, evidence = AKShareFetcher._exchange_delisted_codes()
+
+        expected = set(sh_codes + sz_codes)
+        expected_hash = hashlib.sha256(
+            json.dumps(sorted(expected), separators=(",", ":")).encode()
+        ).hexdigest()
+        self.assertEqual(codes, expected)
+        self.assertEqual(evidence["count"], 110)
+        self.assertEqual(evidence["content_hash"], expected_hash)
+
+    def test_akshare_anchor_establishes_independent_history_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fetcher = AKShareFetcher(tmp)
+            initial = history("2026-07-14")
+            fetcher.csv_manager.write_stock("600519", initial)
+            fetcher._record_fetch_provenance(
+                "600519",
+                FetchResult.ok(initial, source="tencent"),
+                initial,
+                full_history=True,
+            )
+            fetcher._main_board_universe = lambda: {"600519": "贵州茅台"}
+            with patch.object(
+                fetcher,
+                "_fetch_stock_history_akshare",
+                return_value=FetchResult.ok(history("2026-07-14"), source="akshare"),
+            ) as source:
+                result = fetcher.ensure_akshare_history_anchor("2026-07-14")
+
+            provenance = json.loads(
+                (Path(tmp) / "ingestion_provenance.json").read_text(encoding="utf-8")
+            )["stocks"]["600519"]
+            self.assertTrue(result["success"])
+            self.assertTrue(result["updated"])
+            self.assertEqual(provenance["source_id"], "akshare")
+            self.assertEqual(provenance["history_source_id"], "akshare")
+            source.assert_called_once_with("600519", years=6)
 
     def test_empty_suspension_response_without_schema_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
