@@ -162,7 +162,8 @@ Compose 会先运行一次性 `migrate`，只有成功后才启动 web/worker。
 4. 停止旧 web/worker，在线备份静止账本，在临时数据库副本上完成迁移演练，再使用新镜像显式迁移正式库并执行只读预检；
 5. 启动不发布端口、只读挂载 data/state 的候选 canary，核对镜像 ID、`/healthz`、`/api/version`、snapshot 和 `/api/stats` 后删除 canary；
 6. 切换 web/worker，并验证线上镜像 ID、预期 SHA、snapshot、readiness、关键只读查询和 scheduler leader；
-7. canary 或切换前检查失败时清理候选容器、恢复旧发布文件并重启旧服务；切换或线上健康检查失败时回退上一个 Compose/镜像。
+7. 所有一次性备份/迁移/预检容器都禁用交互式标准输入；只有完成正式容器镜像 ID、SHA、snapshot、readiness 和 scheduler leader 复验后才写入发布回执，GitHub 端会再次读取回执，缺失即判定发布失败；
+8. canary 或切换前检查失败时清理候选容器、恢复旧发布文件并重启旧服务；切换或线上健康检查失败时回退上一个 Compose/镜像。
 
 当前 migration 只允许向前兼容变更。回滚应用默认保留数据 volume；只有数据库已损坏或经评审确认 schema 不兼容时，才进入人工恢复流程。
 
