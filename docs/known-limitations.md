@@ -31,7 +31,7 @@
 - 发布流程会自动回退应用镜像，不会自动覆盖生产数据库。自动数据恢复可能丢失备份后新写入，所以必须由人员在停止 writer 后核对再执行。
 - ECharts 产物 chunk 仍可能超过 Vite 500 kB 建议阈值；这是首屏性能优化项，不影响数据正确性。
 - 任务失败和租约耗尽现在会生成不可变 `alert_events`，并可由受保护的 `/api/alerts` 查询；仓库内仍不能代替生产通知渠道接入、送达测试、值班响应，以及备份恢复、外部源故障、磁盘满/SQLite locked 演练。
-- 本地环境没有可用 Docker daemon 时，只能静态校验 Compose/workflow；镜像构建、只读挂载、容器 smoke test 和按 digest 回滚必须在 CI/目标主机实际通过。
+- 本地环境没有可用 Docker daemon 时，只能静态校验 Compose/workflow；镜像构建、离线传输后的内容 ID 复验、只读挂载、容器 smoke test 和回滚必须在 CI/目标主机实际通过。
 
 ## Go / No-Go
 
