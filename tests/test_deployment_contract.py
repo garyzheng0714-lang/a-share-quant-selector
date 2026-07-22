@@ -35,10 +35,10 @@ def test_release_quiesces_writers_and_validates_canary_before_switch() -> None:
 
     expected_order = (
         "stop worker web",
-        "python tools/backup_databases.py",
-        "python tools/migration_dry_run.py",
-        "run --rm --no-deps migrate",
-        "python tools/predeploy_check.py",
+        "--no-deps web python tools/backup_databases.py",
+        "--no-deps canary python tools/migration_dry_run.py",
+        "--no-deps migrate </dev/null",
+        "--no-deps web python tools/predeploy_check.py",
         '--name "$CANARY_NAME" --no-deps canary',
         "mv .release.env.next .release.env",
     )
@@ -87,3 +87,21 @@ def test_release_stages_image_before_transactional_deploy() -> None:
     assert "EXPECTED_IMAGE_ID" in release_script
     assert "restore_before_switch 130" in release_script
     assert "interrupt_after_switch" in release_script
+
+
+def test_release_one_off_containers_cannot_consume_transaction_script() -> None:
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    )
+    release_step = next(
+        step
+        for step in workflow["jobs"]["deploy"]["steps"]
+        if step.get("name", "").startswith("Deploy exact")
+    )
+    script = release_step["run"]
+
+    assert script.count("--interactive=false") == 5
+    assert script.count("</dev/null") == 5
+    assert 'DEPLOY_RECEIPT=".deploy-success-${RELEASE_SHA}"' in script
+    assert 'mv "${DEPLOY_RECEIPT}.next" "$DEPLOY_RECEIPT"' in script
+    assert "cat '/opt/a-share-quant/.deploy-success-${RELEASE_SHA}'" in script

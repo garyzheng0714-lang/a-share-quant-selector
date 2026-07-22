@@ -255,6 +255,8 @@ jobs:
           test "${RUNTIME_IMAGE_ID#sha256:}" != "$RUNTIME_IMAGE_ID"
           test "${#RUNTIME_IMAGE_ID}" -eq 71
           test -f docker-compose.yml.next
+          DEPLOY_RECEIPT=".deploy-success-${RELEASE_SHA}"
+          rm -f "$DEPLOY_RECEIPT" "${DEPLOY_RECEIPT}.next"
           test "$(docker image inspect --format '{{.Id}}' "$RUNTIME_IMAGE")" = \
             "$RUNTIME_IMAGE_ID"
           install -m 700 -d secrets
@@ -353,16 +355,23 @@ jobs:
             docker compose --env-file .rollback.env -f .rollback-compose.yml \
               stop worker web
           fi
-          docker compose --env-file .release.env.next run --rm --no-deps web python tools/backup_databases.py
+          docker compose --env-file .release.env.next run --rm \
+            --interactive=false --no-deps web python tools/backup_databases.py \
+            </dev/null
           docker compose --profile canary --env-file .release.env.next run --rm \
-            --no-deps canary python tools/migration_dry_run.py
-          docker compose --env-file .release.env.next run --rm --no-deps migrate
-          docker compose --env-file .release.env.next run --rm --no-deps web python tools/predeploy_check.py
+            --interactive=false --no-deps canary python tools/migration_dry_run.py \
+            </dev/null
+          docker compose --env-file .release.env.next run --rm \
+            --interactive=false --no-deps migrate </dev/null
+          docker compose --env-file .release.env.next run --rm \
+            --interactive=false --no-deps web python tools/predeploy_check.py \
+            </dev/null
           EXPECTED_IMAGE="${RUNTIME_IMAGE}"
           EXPECTED_IMAGE_ID="${RUNTIME_IMAGE_ID}"
           cleanup_canary
           docker compose --profile canary --env-file .release.env.next run -d \
-            --name "$CANARY_NAME" --no-deps canary
+            --interactive=false --name "$CANARY_NAME" --no-deps canary \
+            </dev/null
           test "$(docker inspect -f '{{.Config.Image}}' "$CANARY_NAME")" = "$EXPECTED_IMAGE"
           test "$(docker inspect -f '{{.Image}}' "$CANARY_NAME")" = "$EXPECTED_IMAGE_ID"
           CANARY_READY=0
@@ -457,6 +466,9 @@ jobs:
           PY
             then
               docker compose --env-file .release.env ps
+              printf '%s %s\n' "$RELEASE_SHA" "$RUNTIME_IMAGE_ID" > \
+                "${DEPLOY_RECEIPT}.next"
+              mv "${DEPLOY_RECEIPT}.next" "$DEPLOY_RECEIPT"
               trap - HUP INT TERM
               exit 0
             fi
@@ -465,3 +477,5 @@ jobs:
           rollback_failed_release
           exit 1
           REMOTE
+          ssh "$USER@$HOST" \
+            "test \"\$(cat '/opt/a-share-quant/.deploy-success-${RELEASE_SHA}')\" = '$RELEASE_SHA $RUNTIME_IMAGE_ID'"

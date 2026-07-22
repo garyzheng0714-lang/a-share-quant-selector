@@ -177,9 +177,9 @@ class RuntimeSchemaTest(unittest.TestCase):
             encoding="utf-8"
         )
         commands = [
-            "run --rm --no-deps web python tools/backup_databases.py",
-            "run --rm --no-deps migrate",
-            "run --rm --no-deps web python tools/predeploy_check.py",
+            "--no-deps web python tools/backup_databases.py",
+            "--no-deps migrate </dev/null",
+            "--no-deps web python tools/predeploy_check.py",
         ]
         positions = [workflow.index(command) for command in commands]
 
@@ -196,6 +196,7 @@ class RuntimeSchemaTest(unittest.TestCase):
             'EXPECTED_IMAGE_ID="${RUNTIME_IMAGE_ID}"',
             "{{.Config.Image}}",
             "{{.Image}}",
+            'DEPLOY_RECEIPT=".deploy-success-${RELEASE_SHA}"',
             'version.get("git_commit_sha") == os.environ["EXPECTED_SHA"]',
             'version.get("snapshot_available") is True',
             'readiness.get("ready") is True',
