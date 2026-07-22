@@ -662,36 +662,10 @@ class AKShareFetcher:
             print(f"  HTTP获取历史数据失败: {e}")
             return None
 
-    def fetch_stock_history(self, stock_code, years=6) -> FetchResult:
-        """
-        抓取单只股票历史数据
-        前复权，按日期倒序排列
-        """
+    def _fetch_stock_history_akshare(self, stock_code, years=6) -> FetchResult:
+        """直接从 AkShare 获取历史数据，可作为日期过期时的备用源。"""
         end_date = datetime.now()
         start_date = end_date - timedelta(days=365 * years)
-        start_str = start_date.strftime("%Y-%m-%d")
-        end_str = end_date.strftime("%Y-%m-%d")
-        failures = []
-
-        # 方法1: 直接HTTP请求
-        try:
-            df = self._fetch_stock_history_http(stock_code, years)
-            if df is not None and not df.empty:
-                print(f"✓ (HTTP获取 {len(df)}条)")
-                return FetchResult.ok(
-                    df,
-                    source="tencent",
-                    requested_start=start_str,
-                    requested_end=end_str,
-                )
-            else:
-                print("  HTTP返回空数据，尝试akshare...")
-                failures.append("tencent:empty")
-        except Exception as e:
-            print(f"  HTTP异常: {e}，尝试akshare...")
-            failures.append(f"tencent:{type(e).__name__}")
-
-        # 方法2: akshare
         try:
             start_str = start_date.strftime("%Y%m%d")
             end_str = end_date.strftime("%Y%m%d")
@@ -737,10 +711,52 @@ class AKShareFetcher:
                     requested_start=start_date.strftime("%Y-%m-%d"),
                     requested_end=end_date.strftime("%Y-%m-%d"),
                 )
-            failures.append("akshare:empty")
-        except Exception as e:
+            failure = "akshare:empty"
+        except Exception as exc:
             print("  akshare获取失败")
-            failures.append(f"akshare:{type(e).__name__}")
+            failure = f"akshare:{type(exc).__name__}"
+
+        return FetchResult.failure(
+            source="akshare",
+            reason="source_failed",
+            requested_start=start_date.strftime("%Y-%m-%d"),
+            requested_end=end_date.strftime("%Y-%m-%d"),
+            details={"failures": [failure]},
+        )
+
+    def fetch_stock_history(self, stock_code, years=6) -> FetchResult:
+        """
+        抓取单只股票历史数据
+        前复权，按日期倒序排列
+        """
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=365 * years)
+        start_str = start_date.strftime("%Y-%m-%d")
+        end_str = end_date.strftime("%Y-%m-%d")
+        failures = []
+
+        # 方法1: 直接HTTP请求
+        try:
+            df = self._fetch_stock_history_http(stock_code, years)
+            if df is not None and not df.empty:
+                print(f"✓ (HTTP获取 {len(df)}条)")
+                return FetchResult.ok(
+                    df,
+                    source="tencent",
+                    requested_start=start_str,
+                    requested_end=end_str,
+                )
+            print("  HTTP返回空数据，尝试akshare...")
+            failures.append("tencent:empty")
+        except Exception as exc:
+            print(f"  HTTP异常: {exc}，尝试akshare...")
+            failures.append(f"tencent:{type(exc).__name__}")
+
+        # 方法2: akshare
+        fallback = self._fetch_stock_history_akshare(stock_code, years=years)
+        if fallback.success:
+            return fallback
+        failures.extend(fallback.details.get("failures") or [fallback.reason])
 
         return FetchResult.failure(
             source="tencent+akshare",
@@ -1141,6 +1157,12 @@ class AKShareFetcher:
                 ].copy()
                 if not complete.empty:
                     self.csv_manager.write_stock(code, complete)
+            latest = self.csv_manager.read_stock(code, nrows=1)
+            latest_date = str(latest.iloc[0]["date"])[:10] if not latest.empty else None
+            if latest_date != completed_cutoff:
+                if not legal_non_trading(code):
+                    queue.append(code)
+                continue
             rows = len(self.csv_manager.read_stock(code, nrows=220))
             if rows < 220 and code not in short_history:
                 queue.append(code)
@@ -1152,22 +1174,43 @@ class AKShareFetcher:
             {"status": "running", "universe_count": len(universe), "current": None}
         )
         self._save_bootstrap_state(state)
-        for index, code in enumerate(queue, start=1):
-            state["current"] = code
-            attempts[code] = int(attempts.get(code, 0)) + 1
-            fetch = self.fetch_stock_history(code, years=years)
-            frame = fetch.data if fetch.success else pd.DataFrame()
+
+        def persisted_frame(result: FetchResult) -> tuple[pd.DataFrame, str | None]:
+            frame = result.data.copy() if result.success else pd.DataFrame()
             if not frame.empty:
                 frame = frame[
                     pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d")
                     <= completed_cutoff
                 ].copy()
-            rows = len(frame)
             latest = (
                 pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d").max()
-                if rows and "date" in frame
+                if not frame.empty and "date" in frame
                 else None
             )
+            return frame, latest
+
+        for index, code in enumerate(queue, start=1):
+            state["current"] = code
+            attempts[code] = int(attempts.get(code, 0)) + 1
+            fetch = self.fetch_stock_history(code, years=years)
+            frame, latest = persisted_frame(fetch)
+            if (
+                not legal_non_trading(code)
+                and fetch.success
+                and fetch.source == "tencent"
+                and latest != completed_cutoff
+            ):
+                print(
+                    f"  腾讯数据截止 {latest or '空'}，"
+                    f"未覆盖 {completed_cutoff}，改用 AkShare 复核..."
+                )
+                fallback = self._fetch_stock_history_akshare(code, years=years)
+                fallback_frame, fallback_latest = persisted_frame(fallback)
+                if fallback.success and fallback_latest == completed_cutoff:
+                    fetch = fallback
+                    frame = fallback_frame
+                    latest = fallback_latest
+            rows = len(frame)
             acceptable = bool(
                 rows >= 1 and (latest == completed_cutoff or legal_non_trading(code))
             )
@@ -1217,12 +1260,19 @@ class AKShareFetcher:
             }
         )
         self._save_bootstrap_state(state)
+        failure_reason_counts: dict[str, int] = {}
+        for code, item in failures.items():
+            if code not in universe or not isinstance(item, dict):
+                continue
+            reason = str(item.get("reason") or "unknown")
+            failure_reason_counts[reason] = failure_reason_counts.get(reason, 0) + 1
         return {
             **coverage,
             "attempted": len(queue),
             "added": added,
             "trainable_added": trainable_added,
             "failed": failed,
+            "failure_reason_counts": dict(sorted(failure_reason_counts.items())),
             "status": state["status"],
         }
 

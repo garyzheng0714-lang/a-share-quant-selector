@@ -114,6 +114,61 @@ class UniverseExpansionTest(unittest.TestCase):
         "utils.data_freshness.expected_completed_trade_date",
         return_value=TARGET_DATE,
     )
+    @patch("utils.akshare_fetcher.time.sleep", return_value=None)
+    def test_stale_tencent_history_is_rechecked_with_akshare(self, _sleep, _cutoff):
+        with tempfile.TemporaryDirectory() as tmp:
+            fetcher = AKShareFetcher(tmp)
+            fetcher._main_board_universe = lambda: {"600000": "浦发银行"}
+            fetcher.fetch_stock_history = lambda code, years: FetchResult.ok(
+                self._history(220).assign(
+                    date=pd.date_range(end="2026-07-13", periods=220, freq="B")
+                ),
+                source="tencent",
+            )
+            fetcher._fetch_stock_history_akshare = lambda code, years: FetchResult.ok(
+                self._history(220),
+                source="akshare",
+            )
+
+            result = fetcher.bootstrap_universe()
+            provenance = json.loads(
+                (Path(tmp) / "ingestion_provenance.json").read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(result["failed"], 0)
+            self.assertEqual(result["remaining_count"], 0)
+            self.assertEqual(provenance["stocks"]["600000"]["source_id"], "akshare")
+
+    @patch(
+        "utils.data_freshness.expected_completed_trade_date",
+        return_value=TARGET_DATE,
+    )
+    def test_resumed_snapshot_refreshes_existing_stock_from_older_trade_date(
+        self, _cutoff
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            fetcher = AKShareFetcher(tmp)
+            fetcher._main_board_universe = lambda: {"600000": "浦发银行"}
+            stale = self._history(220).assign(
+                date=pd.date_range(end="2026-07-13", periods=220, freq="B")
+            )
+            fetcher.csv_manager.write_stock("600000", stale)
+            fetcher.fetch_stock_history = lambda code, years: FetchResult.ok(
+                self._history(220),
+                source="tencent",
+            )
+
+            result = fetcher.bootstrap_universe()
+            saved = fetcher.csv_manager.read_stock("600000", nrows=1)
+
+            self.assertEqual(result["attempted"], 1)
+            self.assertEqual(result["failed"], 0)
+            self.assertEqual(str(saved.iloc[0]["date"])[:10], self.TARGET_DATE)
+
+    @patch(
+        "utils.data_freshness.expected_completed_trade_date",
+        return_value=TARGET_DATE,
+    )
     def test_short_listing_is_covered_but_not_counted_as_training_failure(
         self, _cutoff
     ):

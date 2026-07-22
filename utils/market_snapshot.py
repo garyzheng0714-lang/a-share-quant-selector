@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,8 @@ SCHEMA_VERSION = "market-eod-v2"
 CURRENT_POINTER = "CURRENT_SNAPSHOT"
 SNAPSHOT_DIR = "market_snapshots"
 STAGING_DIR = ".snapshot_staging"
+REBUILD_MARKER = "trusted-rebuild.json"
+REBUILD_MARKER_SCHEMA = "trusted-full-rebuild-v1"
 REQUIRED_COLUMNS = {
     "date",
     "open",
@@ -313,7 +316,80 @@ def prepare_empty_staging_snapshot(data_dir: str | Path = "data") -> StagingSnap
     )
     payload = root / "payload"
     payload.mkdir()
+    (root / REBUILD_MARKER).write_text(
+        json.dumps(
+            {
+                "schema_version": REBUILD_MARKER_SCHEMA,
+                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
     return StagingSnapshot(root=root, payload_dir=payload, base_snapshot_id=None)
+
+
+def find_resumable_rebuild_snapshot(
+    data_dir: str | Path = "data",
+    *,
+    max_age_hours: float = 24.0,
+) -> StagingSnapshot | None:
+    """找到最新的可信未完成全量重建，用于只续抓缺口。
+
+    旧版重建没有 marker，因此还会核对股票池、来源记录和 CSV
+    的一致性。最终 promote 仍会做全量 hash/schema/日期质量校验。
+    """
+    if max_age_hours <= 0:
+        return None
+    staging_parent = Path(data_dir) / STAGING_DIR
+    if not staging_parent.is_dir():
+        return None
+    cutoff = time.time() - max_age_hours * 3600
+    candidates = sorted(
+        (path for path in staging_parent.glob("rebuild-*") if path.is_dir()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for root in candidates:
+        payload = root / "payload"
+        if not payload.is_dir() or root.stat().st_mtime < cutoff:
+            continue
+        marker_path = root / REBUILD_MARKER
+        marker = _read_json(marker_path, {})
+        if (
+            marker_path.is_file()
+            and marker.get("schema_version") != REBUILD_MARKER_SCHEMA
+        ):
+            continue
+        universe, universe_manifest = _approved_universe(payload)
+        if universe_manifest.get("valid") is not True:
+            continue
+        provenance_payload = _read_json(payload / "ingestion_provenance.json", {})
+        if provenance_payload.get("schema_version") != "ingestion-provenance-v1":
+            continue
+        provenance = provenance_payload.get("stocks") or {}
+        if not isinstance(provenance, dict):
+            continue
+        csv_codes = {
+            path.stem
+            for path in payload.glob("[0-9][0-9]/[0-9][0-9][0-9][0-9][0-9][0-9].csv")
+        }
+        if (
+            not csv_codes
+            or not csv_codes.issubset(universe)
+            or csv_codes != set(provenance)
+        ):
+            continue
+        if any(
+            not isinstance(item, dict)
+            or item.get("source_id") not in TRUSTED_SOURCES
+            or item.get("synthetic") is True
+            for item in provenance.values()
+        ):
+            continue
+        return StagingSnapshot(root=root, payload_dir=payload, base_snapshot_id=None)
+    return None
 
 
 def validate_snapshot_payload(

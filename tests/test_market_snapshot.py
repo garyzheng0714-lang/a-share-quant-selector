@@ -10,9 +10,12 @@ import pandas as pd
 from utils.market_snapshot import (
     ANCHOR_CODES,
     METADATA_FILES,
+    REBUILD_MARKER,
     StagingSnapshot,
     _approved_universe,
+    find_resumable_rebuild_snapshot,
     load_current_market_snapshot,
+    prepare_empty_staging_snapshot,
     promote_staging_snapshot,
     validate_snapshot_payload,
 )
@@ -216,6 +219,58 @@ class MarketSnapshotTest(unittest.TestCase):
             self.assertFalse(result["promoted"])
             self.assertEqual(pointer.read_text(encoding="utf-8").strip(), "f" * 64)
             self.assertGreater(result["quality"]["synthetic_rows"], 0)
+
+    def test_verified_partial_full_rebuild_can_resume_without_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            staging = prepare_empty_staging_snapshot(data_root)
+            (staging.root / REBUILD_MARKER).unlink()
+            code = "600000"
+            csv_path = staging.payload_dir / code[:2] / f"{code}.csv"
+            csv_path.parent.mkdir(parents=True)
+            row().to_csv(csv_path, index=False)
+            (staging.payload_dir / "ingestion_provenance.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "ingestion-provenance-v1",
+                        "stocks": {code: {"source_id": "tencent", "synthetic": False}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch(
+                "utils.market_snapshot._approved_universe",
+                return_value=({code: "浦发银行"}, {"valid": True}),
+            ):
+                resumed = find_resumable_rebuild_snapshot(data_root)
+
+            self.assertIsNotNone(resumed)
+            self.assertEqual(resumed.root, staging.root)
+
+    def test_untrusted_partial_full_rebuild_is_never_resumed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            staging = prepare_empty_staging_snapshot(data_root)
+            code = "600000"
+            csv_path = staging.payload_dir / code[:2] / f"{code}.csv"
+            csv_path.parent.mkdir(parents=True)
+            row().to_csv(csv_path, index=False)
+            (staging.payload_dir / "ingestion_provenance.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "ingestion-provenance-v1",
+                        "stocks": {code: {"source_id": "unknown", "synthetic": False}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch(
+                "utils.market_snapshot._approved_universe",
+                return_value=({code: "浦发银行"}, {"valid": True}),
+            ):
+                resumed = find_resumable_rebuild_snapshot(data_root)
+
+            self.assertIsNone(resumed)
 
     def test_untracked_operational_file_cannot_enter_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
