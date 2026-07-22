@@ -192,8 +192,10 @@ class RuntimeSchemaTest(unittest.TestCase):
         )
 
         for evidence in (
-            'EXPECTED_IMAGE="${IMAGE}@${DIGEST}"',
+            'EXPECTED_IMAGE="${RUNTIME_IMAGE}"',
+            'EXPECTED_IMAGE_ID="${RUNTIME_IMAGE_ID}"',
             "{{.Config.Image}}",
+            "{{.Image}}",
             'version.get("git_commit_sha") == os.environ["EXPECTED_SHA"]',
             'version.get("snapshot_available") is True',
             'readiness.get("ready") is True',

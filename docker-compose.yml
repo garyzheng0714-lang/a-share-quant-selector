@@ -1,5 +1,6 @@
 x-quant-common: &quant-common
-  image: ${QUANT_IMAGE:?QUANT_IMAGE must be an immutable image digest}
+  image: ${QUANT_IMAGE:?QUANT_IMAGE must identify the verified release image}
+  pull_policy: never
   restart: unless-stopped
   environment:
     TZ: Asia/Shanghai

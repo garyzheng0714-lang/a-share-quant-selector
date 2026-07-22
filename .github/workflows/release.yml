@@ -176,7 +176,7 @@ jobs:
   deploy:
     needs: [verify, build]
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -198,20 +198,42 @@ jobs:
         run: |
           ssh "$USER@$HOST" "mkdir -p /opt/a-share-quant"
           scp docker-compose.yml "$USER@$HOST:/opt/a-share-quant/docker-compose.yml.next"
-      - name: Stage exact image digest on server
-        timeout-minutes: 60
+      - name: Stage verified image through SSH
+        id: stage
+        timeout-minutes: 90
         env:
           HOST: ${{ secrets.SERVER_HOST }}
           USER: ${{ secrets.SERVER_USER }}
           IMAGE: ${{ needs.build.outputs.image }}
           DIGEST: ${{ needs.build.outputs.digest }}
+          RELEASE_SHA: ${{ needs.verify.outputs.sha }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          printf '%s' "$GHCR_TOKEN" | ssh "$USER@$HOST" \
-            "docker login ghcr.io --username '$GHCR_USER' --password-stdin"
+          set -euo pipefail
+          SOURCE_IMAGE="${IMAGE}@${DIGEST}"
+          RUNTIME_IMAGE="${IMAGE}:local-${RELEASE_SHA}"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io \
+            --username "$GHCR_USER" --password-stdin
+          docker pull "$SOURCE_IMAGE"
+          RUNTIME_IMAGE_ID=$(docker image inspect --format '{{.Id}}' "$SOURCE_IMAGE")
+          test "${RUNTIME_IMAGE_ID#sha256:}" != "$RUNTIME_IMAGE_ID"
+          test "${#RUNTIME_IMAGE_ID}" -eq 71
+          test "$(docker image inspect --format \
+            '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+            "$SOURCE_IMAGE")" = "$RELEASE_SHA"
+          docker tag "$SOURCE_IMAGE" "$RUNTIME_IMAGE"
+          if ! ssh "$USER@$HOST" \
+            "test \"\$(docker image inspect --format '{{.Id}}' '$RUNTIME_IMAGE' 2>/dev/null)\" = '$RUNTIME_IMAGE_ID'"
+          then
+            docker save "$RUNTIME_IMAGE" | gzip -1 | \
+              ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=8 \
+                "$USER@$HOST" "docker load >/dev/null"
+          fi
           ssh "$USER@$HOST" \
-            "docker pull '$IMAGE@$DIGEST' && docker image inspect '$IMAGE@$DIGEST' >/dev/null"
+            "test \"\$(docker image inspect --format '{{.Id}}' '$RUNTIME_IMAGE')\" = '$RUNTIME_IMAGE_ID'"
+          echo "image=$RUNTIME_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "image_id=$RUNTIME_IMAGE_ID" >> "$GITHUB_OUTPUT"
       - name: Deploy exact digest with backup and rollback
         timeout-minutes: 25
         env:
@@ -220,15 +242,21 @@ jobs:
           IMAGE: ${{ needs.build.outputs.image }}
           DIGEST: ${{ needs.build.outputs.digest }}
           RELEASE_SHA: ${{ needs.verify.outputs.sha }}
+          RUNTIME_IMAGE: ${{ steps.stage.outputs.image }}
+          RUNTIME_IMAGE_ID: ${{ steps.stage.outputs.image_id }}
         run: |
           ssh "$USER@$HOST" \
-            "IMAGE='$IMAGE' DIGEST='$DIGEST' RELEASE_SHA='$RELEASE_SHA' bash -s" <<'REMOTE'
+            "IMAGE='$IMAGE' DIGEST='$DIGEST' RELEASE_SHA='$RELEASE_SHA' RUNTIME_IMAGE='$RUNTIME_IMAGE' RUNTIME_IMAGE_ID='$RUNTIME_IMAGE_ID' bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/a-share-quant
           test "${#RELEASE_SHA}" -eq 40
           test "${DIGEST#sha256:}" != "$DIGEST"
+          test "$RUNTIME_IMAGE" = "${IMAGE}:local-${RELEASE_SHA}"
+          test "${RUNTIME_IMAGE_ID#sha256:}" != "$RUNTIME_IMAGE_ID"
+          test "${#RUNTIME_IMAGE_ID}" -eq 71
           test -f docker-compose.yml.next
-          docker image inspect "${IMAGE}@${DIGEST}" >/dev/null
+          test "$(docker image inspect --format '{{.Id}}' "$RUNTIME_IMAGE")" = \
+            "$RUNTIME_IMAGE_ID"
           install -m 700 -d secrets
           ensure_runtime_token() {
             path=$1
@@ -312,7 +340,9 @@ jobs:
           trap 'restore_before_switch 130' HUP INT TERM
           mv docker-compose.yml.next docker-compose.yml
           {
-            echo "QUANT_IMAGE=${IMAGE}@${DIGEST}"
+            echo "QUANT_IMAGE=${RUNTIME_IMAGE}"
+            echo "QUANT_IMAGE_ID=${RUNTIME_IMAGE_ID}"
+            echo "QUANT_SOURCE_IMAGE=${IMAGE}@${DIGEST}"
             echo "GIT_COMMIT_SHA=${RELEASE_SHA}"
             echo "QUANT_ADMIN_TOKEN_FILE=/opt/a-share-quant/secrets/admin-token"
             echo "QUANT_PUBLISHER_TOKEN_FILE=/opt/a-share-quant/secrets/publisher-token"
@@ -328,11 +358,13 @@ jobs:
             --no-deps canary python tools/migration_dry_run.py
           docker compose --env-file .release.env.next run --rm --no-deps migrate
           docker compose --env-file .release.env.next run --rm --no-deps web python tools/predeploy_check.py
-          EXPECTED_IMAGE="${IMAGE}@${DIGEST}"
+          EXPECTED_IMAGE="${RUNTIME_IMAGE}"
+          EXPECTED_IMAGE_ID="${RUNTIME_IMAGE_ID}"
           cleanup_canary
           docker compose --profile canary --env-file .release.env.next run -d \
             --name "$CANARY_NAME" --no-deps canary
           test "$(docker inspect -f '{{.Config.Image}}' "$CANARY_NAME")" = "$EXPECTED_IMAGE"
+          test "$(docker inspect -f '{{.Image}}' "$CANARY_NAME")" = "$EXPECTED_IMAGE_ID"
           CANARY_READY=0
           for attempt in $(seq 1 20); do
             if docker exec -i -e EXPECTED_SHA="$RELEASE_SHA" \
@@ -386,6 +418,8 @@ jobs:
               && test -n "$worker_container" \
               && test "$(docker inspect -f '{{.Config.Image}}' "$web_container")" = "$EXPECTED_IMAGE" \
               && test "$(docker inspect -f '{{.Config.Image}}' "$worker_container")" = "$EXPECTED_IMAGE" \
+              && test "$(docker inspect -f '{{.Image}}' "$web_container")" = "$EXPECTED_IMAGE_ID" \
+              && test "$(docker inspect -f '{{.Image}}' "$worker_container")" = "$EXPECTED_IMAGE_ID" \
               && docker compose --env-file .release.env exec -T \
                 -e EXPECTED_SHA="$RELEASE_SHA" web python - <<'PY'
           import json

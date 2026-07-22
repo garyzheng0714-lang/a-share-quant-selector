@@ -134,7 +134,7 @@ python tools/predeploy_check.py
 
 数据库恢复不自动执行，因为覆盖数据可能丢失备份后的新事件。需要恢复时：
 
-1. 停止 worker 和所有写请求，记录当前 SHA、镜像 digest、snapshot ID 和数据库文件哈希。
+1. 停止 worker 和所有写请求，记录当前 SHA、源镜像 digest、运行镜像 ID、snapshot ID 和数据库文件哈希。
 2. 复制当前 DB/WAL/SHM 到独立取证目录，不在原文件上尝试修复。
 3. 在临时目录恢复备份，验证 manifest hash、`PRAGMA integrity_check`、外键、schema 和关键账本余额。
 4. 明确评估会丢失的新写入，经变更批准后再替换生产 DB。
@@ -142,15 +142,15 @@ python tools/predeploy_check.py
 
 ## Docker Compose
 
-生产环境变量必须包含不可变镜像 digest、40 位 SHA 和三个 secret file 绝对路径。然后执行：
+生产 `.release.env` 由发布 workflow 生成，必须同时记录唯一本地镜像标识、内容寻址镜像 ID、经签名扫描的源 digest、40 位 SHA 和三个 secret file 绝对路径。Compose 禁止自行拉取镜像；镜像必须先由 workflow 传入并验证 ID，然后执行：
 
 ```bash
-docker compose --env-file .release.env pull
+docker image inspect "$(sed -n 's/^QUANT_IMAGE=//p' .release.env)"
 docker compose --env-file .release.env up -d --remove-orphans
 docker compose --env-file .release.env ps
 ```
 
-Compose 会先运行一次性 `migrate`，只有成功后才启动 web/worker。Web 只读挂载市场数据 volume，对独立 state volume 保留审计、限流和任务写权，并只绑定 `127.0.0.1:18321`；若需远程访问，必须通过受控反向代理/VPN，不得改为公网 `0.0.0.0`。`canary` profile 不常驻、不发布端口，对 data/state 两个 volume 都只读，只供发布流程在正式切换前验证候选 digest。
+Compose 会先运行一次性 `migrate`，只有成功后才启动 web/worker。Web 只读挂载市场数据 volume，对独立 state volume 保留审计、限流和任务写权，并只绑定 `127.0.0.1:18321`；若需远程访问，必须通过受控反向代理/VPN，不得改为公网 `0.0.0.0`。`canary` profile 不常驻、不发布端口，对 data/state 两个 volume 都只读，只供发布流程在正式切换前验证候选镜像 ID、SHA 和数据状态。
 
 ## 发布和回滚
 
@@ -158,10 +158,11 @@ Compose 会先运行一次性 `migrate`，只有成功后才启动 web/worker。
 
 1. 再次验证后端/前端门禁；
 2. 只构建一次，推送 SHA tag，生成 provenance/SBOM，按 digest 签名和扫描；
-3. 停止旧 web/worker，在线备份静止账本，在临时数据库副本上完成迁移演练，再使用新镜像显式迁移正式库并执行只读预检；
-4. 启动不发布端口、只读挂载 data/state 的候选 canary，核对镜像 digest、`/healthz`、`/api/version`、snapshot 和 `/api/stats` 后删除 canary；
-5. 按 digest 切换 web/worker，并验证线上 digest、预期 SHA、snapshot、readiness、关键只读查询和 scheduler leader；
-6. canary 或切换前检查失败时清理候选容器、恢复旧发布文件并重启旧服务；切换或线上健康检查失败时回退上一个 Compose/镜像。
+3. GitHub runner 按源 digest 拉取镜像并复验构建 SHA，以压缩流通过 SSH 传入目标主机，只有服务器镜像 ID 与 runner 完全相同才继续；
+4. 停止旧 web/worker，在线备份静止账本，在临时数据库副本上完成迁移演练，再使用新镜像显式迁移正式库并执行只读预检；
+5. 启动不发布端口、只读挂载 data/state 的候选 canary，核对镜像 ID、`/healthz`、`/api/version`、snapshot 和 `/api/stats` 后删除 canary；
+6. 切换 web/worker，并验证线上镜像 ID、预期 SHA、snapshot、readiness、关键只读查询和 scheduler leader；
+7. canary 或切换前检查失败时清理候选容器、恢复旧发布文件并重启旧服务；切换或线上健康检查失败时回退上一个 Compose/镜像。
 
 当前 migration 只允许向前兼容变更。回滚应用默认保留数据 volume；只有数据库已损坏或经评审确认 schema 不兼容时，才进入人工恢复流程。
 
