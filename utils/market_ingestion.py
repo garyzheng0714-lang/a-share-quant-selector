@@ -277,13 +277,28 @@ def _run_full_rebuild(
             "resumed_staging": resumed_staging,
             "bootstrap": result,
         }
+    required_source_count = int(os.environ.get("QUANT_SNAPSHOT_SOURCE_QUORUM", "2"))
+    if required_source_count >= 2:
+        source_quorum = fetcher.ensure_akshare_history_anchor(
+            trade_date,
+            years=years,
+        )
+        result["source_quorum"] = source_quorum
+        if source_quorum.get("success") is not True:
+            return {
+                "success": False,
+                "reason": "history_source_quorum_unavailable",
+                "staging_dir": str(staging.root),
+                "resumed_staging": resumed_staging,
+                "bootstrap": result,
+            }
     promoted = promote_staging_snapshot(
         staging,
         trade_date,
         data_dir=data_dir,
         code_sha=_code_sha(),
         minimum_coverage=float(os.environ.get("QUANT_MIN_SNAPSHOT_COVERAGE", "0.98")),
-        required_source_count=int(os.environ.get("QUANT_SNAPSHOT_SOURCE_QUORUM", "2")),
+        required_source_count=required_source_count,
     )
     return {
         "success": bool(promoted.get("promoted")),

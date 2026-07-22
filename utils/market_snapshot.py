@@ -504,7 +504,15 @@ def validate_snapshot_payload(
             anchor_dates[code] = latest
         source = provenance.get(code) or {}
         source_id = source.get("source_id")
-        is_synthetic = bool(source.get("synthetic")) or source_id not in TRUSTED_SOURCES
+        history_source_id = source.get("history_source_id")
+        is_synthetic = (
+            bool(source.get("synthetic"))
+            or source_id not in TRUSTED_SOURCES
+            or (
+                history_source_id is not None
+                and history_source_id not in TRUSTED_SOURCES
+            )
+        )
         if is_synthetic:
             synthetic_rows += len(frame)
             errors.append("untrusted_or_synthetic_source")
@@ -530,6 +538,8 @@ def validate_snapshot_payload(
             errors.append("historical_provenance_incomplete")
         if source_id in TRUSTED_SOURCES:
             sources.add(source_id)
+        if history_source_id in TRUSTED_SOURCES:
+            sources.add(history_source_id)
         if latest != trade_date:
             stale_codes[code] = latest
             if legal_non_trading:
@@ -545,6 +555,7 @@ def validate_snapshot_payload(
             "first_trade_date": earliest,
             "source_trade_date": latest,
             "source_id": source_id,
+            "history_source_id": history_source_id,
             "fetched_at": source.get("fetched_at"),
             "adjustment": source.get("adjustment"),
             "schema_version": "stock-eod-v1",

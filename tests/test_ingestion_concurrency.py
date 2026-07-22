@@ -78,6 +78,12 @@ class IngestionConcurrencyTest(unittest.TestCase):
                     "failure_reason_counts": {},
                 },
             ]
+            fetcher.ensure_akshare_history_anchor.return_value = {
+                "success": True,
+                "updated": True,
+                "code": "600519",
+                "source_set": ["akshare", "tencent"],
+            }
             with (
                 patch(
                     "utils.market_ingestion.find_resumable_rebuild_snapshot",
@@ -104,6 +110,9 @@ class IngestionConcurrencyTest(unittest.TestCase):
             self.assertTrue(result["resumed_staging"])
             self.assertEqual(result["bootstrap"]["pass_count"], 2)
             self.assertEqual(fetcher.bootstrap_universe.call_count, 2)
+            fetcher.ensure_akshare_history_anchor.assert_called_once_with(
+                "2026-07-14", years=6
+            )
             promote.assert_called_once()
 
 
