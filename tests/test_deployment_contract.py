@@ -94,7 +94,7 @@ def test_release_stages_image_before_transactional_deploy() -> None:
     assert "run -d --interactive=false" in bootstrap_script
     ownership_init = "run --rm --interactive=false --no-deps --user 0:0 --cap-add CHOWN"
     assert ownership_init in bootstrap_script
-    assert "worker chown 10001:10001 /app/data" in bootstrap_script
+    assert "worker chown -R 10001:10001 /app/data" in bootstrap_script
     assert bootstrap_script.index(ownership_init) < bootstrap_script.index(
         "tools/bootstrap_market_snapshot.py"
     )
