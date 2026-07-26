@@ -1,8 +1,22 @@
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="A 股量化研究与分层决策系统：数据契约校验项与 buy、observe、avoid 分层结果计数（示意数据）">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/%E7%94%A8%E9%80%94-%E7%A0%94%E7%A9%B6%E4%B8%8E%E8%87%AA%E5%8A%A8%E5%8C%96%E5%88%86%E6%9E%90-2563eb?style=flat-square" alt="研究与自动化分析">
+  <img src="https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11">
+  <img src="https://img.shields.io/badge/%E6%95%B0%E6%8D%AE-AkShare-0f766e?style=flat-square" alt="AkShare">
+  <img src="https://img.shields.io/badge/%E5%AD%98%E5%82%A8-SQLite%20%E5%8D%95%E6%9C%BA-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite 单机">
+  <img src="https://img.shields.io/badge/%E7%9C%9F%E5%AE%9E%E4%BA%A4%E6%98%93-%E4%B8%8D%E6%8E%A5%E5%85%A5-dc2626?style=flat-square" alt="不接入真实交易">
+</p>
+
 # A 股量化研究与分层决策系统
 
-这是一个基于 Python、AkShare、Flask、SQLite 和 React 的 A 股研究工具。它负责构建不可变行情快照、生成 Super B1 候选、执行分层决策、记录模拟盘和样本外证据。
+基于 Python、AkShare、Flask、SQLite 和 React 的 A 股研究工具。负责构建不可变行情快照、生成 Super B1 候选、执行分层决策、记录模拟盘和样本外证据。
 
-> 本项目只用于研究和自动化分析，不构成投资建议，不承诺收益，不允许接入真实交易。
+数据这一关卡得很死：全市场数据先写 staging，freshness、OHLC、交易日历、覆盖率、来源和哈希全部校验通过，才原子切换成当前快照。**外部数据失败时直接失败，不生成随机或模拟行情。**
+
+> **本项目只用于研究和自动化分析，不构成投资建议，不承诺收益，不允许接入真实交易。** LLM 只解释已确定的动作，不能选股、改排名或改写 buy / observe / avoid。
 
 ## 当前状态
 

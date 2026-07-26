@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="380" viewBox="0 0 1200 380" role="img" aria-labelledby="heroTitle heroDesc">
+  <title id="heroTitle">A 股量化研究与分层决策系统</title>
+  <desc id="heroDesc">研究用工具：先把行情快照按数据契约校验到可信，再用统一 policy 引擎产出 buy、observe、avoid 分层结果与模拟盘账本。图中上方是快照校验项，下方是分层结果的标的计数。示意数据，不构成投资建议。</desc>
+
+  <defs>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", monospace; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="380" rx="26" fill="#0A0E14"/>
+
+  <!-- 左：标题区 -->
+  <g id="title-block" class="sans">
+    <rect x="64" y="72" width="6" height="22" rx="3" fill="#38BDF8"/>
+    <text x="82" y="90" font-size="22" font-weight="600" fill="#7DD3FC" letter-spacing="1">A 股量化研究 · 分层决策</text>
+
+    <text x="64" y="160" font-size="50" font-weight="700" fill="#FFFFFF" letter-spacing="1">量化研究系统</text>
+
+    <text x="64" y="210" font-size="24" fill="#94A3B0">先把行情快照校验到可信，再跑统一决策规则，</text>
+    <text x="64" y="246" font-size="24" fill="#94A3B0">产出分层结果与模拟盘账本。</text>
+
+    <text x="64" y="304" font-size="18" class="mono" fill="#5A6472">Python · AkShare · Flask · SQLite · React</text>
+    <text x="64" y="336" font-size="16" fill="#4B5563">仅用于研究与自动化分析，不构成投资建议</text>
+  </g>
+
+  <!-- 右上：数据契约校验 -->
+  <g id="contract" class="sans">
+    <rect x="600" y="56" width="536" height="128" rx="10" fill="#111820"/>
+    <text x="618" y="82" font-size="16" fill="#6E7C8A">数据契约校验 · 通过后才原子切换 snapshot</text>
+
+    <g font-size="16">
+      <path d="M620 104 l5 5 9 -10" fill="none" stroke="#22C55E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="644" y="111" fill="#C6D0DA">freshness = 预期已完成交易日</text>
+
+      <path d="M620 140 l5 5 9 -10" fill="none" stroke="#22C55E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="644" y="147" fill="#C6D0DA">覆盖率 98.6%（下限 98%）</text>
+
+      <path d="M886 104 l5 5 9 -10" fill="none" stroke="#22C55E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="910" y="111" fill="#C6D0DA">锚定股 12 / 12</text>
+
+      <path d="M886 140 l5 5 9 -10" fill="none" stroke="#22C55E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="910" y="147" fill="#C6D0DA">来源与哈希一致</text>
+    </g>
+    <text x="618" y="172" font-size="15" class="mono" fill="#4E5A68">外部数据失败即失败，不生成随机或模拟行情</text>
+  </g>
+
+  <!-- 右下：分层结果 -->
+  <g id="tiers" class="sans">
+    <rect x="600" y="200" width="170" height="94" rx="10" fill="#0E2318"/>
+    <text x="618" y="228" font-size="17" font-weight="600" fill="#4ADE80">buy</text>
+    <text x="618" y="270" font-size="30" font-weight="700" fill="#FFFFFF">8</text>
+
+    <rect x="783" y="200" width="170" height="94" rx="10" fill="#241E0C"/>
+    <text x="801" y="228" font-size="17" font-weight="600" fill="#FBBF24">observe</text>
+    <text x="801" y="270" font-size="30" font-weight="700" fill="#FFFFFF">21</text>
+
+    <rect x="966" y="200" width="170" height="94" rx="10" fill="#161B22"/>
+    <text x="984" y="228" font-size="17" font-weight="600" fill="#8A94A6">avoid</text>
+    <text x="984" y="270" font-size="30" font-weight="700" fill="#C6D0DA">143</text>
+  </g>
+
+  <!-- 底 -->
+  <text x="600" y="330" font-size="16" class="mono" fill="#4B5563">LLM 只解释已确定的动作，不参与选股与排名</text>
+</svg>
