@@ -282,8 +282,12 @@ jobs:
           # A volume or cache directory first touched by an older/root container can
           # retain root ownership. Repair the complete data tree before the non-root
           # worker starts so derived caches remain writable after every deployment.
+          # worker 镜像安全加固会 cap_drop ALL：root 遍历 700 目录需要
+          # CAP_DAC_OVERRIDE（chown 自身需要 CAP_CHOWN），两者必须都补上，
+          # 否则遇到非 root 所有的 700 目录时 chown -R 会 Permission denied。
           docker compose -f docker-compose.yml.next --env-file "$BOOTSTRAP_ENV" \
-            run --rm --interactive=false --no-deps --user 0:0 --cap-add CHOWN \
+            run --rm --interactive=false --no-deps --user 0:0 \
+            --cap-add CHOWN --cap-add DAC_OVERRIDE \
             worker chown -R 10001:10001 /app/data </dev/null
           snapshot_ready() {
             docker compose -f docker-compose.yml.next --env-file "$BOOTSTRAP_ENV" \
