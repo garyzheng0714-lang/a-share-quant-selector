@@ -712,6 +712,8 @@ export interface FactorHit {
   RSI: number | null;
   industry: string;
   cap_yi: number | null;
+  /** 所属行业板块的冷热（全行业热度榜；只读展示，不参与排序） */
+  sector?: SectorState | null;
   /** 策略特有附加字段（detail 等） */
   [key: string]: unknown;
 }
@@ -724,6 +726,38 @@ export interface FactorScanResponse {
   hits?: FactorHit[];
   total_scanned?: number;
   errors?: number;
+}
+
+/** 今日推荐：云阶命中票（板块热度排序，信息呈现） */
+export interface RecommendStock {
+  code: string;
+  name: string;
+  close: number;
+  industry: string;
+  cap_yi: number | null;
+  sector: SectorState | null;
+  J?: number | null;
+  RSI?: number | null;
+  pct_change?: number | null;
+  /** 按板块热度排序后的名次（1-based，rank_total 为当日命中总数） */
+  rank?: number;
+  rank_total?: number;
+  /** 推荐理由：云阶结构 + 板块热度/排名/趋势 */
+  reason?: string;
+}
+
+export interface RecommendResponse {
+  available: boolean;
+  reason?: string;
+  trade_date?: string;
+  core_factor?: {
+    key: string;
+    name: string;
+    plain: string;
+    why: string;
+  };
+  today_buy?: RecommendStock[];
+  honest_note?: string;
 }
 
 export const api = {
@@ -752,6 +786,7 @@ export const api = {
   getSuperB1: () => request<SuperB1Data>("/api/super-b1"),
   getFactors: () => request<FactorsResponse>("/api/factors"),
   getQuantPick: () => request<QuantPickResponse>("/api/quant-pick"),
+  getRecommend: () => request<RecommendResponse>("/api/recommend"),
   getQuantComment: () => request<QuantComment>("/api/quant-comment"),
   getLatestDecision: () => request<DecisionResponse>("/api/decision/latest"),
   getEvolutionStatus: () => request<EvolutionResponse>("/api/decision/evolution"),

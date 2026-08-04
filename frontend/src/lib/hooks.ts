@@ -99,3 +99,7 @@ export function usePerformanceSummary() {
 export function usePerformanceRecords(limit = 200) {
   return useSWR(`performance-records-${limit}`, () => api.getPerformanceRecords(limit));
 }
+
+export function useRecommend() {
+  return useSWR("recommend", () => api.getRecommend(), { refreshInterval: 600_000 });
+}

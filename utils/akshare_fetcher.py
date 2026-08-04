@@ -702,7 +702,7 @@ class AKShareFetcher:
             # 腾讯财经接口 - 获取日K线数据
             # 腾讯接口最多返回约1000条数据，所以分批获取或限制年限
             max_days = min(years * 365, 1000)  # 最多1000天
-            url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={market_code},day,,,{max_days},qfq"
+            url = f"https://ifzq.gtimg.cn/appstock/app/fqkline/get?param={market_code},day,,,{max_days},qfq"
 
             resp = requests.get(
                 url,
@@ -900,7 +900,7 @@ class AKShareFetcher:
             # 腾讯接口：直接指定获取天数（最多1000天）
             # 多取2天确保覆盖周末节假日
             fetch_days = min(days + 2, 1000)
-            url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={market_code},day,,,{fetch_days},qfq"
+            url = f"https://ifzq.gtimg.cn/appstock/app/fqkline/get?param={market_code},day,,,{fetch_days},qfq"
 
             resp = requests.get(
                 url,
