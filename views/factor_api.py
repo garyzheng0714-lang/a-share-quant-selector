@@ -57,6 +57,19 @@ def _cap_yi(code: str, manager: CSVManager):
     return None
 
 
+def _sector_heat(manager: CSVManager) -> dict:
+    """全行业热度榜 {行业: {score, delta3, stage, rank, total}}（只读展示，不参与排序）."""
+    try:
+        from utils.sector_rotation import get_sector_rotation
+        s = get_sector_rotation(manager)
+        if not s.get("available"):
+            return {}
+        return s.get("heat_map") or {}
+    except Exception as e:
+        logger.warning("板块热度读取失败: %s", e)
+        return {}
+
+
 @factor_bp.route("/api/factors", methods=["GET"])
 def api_list_factors():
     """策略因子清单（分组+白话说明+当日命中数）+ 最近交易日列表.
@@ -159,11 +172,13 @@ def api_factor_scan():
         if main_board_only():
             hits = [h for h in hits if is_main_board(h.get("code", ""))]
         ind = _industry_map(manager)
+        heat = _sector_heat(manager)
         hits = [
             {
                 **h,
                 "industry": ind.get(h.get("code", ""), ""),
                 "cap_yi": _cap_yi(h.get("code", ""), manager),
+                "sector": heat.get(ind.get(h.get("code", ""), "")) or None,
             }
             for h in hits
         ]

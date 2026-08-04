@@ -463,6 +463,20 @@ function FactorDetail({
                           {h.cap_yi !== null && h.cap_yi !== undefined && (
                             <span className="shrink-0">{h.cap_yi.toFixed(0)}亿</span>
                           )}
+                          {h.sector && (
+                            <span
+                              className="shrink-0 rounded-full bg-surface px-1.5 py-0.5 text-[10px] text-ink-secondary"
+                              title={`板块热度 ${h.sector.score}（第 ${h.sector.rank}/${h.sector.total} 名）`}
+                            >
+                              板块 {h.sector.score.toFixed(0)}
+                              <span className="text-ink-muted"> · {h.sector.rank}/{h.sector.total}</span>
+                              {h.sector.delta3 !== 0 && (
+                                <span className={h.sector.delta3 > 0 ? "text-bull" : "text-bear"}>
+                                  {h.sector.delta3 > 0 ? ` +${h.sector.delta3.toFixed(0)}` : ` ${h.sector.delta3.toFixed(0)}`}
+                                </span>
+                              )}
+                            </span>
+                          )}
                         </div>
                       </button>
                     ))}

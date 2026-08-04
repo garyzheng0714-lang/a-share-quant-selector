@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Database, SlidersHorizontal, Target } from "lucide-react";
 import { PageTransition } from "@/components/layout/page-transition";
 import { QuantPickCard } from "@/components/dashboard/quant-pick-card";
+import { TodayRecommendCard } from "@/components/dashboard/today-recommend-card";
 import { FactorWorkbench } from "@/components/today/factor-workbench";
 import { useCoverage } from "@/lib/hooks";
 
@@ -39,6 +40,7 @@ export function Component() {
 
         {view === "decision" ? (
           <div className="view-enter">
+            <TodayRecommendCard />
             <QuantPickCard />
             <details
               className="mt-5 px-1 py-2 text-xs text-ink-muted"
