@@ -141,10 +141,12 @@ def api_recommend():
 
         result = read_cached_factor_hits(manager, [CORE_FACTOR])
         if not result.get("available"):
-            return jsonify({
-                "available": False,
-                "reason": result.get("reason", "factor_cache_unavailable"),
-            }), 503
+            return jsonify(
+                {
+                    "available": False,
+                    "reason": result.get("reason", "factor_cache_unavailable"),
+                }
+            ), 503
 
         hits = result["results"][CORE_FACTOR]["hits"]
         if main_board_only():
@@ -156,16 +158,23 @@ def api_recommend():
         rows = []
         for h in hits:
             industry = ind.get(h.get("code", ""), "")
-            rows.append({
-                **h,
-                "industry": industry,
-                "sector": heat.get(industry) or None,
-            })
+            rows.append(
+                {
+                    **h,
+                    "industry": industry,
+                    "sector": heat.get(industry) or None,
+                }
+            )
 
         def _sector_key(r):
             s = r.get("sector") or {}
-            return (s.get("score") if s.get("score") is not None else -1.0,
-                    s.get("relative_strength") if s.get("relative_strength") is not None else -1.0)
+            return (
+                s.get("score") if s.get("score") is not None else -1.0,
+                s.get("relative_strength")
+                if s.get("relative_strength") is not None
+                else -1.0,
+            )
+
         rows.sort(key=_sector_key, reverse=True)
         for i, r in enumerate(rows, 1):
             s = r.get("sector") or {}
@@ -175,7 +184,9 @@ def api_recommend():
             if s:
                 score = s.get("score")
                 if score is not None:
-                    parts.append(f"板块热度 {score:.0f} 分（全市场第 {s.get('rank')}/{s.get('total')} 名）")
+                    parts.append(
+                        f"板块热度 {score:.0f} 分（全市场第 {s.get('rank')}/{s.get('total')} 名）"
+                    )
                 if s.get("delta3") is not None and s["delta3"] >= 8:
                     parts.append(f"3日升温 +{s['delta3']:.0f}")
                 elif s.get("delta3") is not None and s["delta3"] <= -8:
@@ -184,22 +195,24 @@ def api_recommend():
                     parts.append(s["stage"])
             r["reason"] = "；".join(parts)
 
-        return jsonify({
-            "available": True,
-            "trade_date": result["trade_date"],
-            "core_factor": {
-                "key": CORE_FACTOR,
-                "name": "云阶",
-                "plain": "第一波大涨 → 缩量横盘不破位 → 再次突破前高",
-                "why": "28个公式里唯一在两段互不重叠的历史中、持有1天和5天都跑赢大盘的",
-            },
-            "today_buy": rows,
-            "honest_note": (
-                "按板块热度排序：信号日板块强弱是唯一通过双周期样本外验证的排序维度"
-                "（2025-12~2026-06，板块当日涨幅/热度越高，T+5 胜率与收益越好）。"
-                "排名只呈现事实，不做买卖建议。"
-            ),
-        })
+        return jsonify(
+            {
+                "available": True,
+                "trade_date": result["trade_date"],
+                "core_factor": {
+                    "key": CORE_FACTOR,
+                    "name": "云阶",
+                    "plain": "第一波大涨 → 缩量横盘不破位 → 再次突破前高",
+                    "why": "28个公式里唯一在两段互不重叠的历史中、持有1天和5天都跑赢大盘的",
+                },
+                "today_buy": rows,
+                "honest_note": (
+                    "按板块热度排序：信号日板块强弱是唯一通过双周期样本外验证的排序维度"
+                    "（2025-12~2026-06，板块当日涨幅/热度越高，T+5 胜率与收益越好）。"
+                    "排名只呈现事实，不做买卖建议。"
+                ),
+            }
+        )
     except Exception as exc:
         logger.error("今日推荐失败: %s", exc, exc_info=True)
         return jsonify({"available": False, "reason": "recommend_unavailable"}), 500
@@ -207,6 +220,7 @@ def api_recommend():
 
 def _load_industry_map(manager) -> dict:
     from utils.market_snapshot import read_snapshot_metadata
+
     value, _snapshot_id = read_snapshot_metadata(
         "stock_industry.json", manager.base_data_dir, snapshot_id=manager.snapshot_id
     )
@@ -216,6 +230,7 @@ def _load_industry_map(manager) -> dict:
 def _load_sector_heat(manager) -> dict:
     try:
         from utils.sector_rotation import get_sector_rotation
+
         s = get_sector_rotation(manager)
         if not s.get("available"):
             return {}

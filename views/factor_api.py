@@ -61,6 +61,7 @@ def _sector_heat(manager: CSVManager) -> dict:
     """全行业热度榜 {行业: {score, delta3, stage, rank, total}}（只读展示，不参与排序）."""
     try:
         from utils.sector_rotation import get_sector_rotation
+
         s = get_sector_rotation(manager)
         if not s.get("available"):
             return {}
