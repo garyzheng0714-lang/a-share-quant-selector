@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { motion } from "framer-motion";
 import { ChevronDown, CircleMinus, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
 import { LoadError, Skeleton } from "@/components/ui";

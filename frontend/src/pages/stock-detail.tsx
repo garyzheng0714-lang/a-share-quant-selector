@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate } from "react-router";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageTransition } from "@/components/layout/page-transition";
 import { KlineChart, type KlineOverlay } from "@/components/charts/kline-chart";

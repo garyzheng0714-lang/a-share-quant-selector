@@ -3,7 +3,7 @@ import {
   AlertTriangle, Bot, CheckCircle2, CircleDot, Database,
   Eye, Layers3, Search, Settings2, WalletCards,
 } from "lucide-react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router";
 import { SectorHeatChart } from "@/components/charts/sector-heat-chart";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button, Input, LoadError, Skeleton } from "@/components/ui";

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { motion } from "framer-motion";
 import { LineChart } from "lucide-react";
 import { Skeleton, Gauge, LoadError } from "@/components/ui";

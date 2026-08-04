@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { ChevronDown, ChevronLeft, ChevronRight, ArrowLeft } from "lucide-react";
 import { Skeleton, LoadError } from "@/components/ui";
 import { useFactors, useFactorScan } from "@/lib/hooks";
