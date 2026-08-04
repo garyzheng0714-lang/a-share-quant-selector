@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { BadgeCheck, CircleAlert, Sparkles } from "lucide-react";
 import { LoadError, Skeleton } from "@/components/ui";
 import { useRecommend } from "@/lib/hooks";

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { Skeleton, LoadError } from "@/components/ui";
 import { useSuperB1 } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";

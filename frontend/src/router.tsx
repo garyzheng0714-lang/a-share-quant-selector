@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router";
 import { RootLayout } from "@/components/layout/root-layout";
 import { Component as SectorDetailPage } from "@/pages/sector-detail";
 

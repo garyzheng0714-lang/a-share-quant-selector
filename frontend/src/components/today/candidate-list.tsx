@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronRight, Star } from "lucide-react";
 import { Skeleton, CopyButton, LoadError } from "@/components/ui";
