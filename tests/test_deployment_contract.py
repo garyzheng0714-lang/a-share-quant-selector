@@ -92,10 +92,12 @@ def test_release_stages_image_before_transactional_deploy() -> None:
     assert "a-share-quant-snapshot-bootstrap" in bootstrap_script
     assert "docker inspect -f '{{.Image}}'" in bootstrap_script
     assert "run -d --interactive=false" in bootstrap_script
-    ownership_init = "run --rm --interactive=false --no-deps --user 0:0 --cap-add CHOWN"
+    ownership_init = "run --rm --interactive=false --no-deps --user 0:0"
     assert ownership_init in bootstrap_script
+    assert "--cap-add CHOWN" in bootstrap_script
+    assert "--cap-add DAC_OVERRIDE" in bootstrap_script
     assert "worker chown -R 10001:10001 /app/data" in bootstrap_script
-    assert bootstrap_script.index(ownership_init) < bootstrap_script.index(
+    assert bootstrap_script.index("--cap-add CHOWN") < bootstrap_script.index(
         "tools/bootstrap_market_snapshot.py"
     )
     assert "docker compose --env-file .release.env.next pull" not in release_script
