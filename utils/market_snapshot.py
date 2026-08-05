@@ -42,6 +42,12 @@ REQUIRED_COLUMNS = {
     "turnover",
 }
 TRUSTED_SOURCES = frozenset({"tencent", "akshare"})
+TRUSTED_SECURITY_STATUS_SOURCES = frozenset(
+    {
+        "akshare:stock_tfp_em",
+        "tencent:qt.gtimg.cn",
+    }
+)
 ANCHOR_CODES = ("000001", "600030", "600036", "600519")
 METADATA_FILES = (
     "stock_names.json",
@@ -52,6 +58,10 @@ METADATA_FILES = (
     "ingestion_provenance.json",
     "reference_data_manifest.json",
     "security_status.json",
+)
+UNIVERSE_SEED_FILES = (
+    "stock_names.json",
+    "universe_manifest.json",
 )
 _CURRENT_SNAPSHOT = object()
 
@@ -228,7 +238,7 @@ def _security_status_quality(
         if isinstance(item, dict)
         and item.get("verified") is True
         and item.get("as_of") == trade_date
-        and item.get("source_id") == "akshare:stock_tfp_em"
+        and item.get("source_id") in TRUSTED_SECURITY_STATUS_SOURCES
         and item.get("status") in {"active", "suspended", "delisted"}
     }
     valid_entries = {
@@ -245,7 +255,7 @@ def _security_status_quality(
     valid = bool(
         payload.get("schema_version") == "security-status-v1"
         and payload.get("as_of") == trade_date
-        and payload.get("source_id") == "akshare:stock_tfp_em"
+        and payload.get("source_id") in TRUSTED_SECURITY_STATUS_SOURCES
         and payload.get("count") == len(securities)
         and len(all_valid_entries) == len(securities)
         and len(valid_entries) == len(universe)
@@ -328,6 +338,42 @@ def prepare_empty_staging_snapshot(data_dir: str | Path = "data") -> StagingSnap
         encoding="utf-8",
     )
     return StagingSnapshot(root=root, payload_dir=payload, base_snapshot_id=None)
+
+
+def seed_universe_metadata_from_current(
+    data_dir: str | Path,
+    payload_dir: str | Path,
+) -> dict[str, Any]:
+    """把当前已验证快照的股票池元数据种入空重建 staging。
+
+    只复制名单与 manifest，绝不复制 CSV 行情。东财主表故障时，重建仍可走
+    腾讯确认过的 last-known-good 名单，而历史 K 线仍需从可信源重抓。
+    """
+    current = load_current_market_snapshot(data_dir, verify_files=True)
+    if not current.get("available"):
+        return {
+            "seeded": False,
+            "reason": current.get("reason", "validated_snapshot_missing"),
+        }
+    source_root = Path(current["payload_dir"])
+    target = Path(payload_dir)
+    target.mkdir(parents=True, exist_ok=True)
+    copied: list[str] = []
+    for name in UNIVERSE_SEED_FILES:
+        source = source_root / name
+        if not source.is_file():
+            return {
+                "seeded": False,
+                "reason": f"missing_universe_seed_file:{name}",
+                "snapshot_id": current.get("snapshot_id"),
+            }
+        shutil.copy2(source, target / name)
+        copied.append(name)
+    return {
+        "seeded": True,
+        "snapshot_id": current.get("snapshot_id"),
+        "files": copied,
+    }
 
 
 def find_resumable_rebuild_snapshot(

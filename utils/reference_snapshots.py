@@ -46,10 +46,12 @@ def _security_states(payload: Path, trade_date: str, universe: set[str]) -> dict
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
+    from utils.market_snapshot import TRUSTED_SECURITY_STATUS_SOURCES
+
     if (
         document.get("schema_version") != "security-status-v1"
         or document.get("as_of") != trade_date
-        or document.get("source_id") != "akshare:stock_tfp_em"
+        or document.get("source_id") not in TRUSTED_SECURITY_STATUS_SOURCES
         or document.get("count") != len(securities)
         or document.get("content_hash") != hashlib.sha256(canonical).hexdigest()
         or set(securities) != universe
@@ -61,7 +63,7 @@ def _security_states(payload: Path, trade_date: str, universe: set[str]) -> dict
             not isinstance(item, dict)
             or item.get("verified") is not True
             or item.get("as_of") != trade_date
-            or item.get("source_id") != "akshare:stock_tfp_em"
+            or item.get("source_id") not in TRUSTED_SECURITY_STATUS_SOURCES
             or item.get("status") not in {"active", "suspended", "delisted"}
             or not isinstance(item.get("is_st"), bool)
         ):

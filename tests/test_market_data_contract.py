@@ -417,6 +417,58 @@ class MarketDataContractTest(unittest.TestCase):
 
             self.assertFalse((Path(tmp) / "security_status.json").exists())
 
+    def test_lkg_universe_survives_eastmoney_suspension_outage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fetcher = AKShareFetcher(tmp)
+            previous = {
+                f"{600000 + index:06d}": f"股票{index}" for index in range(3200)
+            }
+            fetcher._save_stock_names(previous, source="akshare")
+            confirmed = list(previous)[:3136]  # 98% of 3200
+
+            with (
+                patch(
+                    "utils.akshare_fetcher.ak.stock_sh_a_spot_em",
+                    side_effect=ConnectionError("eastmoney blocked"),
+                ),
+                patch(
+                    "utils.akshare_fetcher.ak.stock_tfp_em",
+                    side_effect=ConnectionError("eastmoney blocked"),
+                ),
+                patch.object(
+                    fetcher,
+                    "_confirm_cached_universe_tencent",
+                    return_value={
+                        "schema_version": "universe-verification-v1",
+                        "source_id": "tencent:qt.gtimg.cn",
+                        "confirmed_count": len(confirmed),
+                        "confirmed_codes": confirmed,
+                        "coverage_ratio": len(confirmed) / len(previous),
+                        "failed_batches": 0,
+                        "verified_at": "2026-07-15T16:00:00+08:00",
+                    },
+                ),
+            ):
+                result = fetcher.refresh_stock_universe("2026-07-15")
+
+            status = json.loads(
+                (Path(tmp) / "security_status.json").read_text(encoding="utf-8")
+            )
+            manifest = json.loads(
+                (Path(tmp) / "universe_manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(len(result), 3136)
+            self.assertTrue(fetcher.universe_refresh_status["fresh"])
+            self.assertEqual(
+                fetcher.universe_refresh_status["source"],
+                "tencent-confirmed-last-known-good",
+            )
+            self.assertEqual(status["source_id"], "tencent:qt.gtimg.cn")
+            self.assertEqual(status["as_of"], "2026-07-15")
+            self.assertEqual(status["suspended_count"], 0)
+            self.assertEqual(status["count"], 3136)
+            self.assertNotIn("confirmed_codes", manifest.get("verification") or {})
+
     @patch(
         "utils.data_freshness.expected_completed_trade_date",
         return_value="2026-07-14",

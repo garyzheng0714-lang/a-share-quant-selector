@@ -200,10 +200,55 @@ class AKShareFetcher:
             "schema_version": "universe-verification-v1",
             "source_id": "tencent:qt.gtimg.cn",
             "confirmed_count": len(confirmed),
+            "confirmed_codes": sorted(confirmed),
             "coverage_ratio": round(len(confirmed) / total, 6) if total else 0.0,
             "failed_batches": failed_batches,
             "verified_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
+
+    def _save_quote_confirmed_security_status(
+        self,
+        stock_dict: dict[str, str],
+        trade_date: str,
+        *,
+        source_id: str = "tencent:qt.gtimg.cn",
+    ) -> None:
+        """在停牌日历源不可用时，用已确认行情主表把证券标成当日 active。"""
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", trade_date):
+            raise ValueError("security_status_trade_date_invalid")
+        if not stock_dict:
+            raise ValueError("security_status_universe_empty")
+        securities = {
+            code: {
+                "status": "active",
+                "verified": True,
+                "as_of": trade_date,
+                "source_id": source_id,
+                "is_st": "ST" in str(name).upper().replace("＊", "*"),
+            }
+            for code, name in sorted(stock_dict.items())
+        }
+        canonical = json.dumps(
+            securities,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        payload = {
+            "schema_version": "security-status-v1",
+            "as_of": trade_date,
+            "captured_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "source_id": source_id,
+            "count": len(securities),
+            "suspended_count": 0,
+            "content_hash": hashlib.sha256(canonical).hexdigest(),
+            "securities": securities,
+        }
+        tmp = self.security_status_file.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+        )
+        tmp.replace(self.security_status_file)
 
     def _restore_verified_cached_universe(
         self,
@@ -230,15 +275,34 @@ class AKShareFetcher:
         )
         if verification["coverage_ratio"] < minimum_ratio:
             return None
+        confirmed_codes = set(verification.get("confirmed_codes") or [])
+        if len(confirmed_codes) < MIN_UNIVERSE_SIZE:
+            return None
+        suspension_source = "akshare:stock_tfp_em"
         try:
             suspension_frame = ak.stock_tfp_em(date=trade_date.replace("-", ""))
-            self._save_security_status(previous, suspension_frame, trade_date)
-        except Exception:
-            return None
+            # 有独立停牌日历时保留完整 LKG；未确认的少数代码由日历分类。
+            restored = dict(previous)
+            self._save_security_status(restored, suspension_frame, trade_date)
+        except Exception as exc:
+            # 东财停牌日历与现货主表常一起被墙；只采纳腾讯已确认代码并标 active。
+            print(
+                f"  停牌日历不可用 ({type(exc).__name__})，改用腾讯确认结果写入证券状态"
+            )
+            restored = {
+                code: name for code, name in previous.items() if code in confirmed_codes
+            }
+            if len(restored) < MIN_UNIVERSE_SIZE:
+                return None
+            self._save_quote_confirmed_security_status(restored, trade_date)
+            suspension_source = "tencent:qt.gtimg.cn"
         verification["discovery_mode"] = "last_known_good"
         verification["primary_failure"] = failure_reason
+        verification["security_status_source"] = suspension_source
+        # 不把数千代码列表写入 manifest；名单本身可审计。
+        verification.pop("confirmed_codes", None)
         self._save_stock_names(
-            previous,
+            restored,
             source="tencent",
             exclusions=manifest.get("exclusions"),
             verification=verification,
@@ -246,11 +310,12 @@ class AKShareFetcher:
         self.universe_refresh_status = {
             "fresh": True,
             "source": "tencent-confirmed-last-known-good",
-            "count": len(previous),
+            "count": len(restored),
             "coverage_ratio": verification["coverage_ratio"],
             "primary_failure": failure_reason,
+            "security_status_source": suspension_source,
         }
-        return previous
+        return restored
 
     def _universe_size_is_safe(self, candidate: dict, previous: dict) -> bool:
         """阻断虽高于绝对下限、但相对上一版异常骤降的股票池。"""
