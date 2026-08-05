@@ -1,492 +1,895 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router";
-import { ChevronDown, ChevronLeft, ChevronRight, ArrowLeft } from "lucide-react";
-import { Skeleton, LoadError } from "@/components/ui";
-import { useFactors, useFactorScan } from "@/lib/hooks";
+import { useNavigate, useSearchParams } from "@/lib/spa-router";
+import useSWR from "swr";
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  closestCenter,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { Badge, type BadgeVariant } from "@astryxdesign/core/Badge";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
+import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { Icon } from "@astryxdesign/core/Icon";
+import { Heading } from "@astryxdesign/core/Heading";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
+import { Selector } from "@astryxdesign/core/Selector";
+import { Table, pixel, proportional, type TableColumn } from "@astryxdesign/core/Table";
+import { Text } from "@astryxdesign/core/Text";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { api, type FactorHit, type FactorMeta, type FactorScanResponse, type SignalStock } from "@/lib/api";
+import { useCoverage, useFactors, useStocks } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
-import type { FactorHit, FactorMeta, FactorsResponse, SignalStock } from "@/lib/api";
 
-/**
- * 策略因子选股工作台，两级结构（用户反馈"不够直观"后重做）：
- * 1. 概览（默认）：28个因子按组摊开，每张卡直接亮出「当日命中数 + 大白话说明」，
- *    今天哪个公式有货一眼扫完，不用点28次。
- * 2. 详情：点卡片进入——日期导航（回看历史任意交易日）+ 结果按行业分组。
- *
- * 点个股走已有 stockNavList 机制：个股页左侧联动列表，看完一只切一只。
- */
+type LibraryFilter = "all" | "verified" | "watch";
+type ScanEntry = { data?: FactorScanResponse; error?: string };
+type ScanMap = Record<string, ScanEntry>;
 
-/** FactorHit → SignalStock：联动导航只消费 code/name/close/industry，其余字段填缺省 */
+const COMBINED = "combined";
+const MAX_RESULTS = 300;
+
+const gradeMeta: Record<
+  NonNullable<FactorMeta["track"]>["grade"],
+  { label: string; variant: BadgeVariant }
+> = {
+  short_robust: { label: "已验证", variant: "success" },
+  short_ok: { label: "可用", variant: "blue" },
+  long_only: { label: "长线", variant: "neutral" },
+  unstable: { label: "观察中", variant: "warning" },
+  negative: { label: "不稳定", variant: "error" },
+};
+
+function factorStatus(factor: FactorMeta) {
+  return factor.track ? gradeMeta[factor.track.grade] : { label: "待验证", variant: "neutral" as const };
+}
+
 function toNavStocks(hits: FactorHit[]): SignalStock[] {
-  return hits.map((h) => ({
-    code: h.code,
-    name: h.name,
-    strategy: "factor",
-    category: h.industry || "",
-    close: h.close,
-    J: h.J ?? 0,
+  return hits.map((hit) => ({
+    code: hit.code,
+    name: hit.name,
+    strategy: "factor-composition",
+    category: hit.industry || "",
+    close: hit.close,
+    J: hit.J ?? 0,
     volume_ratio: 0,
-    market_cap: (h.cap_yi ?? 0) * 1e8,
+    market_cap: (hit.cap_yi ?? 0) * 1e8,
     short_term_trend: 0,
     bull_bear_line: 0,
     reasons: [],
     similarity_score: null,
     matched_case: null,
     match_breakdown: null,
-    industry: h.industry,
+    industry: hit.industry,
   }));
 }
 
-function pctColor(v: number | null | undefined): string {
-  if (v === null || v === undefined) return "text-ink-muted";
-  return v > 0 ? "text-bull" : v < 0 ? "text-bear" : "text-ink-muted";
+function pctClass(value: number | null) {
+  if (value === null || value === 0) return "text-ink-muted";
+  return value > 0 ? "text-bull" : "text-bear";
 }
 
-/** 体检结论徽章：按持有周期分别评——短线公式用20天胜率评价本身就不公平 */
-const GRADE_META = {
-  short_robust: {
-    label: "短线真金",
-    cls: "bg-bull/15 text-bull",
-    hint: "持有1天和5天，两段互不重叠的历史里都跑赢大盘",
-  },
-  short_ok: {
-    label: "短线可用",
-    cls: "bg-bull/10 text-bull/80",
-    hint: "持有5天两段都跑赢，但超额很薄",
-  },
-  long_only: {
-    label: "只适合长线",
-    cls: "bg-elevated text-ink-secondary",
-    hint: "要持有10天以上才有效，短线用它没意义",
-  },
-  unstable: {
-    label: "只在一段有效",
-    cls: "bg-elevated text-ink-muted",
-    hint: "换一段行情就失效，大概率是运气",
-  },
-  negative: {
-    label: "任何周期都不稳",
-    cls: "bg-bear/15 text-bear",
-    hint: "历史上不赚钱，建议无视",
-  },
-} as const;
+function formatNumber(value: number | null, digits = 2) {
+  return value === null || Number.isNaN(value) ? "—" : value.toFixed(digits);
+}
 
-/** 用户偏好短线（练盘感）→ 卡片默认展示持有5天的胜率 */
-const DEFAULT_PERIOD = "ret_5";
-const PERIODS = [
-  { key: "ret_1", label: "持有1天" },
-  { key: "ret_5", label: "持有5天" },
-  { key: "ret_10", label: "持有10天" },
-  { key: "ret_20", label: "持有20天" },
-];
+function dedupeHits(hits: FactorHit[] | undefined) {
+  return [...new Map((hits ?? []).map((hit) => [hit.code, hit])).values()];
+}
 
-/** 概览卡：今天有没有货（命中数）+ 这个公式在等什么（白话）+ 它到底靠不靠谱（体检） */
-function FactorCard({ f, onClick }: { f: FactorMeta; onClick: () => void }) {
-  const n = f.today_hits;
-  const hasHits = typeof n === "number" && n > 0;
-  const g = f.track ? GRADE_META[f.track.grade] : null;
-  const p5 = f.track?.periods?.[DEFAULT_PERIOD];
-  const dim = !hasHits || f.track?.grade === "negative";
+function StrategyLibraryRow({
+  factor,
+  selected,
+  active,
+  dragDisabled,
+  onInspect,
+  onAdd,
+}: {
+  factor: FactorMeta;
+  selected: boolean;
+  active: boolean;
+  dragDisabled?: boolean;
+  onInspect: () => void;
+  onAdd: () => void;
+}) {
+  const {
+    setNodeRef,
+    setActivatorNodeRef,
+    attributes,
+    listeners,
+    isDragging,
+  } = useDraggable({
+    id: `library:${factor.key}`,
+    disabled: dragDisabled || selected,
+    data: { type: "library", key: factor.key },
+  });
+  const status = factorStatus(factor);
+
   return (
-    <button
-      onClick={onClick}
-      className={`card-modern px-3.5 py-3 text-left transition-all duration-150 hover:ring-1 hover:ring-border-hover active:scale-[0.99] min-w-0 ${
-        dim ? "opacity-55" : ""
-      }`}
+    <div
+      ref={setNodeRef}
+      className={`strategy-library-row grid grid-cols-[minmax(0,1fr)_40px_32px] sm:grid-cols-[32px_minmax(0,1fr)_40px_32px] ${active ? "is-active" : ""} ${isDragging ? "is-dragging" : ""}`}
     >
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="text-sm font-medium text-ink truncate">{f.name}</span>
-        <span
-          className={`ml-auto shrink-0 px-2 py-0.5 rounded-full text-xs font-semibold tabular-nums ${
-            hasHits
-              ? "bg-accent/15 text-accent"
-              : "bg-elevated text-ink-muted font-normal"
-          }`}
-        >
-          {n === null || n === undefined ? "未算" : n === 0 ? "无" : `${n}只`}
+      <Button
+        ref={setActivatorNodeRef}
+        aria-label={`拖动添加 ${factor.name}`}
+        label={`拖动添加 ${factor.name}`}
+        variant="ghost"
+        size="sm"
+        isIconOnly
+        className="strategy-drag-handle hidden sm:grid"
+        icon={<Icon icon="arrowsUpDown" size="xsm" />}
+        {...attributes}
+        {...listeners}
+      />
+      <Button label={`查看 ${factor.name}`} variant="ghost" size="sm" className="min-w-0 w-full min-h-10 h-auto flex-1 justify-start py-1 text-left" onClick={onInspect}>
+        <span className="min-w-0" title={factor.name}>
+          <Text type="label" className="block truncate">{factor.name}</Text>
+          <span className="mt-0.5 flex min-w-0 items-center gap-1">
+            <Badge variant={status.variant} label={status.label} />
+            <Text type="supporting" className="min-w-0 truncate">{factor.plain || factor.desc}</Text>
+          </span>
         </span>
-      </div>
-      <p className="mt-1.5 text-[11px] text-ink-muted leading-relaxed line-clamp-2">
-        {f.plain || f.desc}
-      </p>
-      {g && p5 && (
-        <div className="mt-2 flex items-center gap-1.5 min-w-0" title={g.hint}>
-          <span className={`px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap ${g.cls}`}>
-            {g.label}
-          </span>
-          <span className="text-[10px] text-ink-muted tabular-nums truncate">
-            持有5天胜率 {p5.in.win}% / {p5.oos.win}%
-          </span>
+      </Button>
+      <span className="w-10 shrink-0 text-right text-xs tabular-nums text-ink-secondary">
+        {factor.today_hits === null ? "—" : factor.today_hits}
+      </span>
+      <Button
+        label={selected ? `${factor.name} 已添加` : `添加 ${factor.name}`}
+        variant="ghost"
+        size="sm"
+        isIconOnly
+        icon={selected ? <Icon icon="check" size="xsm" /> : <span aria-hidden="true">＋</span>}
+        isDisabled={selected}
+        onClick={onAdd}
+      />
+    </div>
+  );
+}
+
+function StrategyLibrary({
+  factors,
+  groups,
+  selectedKeys,
+  inspectorKey,
+  filter,
+  search,
+  dragDisabled,
+  onFilterChange,
+  onSearchChange,
+  onInspect,
+  onAdd,
+}: {
+  factors: FactorMeta[];
+  groups: string[];
+  selectedKeys: string[];
+  inspectorKey: string;
+  filter: LibraryFilter;
+  search: string;
+  dragDisabled?: boolean;
+  onFilterChange: (value: LibraryFilter) => void;
+  onSearchChange: (value: string) => void;
+  onInspect: (key: string) => void;
+  onAdd: (key: string) => void;
+}) {
+  const visible = factors.filter((factor) => {
+    const textMatch = `${factor.name} ${factor.plain} ${factor.desc}`.toLowerCase().includes(search.toLowerCase());
+    if (!textMatch) return false;
+    if (filter === "verified") return ["short_robust", "short_ok"].includes(factor.track?.grade ?? "");
+    if (filter === "watch") return !["short_robust", "short_ok"].includes(factor.track?.grade ?? "");
+    return true;
+  });
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="space-y-3 border-b border-border p-3">
+        <div className="flex items-center justify-between">
+          <Heading level={2}>策略库</Heading>
+          <Badge label={factors.length} variant="neutral" />
         </div>
-      )}
-    </button>
+        <TextInput
+          label="搜索策略"
+          isLabelHidden
+          value={search}
+          onChange={onSearchChange}
+          placeholder="搜索策略、说明"
+          startIcon={<Icon icon="search" size="xsm" />}
+          hasClear
+          width="100%"
+          size="sm"
+        />
+        <SegmentedControl
+          value={filter}
+          onChange={(value) => onFilterChange(value as LibraryFilter)}
+          label="策略可靠性筛选"
+          size="sm"
+          layout="fill"
+        >
+          <SegmentedControlItem value="all" label="全部" />
+          <SegmentedControlItem value="verified" label="已验证" />
+          <SegmentedControlItem value="watch" label="观察中" />
+        </SegmentedControl>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+        {groups.map((group) => {
+          const groupFactors = visible.filter((factor) => factor.group === group);
+          if (!groupFactors.length) return null;
+          return (
+            <section key={group} className="mb-3" aria-labelledby={`group-${group}`}>
+              <Heading level={3} id={`group-${group}`} className="px-2 py-1" color="secondary">
+                {group}
+              </Heading>
+              <div className="divide-y divide-border">
+                {groupFactors.map((factor) => (
+                  <StrategyLibraryRow
+                    key={factor.key}
+                    factor={factor}
+                    selected={selectedKeys.includes(factor.key)}
+                    active={inspectorKey === factor.key}
+                    dragDisabled={dragDisabled}
+                    onInspect={() => onInspect(factor.key)}
+                    onAdd={() => onAdd(factor.key)}
+                  />
+                ))}
+              </div>
+            </section>
+          );
+        })}
+        {!visible.length && <EmptyState title="没有匹配的策略" description="换一个关键词或可靠性范围。" isCompact />}
+      </div>
+    </div>
+  );
+}
+
+function SortableStrategyBlock({
+  factor,
+  index,
+  total,
+  entry,
+  active,
+  onInspect,
+  onRemove,
+  onMove,
+}: {
+  factor: FactorMeta;
+  index: number;
+  total: number;
+  entry?: ScanEntry;
+  active: boolean;
+  onInspect: () => void;
+  onRemove: () => void;
+  onMove: (direction: -1 | 1) => void;
+}) {
+  const {
+    setNodeRef,
+    setActivatorNodeRef,
+    attributes,
+    listeners,
+    isDragging,
+    transform,
+    transition,
+  } = useSortable({ id: `selected:${factor.key}`, data: { type: "selected", key: factor.key } });
+  const hitCount = entry?.data?.available ? entry.data.hits?.length ?? 0 : factor.today_hits;
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.35 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="strategy-block-wrap">
+      {index > 0 && <div className="strategy-and" aria-hidden="true"><span>AND</span></div>}
+      <div className={`strategy-block ${active ? "is-active" : ""}`}>
+        <Button
+          ref={setActivatorNodeRef}
+          aria-label={`拖动排序 ${factor.name}`}
+          label={`拖动排序 ${factor.name}`}
+          variant="ghost"
+          size="sm"
+          isIconOnly
+          className="strategy-drag-handle"
+          icon={<Icon icon="arrowsUpDown" size="xsm" />}
+          {...attributes}
+          {...listeners}
+        />
+        <span className="strategy-order" aria-label={`第 ${index + 1} 个条件`}>
+          {String(index + 1).padStart(2, "0")}
+        </span>
+        <Button label={`查看 ${factor.name}`} variant="ghost" size="sm" width="100%" className="min-w-0 flex-1 justify-start text-left" onClick={onInspect} aria-pressed={active}>
+          <Text type="label" className="block truncate">{factor.name}</Text>
+          <Text type="supporting" className="mt-1 block truncate">
+            {factor.plain || factor.desc} · {entry?.error ? "读取失败" : hitCount === null ? "待计算" : `命中 ${hitCount} 只`}
+          </Text>
+        </Button>
+        <div className="hidden items-center gap-0.5 lg:flex">
+          <Button label={`上移 ${factor.name}`} variant="ghost" size="sm" isIconOnly icon={<Icon icon="arrowUp" size="xsm" />} isDisabled={index === 0} onClick={() => onMove(-1)} />
+          <Button label={`下移 ${factor.name}`} variant="ghost" size="sm" isIconOnly icon={<Icon icon="arrowDown" size="xsm" />} isDisabled={index === total - 1} onClick={() => onMove(1)} />
+        </div>
+        <Button label={`移除 ${factor.name}`} variant="ghost" size="sm" isIconOnly icon={<Icon icon="close" size="xsm" />} onClick={onRemove} />
+      </div>
+    </div>
+  );
+}
+
+function StrategyCanvas({
+  factors,
+  selectedKeys,
+  inspectorKey,
+  scans,
+  traceCounts,
+  totalPool,
+  isOver,
+  setNodeRef,
+  onInspect,
+  onRemove,
+  onMove,
+  onOpenLibrary,
+}: {
+  factors: FactorMeta[];
+  selectedKeys: string[];
+  inspectorKey: string;
+  scans: ScanMap;
+  traceCounts: number[] | null;
+  totalPool: number;
+  isOver: boolean;
+  setNodeRef: (node: HTMLElement | null) => void;
+  onInspect: (key: string) => void;
+  onRemove: (key: string) => void;
+  onMove: (key: string, direction: -1 | 1) => void;
+  onOpenLibrary: () => void;
+}) {
+  const selectedFactors = selectedKeys
+    .map((key) => factors.find((factor) => factor.key === key))
+    .filter((factor): factor is FactorMeta => Boolean(factor));
+
+  return (
+    <section className="strategy-canvas" aria-labelledby="composition-heading">
+      <div className="strategy-region-header">
+        <div>
+          <span className="flex items-center gap-2">
+            <Heading level={2} id="composition-heading">组合条件</Heading>
+            <Badge label={selectedKeys.length} variant="blue" />
+          </span>
+          <Text type="supporting" className="mt-1 block">顺序用于阅读和过程追踪，最终结果为全部条件的交集。</Text>
+        </div>
+        <Badge label="全部满足 AND" variant="blue" />
+      </div>
+
+      <div ref={setNodeRef} className={`strategy-drop-zone ${isOver ? "is-over" : ""}`}>
+        <SortableContext items={selectedKeys.map((key) => `selected:${key}`)} strategy={verticalListSortingStrategy}>
+          {selectedFactors.map((factor, index) => (
+            <SortableStrategyBlock
+              key={factor.key}
+              factor={factor}
+              index={index}
+              total={selectedFactors.length}
+              entry={scans[factor.key]}
+              active={inspectorKey === factor.key}
+              onInspect={() => onInspect(factor.key)}
+              onRemove={() => onRemove(factor.key)}
+              onMove={(direction) => onMove(factor.key, direction)}
+            />
+          ))}
+        </SortableContext>
+
+        <Button type="button" variant="ghost" width="100%" className="strategy-add-zone" label="添加策略" onClick={onOpenLibrary}>
+          <span aria-hidden="true">＋</span>
+          <span>{selectedKeys.length ? "继续拖入策略，或点击添加" : "拖入策略，或点击选择策略"}</span>
+        </Button>
+      </div>
+
+      <div className="strategy-trace" aria-live="polite">
+              <Text type="label">筛选路径</Text>
+        {traceCounts ? (
+          <span className="tabular-nums text-accent">
+            {[totalPool, ...traceCounts].map((count) => count.toLocaleString("zh-CN")).join(" → ")}
+          </span>
+        ) : (
+          <span className="text-ink-muted">{selectedKeys.length ? "正在计算真实交集…" : `${totalPool.toLocaleString("zh-CN")} 只股票等待筛选`}</span>
+        )}
+      </div>
+    </section>
   );
 }
 
 export function FactorWorkbench() {
   const { data: meta, isLoading: metaLoading, error: metaError, mutate: retryMeta } = useFactors();
-  const [factorKey, setFactorKey] = useState<string | null>(null);
+  const { data: coverage } = useCoverage();
+  const { data: stockPage, isLoading: poolLoading, error: poolError, mutate: retryPool } = useStocks(1, 200);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const setStockNav = useAppStore((state) => state.setStockNav);
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
+  const [librarySearch, setLibrarySearch] = useState("");
+  const [resultSearch, setResultSearch] = useState("");
+  const [mobileLibraryOpen, setMobileLibraryOpen] = useState(false);
+  const [activeDragKey, setActiveDragKey] = useState<string | null>(null);
+
+  const factorKeys = useMemo(() => new Set(meta?.factors.map((factor) => factor.key) ?? []), [meta]);
+  const selectedKeys = useMemo(() => {
+    const raw = searchParams.get("strategies")?.split(",").filter(Boolean) ?? [];
+    return raw.filter((key, index) => factorKeys.has(key) && raw.indexOf(key) === index);
+  }, [factorKeys, searchParams]);
+  const requestedInspector = searchParams.get("inspect") || COMBINED;
+  const inspectorKey = requestedInspector === COMBINED || factorKeys.has(requestedInspector) ? requestedInspector : COMBINED;
+  const date = searchParams.get("date") || meta?.trade_date || undefined;
+  const fetchKeys = useMemo(() => {
+    const keys = [...selectedKeys];
+    if (inspectorKey !== COMBINED && !keys.includes(inspectorKey)) keys.push(inspectorKey);
+    return keys;
+  }, [inspectorKey, selectedKeys]);
+
+  const {
+    data: scans = {},
+    isLoading: scansLoading,
+    mutate: retryScans,
+  } = useSWR<ScanMap>(
+    fetchKeys.length ? ["factor-composition", date ?? "latest", ...fetchKeys] : null,
+    async () => {
+      const entries = await Promise.all(
+        fetchKeys.map(async (key): Promise<[string, ScanEntry]> => {
+          try {
+            const response = await api.getFactorScan(key, date);
+            return [key, { data: { ...response, hits: dedupeHits(response.hits) } }];
+          } catch (error) {
+            return [key, { error: error instanceof Error ? error.message : "未知错误" }];
+          }
+        }),
+      );
+      return Object.fromEntries(entries);
+    },
+    { revalidateOnFocus: false },
+  );
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 160, tolerance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const dropZone = useDroppable({ id: "strategy-canvas" });
+
+  const setSelectedKeys = (keys: string[], inspect = inspectorKey) => {
+    const next = new URLSearchParams(searchParams);
+    if (keys.length) next.set("strategies", keys.join(","));
+    else next.delete("strategies");
+    if (inspect === COMBINED) next.delete("inspect");
+    else next.set("inspect", inspect);
+    setSearchParams(next, { replace: true });
+  };
+
+  const setInspector = (key: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (key === COMBINED) next.delete("inspect");
+    else next.set("inspect", key);
+    setSearchParams(next, { replace: true });
+    if (key !== COMBINED) setResultSearch("");
+  };
+
+  const addFactor = (key: string, index = selectedKeys.length) => {
+    if (selectedKeys.includes(key)) return;
+    const next = [...selectedKeys];
+    next.splice(index, 0, key);
+    setSelectedKeys(next, COMBINED);
+    setMobileLibraryOpen(false);
+  };
+
+  const removeFactor = (key: string) => {
+    const next = selectedKeys.filter((item) => item !== key);
+    setSelectedKeys(next, inspectorKey === key ? COMBINED : inspectorKey);
+  };
+
+  const moveFactor = (key: string, direction: -1 | 1) => {
+    const from = selectedKeys.indexOf(key);
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= selectedKeys.length) return;
+    setSelectedKeys(arrayMove(selectedKeys, from, to));
+  };
+
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveDragKey(String(event.active.data.current?.key ?? ""));
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setActiveDragKey(null);
+    if (!event.over) return;
+    const type = event.active.data.current?.type;
+    const key = String(event.active.data.current?.key ?? "");
+    const overId = String(event.over.id);
+    if (!key) return;
+
+    if (type === "library") {
+      const targetIndex = overId.startsWith("selected:")
+        ? Math.max(0, selectedKeys.indexOf(overId.replace("selected:", "")))
+        : selectedKeys.length;
+      addFactor(key, targetIndex);
+      return;
+    }
+
+    if (type === "selected" && overId.startsWith("selected:")) {
+      const from = selectedKeys.indexOf(key);
+      const to = selectedKeys.indexOf(overId.replace("selected:", ""));
+      if (from >= 0 && to >= 0 && from !== to) setSelectedKeys(arrayMove(selectedKeys, from, to));
+    }
+  };
+
+  const selectedEntries = selectedKeys.map((key) => scans[key]);
+  const combinationPending = selectedKeys.length > 0 && (scansLoading || selectedEntries.some((entry) => !entry));
+  const combinationBlocked = selectedKeys.length > 0 && !combinationPending && selectedEntries.some(
+    (entry) => entry?.error || entry?.data?.available !== true,
+  );
+  const scanDates = new Set(
+    selectedEntries.map((entry) => entry?.data?.trade_date).filter((value): value is string => Boolean(value)),
+  );
+  const dateMismatch = scanDates.size > 1;
+
+  const { combinedHits, traceCounts } = useMemo(() => {
+    if (!selectedKeys.length || combinationPending || combinationBlocked || dateMismatch) {
+      return { combinedHits: [] as FactorHit[], traceCounts: null as number[] | null };
+    }
+    let current: FactorHit[] | null = null;
+    const counts: number[] = [];
+    for (const key of selectedKeys) {
+      const hits = scans[key]?.data?.hits ?? [];
+      if (current === null) current = hits;
+      else {
+        const codes = new Set(hits.map((hit) => hit.code));
+        current = current.filter((hit) => codes.has(hit.code));
+      }
+      counts.push(current.length);
+    }
+    return { combinedHits: current ?? [], traceCounts: counts };
+  }, [combinationBlocked, combinationPending, dateMismatch, scans, selectedKeys]);
+
+  const poolHits = useMemo<FactorHit[]>(
+    () => {
+      const uniqueStocks = new Map((stockPage?.data ?? []).map((stock) => [stock.code, stock]));
+      return [...uniqueStocks.values()].map((stock) => ({
+        code: stock.code,
+        name: stock.name,
+        date: stock.latest_date,
+        close: stock.latest_price,
+        pct_change: null,
+        J: null,
+        RSI: null,
+        industry: "",
+        cap_yi: stock.market_cap,
+      }));
+    },
+    [stockPage],
+  );
+
+  const activeFactor = meta?.factors.find((factor) => factor.key === inspectorKey) ?? null;
+  const activeScan = inspectorKey !== COMBINED ? scans[inspectorKey] : undefined;
+  const displayMode = activeFactor ? "individual" : selectedKeys.length ? "combined" : "pool";
+  const rawResults = displayMode === "individual"
+    ? activeScan?.data?.available ? activeScan.data.hits ?? [] : []
+    : displayMode === "combined" ? combinedHits : poolHits;
+  const visibleResults = rawResults.filter((hit) =>
+    `${hit.code} ${hit.name} ${hit.industry}`.toLowerCase().includes(resultSearch.toLowerCase()),
+  );
+  const firstScanTotal = selectedEntries.find((entry) => entry?.data?.total_scanned)?.data?.total_scanned;
+  const totalPool = firstScanTotal ?? coverage?.universe_count ?? stockPage?.total ?? 0;
+  const resultTitle = displayMode === "individual"
+    ? activeFactor?.name ?? "当前策略"
+    : displayMode === "combined" ? "组合结果" : "每日股票池";
+  const resultDate = displayMode === "individual"
+    ? activeScan?.data?.trade_date
+    : displayMode === "combined" ? [...scanDates][0] : meta?.trade_date;
+  const resultPending = displayMode === "individual" ? scansLoading && !activeScan : displayMode === "combined" ? combinationPending : poolLoading;
+  const resultError = displayMode === "individual"
+    ? activeScan?.error || (activeScan?.data?.available === false ? activeScan.data.reason : undefined)
+    : displayMode === "combined"
+      ? combinationBlocked ? "至少一个策略结果不可用，已停止计算交集，避免展示不完整结果。" : dateMismatch ? "策略结果日期不一致，已停止计算交集。" : undefined
+      : poolError ? "每日股票池读取失败。" : undefined;
+
+  const openStock = (hit: FactorHit) => {
+    const list = toNavStocks(visibleResults);
+    const index = Math.max(0, visibleResults.findIndex((item) => item.code === hit.code));
+    setStockNav(list, index);
+    navigate(`/stock/${hit.code}`);
+  };
+
+  const columns: TableColumn<FactorHit>[] = [
+    {
+      key: "name",
+      header: "股票",
+      width: proportional(1.4, { minWidth: 150 }),
+      renderCell: (hit) => (
+      <Button label={`查看 ${hit.name || hit.code}`} variant="ghost" size="sm" className="justify-start text-left" onClick={() => openStock(hit)}>
+        <span className="block text-xs font-medium text-ink">{hit.name || "未知"}</span>
+        <span className="mt-0.5 block font-mono text-[11px] text-ink-muted">{hit.code}</span>
+      </Button>
+      ),
+    },
+    { key: "close", header: "最新价", width: pixel(84), align: "end", renderCell: (hit) => <span className="tabular-nums">{formatNumber(hit.close)}</span> },
+    {
+      key: "pct_change",
+      header: "涨跌幅",
+      width: pixel(86),
+      align: "end",
+      renderCell: (hit) => <span className={`tabular-nums ${pctClass(hit.pct_change)}`}>{hit.pct_change === null ? "—" : `${hit.pct_change > 0 ? "+" : ""}${hit.pct_change.toFixed(2)}%`}</span>,
+    },
+    { key: "J", header: "J 值", width: pixel(72), align: "end", renderCell: (hit) => <span className="tabular-nums">{formatNumber(hit.J)}</span> },
+    { key: "industry", header: "行业", width: proportional(1, { minWidth: 110 }), renderCell: (hit) => hit.industry || "—" },
+    {
+      key: "sector",
+      header: "板块热度",
+      width: pixel(120),
+      align: "end",
+      renderCell: (hit) => {
+        const sector = hit.sector;
+        if (!sector) return "—";
+        const delta = sector.delta3 !== 0
+          ? (sector.delta3 > 0 ? ` +${sector.delta3.toFixed(0)}` : ` ${sector.delta3.toFixed(0)}`)
+          : "";
+        return (
+          <span
+            className="tabular-nums text-ink-secondary"
+            title={`板块热度 ${sector.score}（第 ${sector.rank}/${sector.total} 名）`}
+          >
+            {sector.score.toFixed(0)}
+            <span className="text-ink-muted"> · {sector.rank}/{sector.total}</span>
+            {delta && (
+              <span className={sector.delta3 > 0 ? "text-bull" : "text-bear"}>{delta}</span>
+            )}
+          </span>
+        );
+      },
+    },
+    {
+      key: "action",
+      header: "",
+      width: pixel(88),
+      align: "end",
+      renderCell: (hit) => <Button label={`查看 ${hit.name || hit.code} K线`} variant="ghost" size="sm" icon={<Icon icon="chevronRight" size="xsm" />} onClick={() => openStock(hit)}>K 线</Button>,
+    },
+  ];
 
   if (metaLoading) {
-    return (
-      <div className="grid grid-cols-2 gap-2">
-        {Array.from({ length: 6 }, (_, i) => (
-          <Skeleton key={i} className="h-20 w-full rounded-2xl" />
-        ))}
-      </div>
-    );
+    return <div className="grid min-h-[620px] place-items-center text-sm text-ink-muted">正在读取真实策略与每日股票池…</div>;
   }
   if (metaError || !meta) {
-    return <LoadError label="策略因子清单加载失败" onRetry={() => retryMeta()} />;
-  }
-
-  const activeFactor = meta.factors.find((f) => f.key === factorKey) ?? null;
-  if (activeFactor) {
     return (
-      <FactorDetail
-        factor={activeFactor}
-        recentDates={meta.recent_dates}
-        windows={meta.track_windows}
-        onBack={() => setFactorKey(null)}
-      />
+      <div className="mx-auto max-w-xl p-6">
+        <Banner status="error" title="策略清单读取失败" description="没有策略元数据时不能构造筛选工作台。" endContent={<Button label="重试" onClick={() => retryMeta()} />} />
+      </div>
     );
   }
 
-  // 排序：短线真金 > 短线可用 > 其他 > 任何周期都不稳；同级再按今天有没有货。
-  // 界面必须先回答"这公式靠不靠谱"，再回答"今天有几只"——顺序反了就是用命中数
-  // 诱导用户去看一个历史上不赚钱的公式。
-  const GRADE_ORDER: Record<string, number> = {
-    short_robust: 4, short_ok: 3, unstable: 2, long_only: 1, negative: 0,
-  };
-  const gradeRank = (f: FactorMeta) =>
-    f.track ? GRADE_ORDER[f.track.grade] ?? 2 : 2;
-  const hitRank = (f: FactorMeta) =>
-    f.today_hits === null || f.today_hits === undefined ? -1 : f.today_hits;
-  const gold = meta.factors.filter((f) => f.track?.grade === "short_robust");
-  const usable = meta.factors.filter((f) =>
-    ["short_robust", "short_ok"].includes(f.track?.grade ?? ""),
-  );
-  const negative = meta.factors.filter((f) => f.track?.grade === "negative");
+  const activeDragFactor = meta.factors.find((factor) => factor.key === activeDragKey);
 
   return (
-    <section data-testid="factor-workbench">
-      <div className="mb-4 grid grid-cols-3 gap-2">
-        <div className="rounded-xl bg-surface px-3 py-2.5">
-          <div className="text-lg font-semibold text-ink tabular-nums">{meta.factors.length}</div>
-          <div className="text-[10px] text-ink-muted">全部策略</div>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
+      onDragCancel={() => setActiveDragKey(null)}
+      onDragEnd={handleDragEnd}
+    >
+      <div className="strategy-toolbar">
+        <div className="flex min-w-0 items-center gap-2">
+          <Icon icon="viewColumns" size="xsm" color="accent" />
+              <Text type="supporting" className="truncate">
+                {meta.trade_date} · {totalPool ? `${totalPool.toLocaleString("zh-CN")} 只可扫描` : "正在统计股票池"}
+              </Text>
         </div>
-        <div className="rounded-xl bg-surface px-3 py-2.5">
-          <div className="text-lg font-semibold text-bull tabular-nums">{usable.length}</div>
-          <div className="text-[10px] text-ink-muted">短线可用</div>
-        </div>
-        <div className="rounded-xl bg-surface px-3 py-2.5">
-          <div className="text-lg font-semibold text-bear tabular-nums">{negative.length}</div>
-          <div className="text-[10px] text-ink-muted">历史不稳</div>
+        <div className="flex items-center gap-2">
+          <Selector
+            label="数据日期"
+            isLabelHidden
+            options={meta.recent_dates}
+            value={date ?? meta.trade_date}
+            onChange={(value) => {
+              const next = new URLSearchParams(searchParams);
+              if (value === meta.trade_date) next.delete("date");
+              else next.set("date", value);
+              setSearchParams(next, { replace: true });
+            }}
+            size="sm"
+            width={132}
+          />
+          <Button
+            label="清空组合"
+            variant="ghost"
+            size="sm"
+            isDisabled={!selectedKeys.length}
+            onClick={() => setSelectedKeys([], COMBINED)}
+          />
         </div>
       </div>
 
-      <p className="text-[11px] text-ink-muted leading-relaxed mb-3">
-        {meta.trade_date ? `${meta.trade_date} / ` : ""}先看历史可靠性，再看今日命中数。
-      </p>
+      <div className="strategy-workbench" data-testid="factor-workbench">
+        <aside className="strategy-library-panel hidden sm:block" aria-label="策略库">
+          <StrategyLibrary
+            factors={meta.factors}
+            groups={meta.groups}
+            selectedKeys={selectedKeys}
+            inspectorKey={inspectorKey}
+            filter={libraryFilter}
+            search={librarySearch}
+            onFilterChange={setLibraryFilter}
+            onSearchChange={setLibrarySearch}
+            onInspect={setInspector}
+            onAdd={addFactor}
+          />
+        </aside>
 
-      {gold.length > 0 && (
-        <div className="card-modern px-3.5 py-3 mb-4">
-          <div className="text-xs font-semibold text-ink mb-1">
-            优先研究：{gold.map((f) => f.name).join("、")}
-          </div>
-          <p className="text-[11px] text-ink-muted leading-relaxed">
-            这些策略在持有1天和5天时，两段独立历史都跑赢大盘。灰色策略仅供复盘，不参与今日决策。
-          </p>
-        </div>
-      )}
+        <StrategyCanvas
+          factors={meta.factors}
+          selectedKeys={selectedKeys}
+          inspectorKey={inspectorKey}
+          scans={scans}
+          traceCounts={traceCounts}
+          totalPool={totalPool}
+          isOver={dropZone.isOver}
+          setNodeRef={dropZone.setNodeRef}
+          onInspect={setInspector}
+          onRemove={removeFactor}
+          onMove={moveFactor}
+          onOpenLibrary={() => setMobileLibraryOpen(true)}
+        />
 
-      {meta.groups.map((g) => {
-        const list = meta.factors
-          .filter((f) => f.group === g)
-          .sort((a, b) => gradeRank(b) - gradeRank(a) || hitRank(b) - hitRank(a));
-        if (!list.length) return null;
-        return (
-          <div key={g} className="mb-4">
-            <h3 className="text-xs font-semibold text-ink-secondary mb-2">{g}</h3>
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
-              {list.map((f) => (
-                <FactorCard key={f.key} f={f} onClick={() => setFactorKey(f.key)} />
-              ))}
+        <section className="strategy-results" aria-labelledby="result-heading">
+          <div className="strategy-region-header gap-3">
+            <div className="min-w-0">
+              <span className="flex min-w-0 items-center gap-2">
+                <Heading level={2} id="result-heading" className="truncate">{resultTitle}</Heading>
+                <Badge label={resultPending ? "计算中" : visibleResults.length} variant={resultError ? "error" : "blue"} />
+              </span>
+              <Text type="supporting" className="mt-1 block truncate">
+                {displayMode === "pool" ? `显示前 ${poolHits.length} / ${totalPool.toLocaleString("zh-CN")}` : resultDate ? `数据截至 ${resultDate}` : "等待策略数据"}
+              </Text>
             </div>
-          </div>
-        );
-      })}
-    </section>
-  );
-}
-
-function FactorDetail({
-  factor,
-  recentDates,
-  windows,
-  onBack,
-}: {
-  factor: FactorMeta;
-  recentDates: string[];
-  windows?: FactorsResponse["track_windows"];
-  onBack: () => void;
-}) {
-  // undefined = 最新交易日；点◀▶后为具体日期
-  const [date, setDate] = useState<string | undefined>(undefined);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const { data, isLoading, error, mutate } = useFactorScan(factor.key, date);
-  const navigate = useNavigate();
-  const setStockNav = useAppStore((s) => s.setStockNav);
-
-  const shownDate = data?.trade_date ?? date ?? recentDates[0] ?? "";
-  const dateIdx = recentDates.indexOf(shownDate);
-  // date=undefined 本身就是"最新"——跨日窗口内旧数据的 trade_date 可能落后于
-  // recent_dates[0]，此时若按 dateIdx 判定会亮起一个点了没反应的"下一日"按钮
-  const canNewer = date !== undefined && dateIdx > 0;
-  const canOlder = dateIdx >= 0 && dateIdx < recentDates.length - 1;
-
-  // 宽松因子（如波段）全市场可命中上千只，渲染全量会卡死页面；
-  // 后端按 J 升序排（越超卖越靠前），截前 300 只保留的是最有参考价值的部分
-  const MAX_SHOW = 300;
-  const allHits = useMemo(() => (data?.available ? data.hits ?? [] : []), [data]);
-  const hits = useMemo(() => allHits.slice(0, MAX_SHOW), [allHits]);
-  const byIndustry = useMemo(() => {
-    const map = new Map<string, FactorHit[]>();
-    for (const h of hits) {
-      const key = h.industry || "未分类";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(h);
-    }
-    return [...map.entries()].sort((a, b) => b[1].length - a[1].length);
-  }, [hits]);
-
-  const openStock = (h: FactorHit) => {
-    // 行业分组展示顺序 = 导航顺序，翻下一只时跟着分组走
-    const flat = byIndustry.flatMap(([, list]) => list);
-    setStockNav(toNavStocks(flat), flat.findIndex((x) => x.code === h.code));
-    navigate(`/stock/${h.code}`);
-  };
-
-  return (
-    <section data-testid="factor-detail">
-      {/* 返回 + 因子名 + 白话说明 */}
-      <div className="flex items-start gap-2 mb-3">
-        <button
-          onClick={onBack}
-          aria-label="返回全部因子"
-          className="mt-0.5 p-1.5 rounded-full text-ink-muted hover:text-ink hover:bg-elevated transition-colors shrink-0"
-        >
-          <ArrowLeft size={15} />
-        </button>
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-ink">{factor.name}</h3>
-          <p className="text-[11px] text-ink-muted leading-relaxed mt-0.5">
-            {factor.plain || factor.desc}
-          </p>
-        </div>
-      </div>
-
-      {/* 这个公式的历史真相：4个持有周期 × 两段独立时间，买之前先看它 */}
-      {factor.track && windows && (
-        <div className="card-modern px-3.5 py-3 mb-3">
-          <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-            <span
-              className={`px-1.5 py-0.5 rounded text-[10px] ${GRADE_META[factor.track.grade].cls}`}
-            >
-              {GRADE_META[factor.track.grade].label}
-            </span>
-            <span className="text-[10px] text-ink-muted">
-              {GRADE_META[factor.track.grade].hint}
-            </span>
+            {displayMode === "individual" && (
+              <Button label="返回组合结果" variant="secondary" size="sm" icon={<Icon icon="viewColumns" size="xsm" />} onClick={() => setInspector(COMBINED)} />
+            )}
           </div>
 
-          <div className="overflow-x-auto scrollbar-none -mx-1 px-1">
-            <table className="w-full text-[11px] tabular-nums">
-              <thead>
-                <tr className="text-ink-muted">
-                  <th className="text-left font-normal pb-1 pr-2">持有</th>
-                  <th className="text-right font-normal pb-1 px-2 whitespace-nowrap">
-                    {windows.in.label.slice(5)}
-                  </th>
-                  <th className="text-right font-normal pb-1 px-2 whitespace-nowrap">
-                    {windows.oos.label.slice(5)}
-                  </th>
-                  <th className="text-right font-normal pb-1 pl-2 whitespace-nowrap">结论</th>
-                </tr>
-              </thead>
-              <tbody>
-                {PERIODS.map((p) => {
-                  const t = factor.track!.periods?.[p.key];
-                  if (!t) return null;
-                  const cell = (w: typeof t.in) => (
-                    <span className="whitespace-nowrap">
-                      <span className="text-ink font-medium">{w.win}%</span>
-                      <span className={w.excess > 0 ? "text-bull" : "text-bear"}>
-                        {" "}
-                        {w.excess > 0 ? "+" : ""}
-                        {w.excess}%
+          <div className="border-b border-border p-3">
+            <TextInput
+              label="搜索结果"
+              isLabelHidden
+              value={resultSearch}
+              onChange={setResultSearch}
+              placeholder="搜索股票、代码、行业"
+              startIcon={<Icon icon="search" size="xsm" />}
+              hasClear
+              width="100%"
+              size="sm"
+            />
+          </div>
+
+          {resultError ? (
+            <div className="p-3">
+              <Banner
+                status="error"
+                title="结果不可用"
+                description={resultError}
+                endContent={<Button label="重试" variant="secondary" size="sm" onClick={() => displayMode === "pool" ? retryPool() : retryScans()} />}
+              />
+            </div>
+          ) : resultPending ? (
+            <div className="grid min-h-72 place-items-center text-sm text-ink-muted">正在读取并计算真实结果…</div>
+          ) : visibleResults.length ? (
+            <>
+              <div className="hidden min-h-0 flex-1 overflow-auto md:block">
+                <Table
+                  data={visibleResults.slice(0, MAX_RESULTS)}
+                  columns={columns}
+                  idKey="code"
+                  density="compact"
+                  dividers="rows"
+                  hasHover
+                  textOverflow="truncate"
+                  aria-label={`${resultTitle}股票列表`}
+                />
+              </div>
+              <div className="min-h-0 flex-1 divide-y divide-border overflow-y-auto md:hidden">
+                {visibleResults.slice(0, MAX_RESULTS).map((hit) => (
+                  <Button key={hit.code} label={`查看 ${hit.name || hit.code}`} variant="ghost" width="100%" className="mobile-stock-row" onClick={() => openStock(hit)}>
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium text-ink">{hit.name || "未知"}</span>
+                      <span className="mt-0.5 block font-mono text-[11px] text-ink-muted">
+                        {hit.code} · {hit.industry || "未分类"}
+                        {hit.sector ? ` · 板块 ${hit.sector.score.toFixed(0)}` : ""}
                       </span>
                     </span>
-                  );
-                  return (
-                    <tr key={p.key} className="border-t border-border/30">
-                      <td className="py-1 pr-2 text-ink-secondary whitespace-nowrap">
-                        {p.label}
-                      </td>
-                      <td className="py-1 px-2 text-right">{cell(t.in)}</td>
-                      <td className="py-1 px-2 text-right">{cell(t.oos)}</td>
-                      <td className="py-1 pl-2 text-right whitespace-nowrap">
-                        {t.robust ? (
-                          <span className="text-bull">✓ 两段都赢</span>
-                        ) : (
-                          <span className="text-ink-muted">-</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                    <span className="text-right">
+                      <span className="block text-sm tabular-nums text-ink">{formatNumber(hit.close)}</span>
+                      <span className={`mt-0.5 block text-xs tabular-nums ${pctClass(hit.pct_change)}`}>
+                        {hit.pct_change === null ? `J ${formatNumber(hit.J)}` : `${hit.pct_change > 0 ? "+" : ""}${hit.pct_change.toFixed(2)}%`}
+                      </span>
+                    </span>
+                    <Icon icon="chevronRight" size="sm" color="secondary" />
+                  </Button>
+                ))}
+              </div>
+              {rawResults.length > MAX_RESULTS && (
+                <p className="border-t border-border px-3 py-2 text-[11px] text-ink-muted">为保持交互流畅，仅显示前 {MAX_RESULTS} 只；交集计算仍使用全部 {rawResults.length} 只。</p>
+              )}
+            </>
+          ) : (
+            <div className="grid min-h-72 place-items-center p-5">
+              <EmptyState
+                icon={<Icon icon="funnel" size="md" />}
+                title={resultSearch ? "没有匹配的股票" : displayMode === "pool" ? "股票池为空" : "当前条件没有命中"}
+                description={resultSearch ? "清除搜索词查看完整结果。" : displayMode === "combined" ? "这是有效结果，不会用旧数据或部分结果补位。" : "切换日期或点击其他策略继续研究。"}
+                actions={displayMode === "pool" ? <Button label="添加第一个策略" variant="primary" icon={<span aria-hidden="true">＋</span>} onClick={() => setMobileLibraryOpen(true)} /> : undefined}
+                isCompact
+              />
+            </div>
+          )}
 
-          <p className="text-[10px] text-ink-muted mt-2 leading-relaxed">
-            胜率 + 超额（相对同期全市场信号基准）。信号次日开盘买入、持有N天收盘卖出的真实结果。
-            {factor.track.dd !== null &&
-              ` 期间平均最大浮亏 ${factor.track.dd}%（止损参考）。`}
-          </p>
-        </div>
-      )}
-
-      {/* 日期导航 + 结果统计（窄屏允许换行，绝不横向溢出） */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-3">
-        <div className="flex items-center gap-0.5 bg-surface rounded-full px-1 py-0.5">
-          <button
-            onClick={() => canOlder && setDate(recentDates[dateIdx + 1])}
-            disabled={!canOlder}
-            aria-label="上一交易日"
-            className="p-1 rounded-full text-ink-muted enabled:hover:text-ink enabled:hover:bg-elevated disabled:opacity-30 transition-colors"
-          >
-            <ChevronLeft size={14} />
-          </button>
-          <span className="text-xs text-ink-secondary tabular-nums px-1">
-            {shownDate || "…"}
-          </span>
-          <button
-            onClick={() => canNewer && setDate(dateIdx === 1 ? undefined : recentDates[dateIdx - 1])}
-            disabled={!canNewer}
-            aria-label="下一交易日"
-            className="p-1 rounded-full text-ink-muted enabled:hover:text-ink enabled:hover:bg-elevated disabled:opacity-30 transition-colors"
-          >
-            <ChevronRight size={14} />
-          </button>
-        </div>
-        {data?.available && (
-          <span className="text-[11px] text-ink-muted">
-            命中 {allHits.length} 只 / 扫描 {data.total_scanned}
-          </span>
-        )}
+          <footer className="strategy-result-footer">
+            <span>{displayMode === "combined" ? "交集结果" : resultTitle} · {rawResults.length} 只</span>
+            <span>{resultDate ? `数据截至 ${resultDate}` : "日期待确认"}</span>
+          </footer>
+        </section>
       </div>
 
-      {/* 结果区 */}
-      {isLoading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-14 w-full rounded-xl" />
-          <Skeleton className="h-14 w-full rounded-xl" />
-          <p className="text-[11px] text-ink-muted leading-relaxed">
-            正在计算。该日期首次计算需要全市场扫描，约 1-3 分钟，完成后可直接打开。
-          </p>
+      <div className="strategy-mobile-action sm:hidden">
+        <Button label="添加策略" variant="primary" icon={<span aria-hidden="true">＋</span>} width="100%" onClick={() => setMobileLibraryOpen(true)} />
+      </div>
+
+      <Dialog
+        isOpen={mobileLibraryOpen}
+        onOpenChange={setMobileLibraryOpen}
+        width="100%"
+        maxHeight="82dvh"
+        position={{ bottom: 0, left: 0, right: 0 }}
+        padding={0}
+        aria-label="添加策略"
+      >
+        <div className="flex max-h-[82dvh] min-h-[60dvh] flex-col">
+          <DialogHeader className="px-3" title="添加策略" subtitle="点击 + 添加；点击策略名称可先查看独立命中结果。" onOpenChange={setMobileLibraryOpen} hasDivider />
+          <div className="min-h-0 flex-1">
+            <StrategyLibrary
+              factors={meta.factors}
+              groups={meta.groups}
+              selectedKeys={selectedKeys}
+              inspectorKey={inspectorKey}
+              filter={libraryFilter}
+              search={librarySearch}
+              dragDisabled
+              onFilterChange={setLibraryFilter}
+              onSearchChange={setLibrarySearch}
+              onInspect={(key) => {
+                setInspector(key);
+                setMobileLibraryOpen(false);
+              }}
+              onAdd={addFactor}
+            />
+          </div>
         </div>
-      ) : error ? (
-        <LoadError label="选股结果加载失败" onRetry={() => mutate()} />
-      ) : !data?.available ? (
-        <p className="text-xs text-ink-muted leading-relaxed py-2">
-          {data?.reason ?? "数据准备中"}
-        </p>
-      ) : hits.length === 0 ? (
-        <p className="text-xs text-ink-muted leading-relaxed py-2">
-          {shownDate} 全市场无「{factor.name}」命中。选股条件较严格，空结果是正常现象。
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {allHits.length > MAX_SHOW && (
-            <p className="text-[11px] text-ink-muted leading-relaxed px-1">
-              该因子当日命中 {allHits.length} 只，信号偏宽，参考价值有限；
-              下面只展示 J 值最低（最超卖）的 {MAX_SHOW} 只。
-            </p>
-          )}
-          {byIndustry.map(([industry, list]) => {
-            const isCollapsed = collapsed.has(industry);
-            return (
-              <div key={industry} className="card-modern px-1 py-1">
-                <button
-                  onClick={() => {
-                    const next = new Set(collapsed);
-                    if (isCollapsed) next.delete(industry);
-                    else next.add(industry);
-                    setCollapsed(next);
-                  }}
-                  className="w-full flex items-center gap-1.5 px-3 py-2 text-left"
-                >
-                  <ChevronDown
-                    size={13}
-                    className={`text-ink-muted transition-transform duration-150 ${isCollapsed ? "-rotate-90" : ""}`}
-                  />
-                  <span className="text-xs font-semibold text-ink">{industry}</span>
-                  <span className="text-[11px] text-ink-muted num">{list.length}只</span>
-                </button>
-                {!isCollapsed && (
-                  <div className="divide-y divide-border/40">
-                    {list.map((h) => (
-                      <button
-                        key={h.code}
-                        onClick={() => openStock(h)}
-                        className="w-full px-3 sm:px-4 py-2.5 hover:bg-elevated active:bg-inset rounded-xl transition-colors duration-100 text-left"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-sm font-medium text-ink truncate">
-                            {h.name || h.code}
-                          </span>
-                          <span className="font-mono text-xs text-ink-muted shrink-0">
-                            {h.code}
-                          </span>
-                          <span className={`ml-auto text-sm font-medium tabular-nums shrink-0 ${pctColor(h.pct_change)}`}>
-                            {h.pct_change !== null && h.pct_change !== undefined
-                              ? `${h.pct_change > 0 ? "+" : ""}${h.pct_change.toFixed(2)}%`
-                              : "-"}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-3 mt-1 text-xs text-ink-muted tabular-nums whitespace-nowrap min-w-0">
-                          <span className="text-ink-secondary font-medium shrink-0">
-                            {h.close.toFixed(2)}
-                          </span>
-                          {h.J !== null && <span className="shrink-0">J {h.J.toFixed(1)}</span>}
-                          {h.RSI !== null && <span className="shrink-0">RSI {h.RSI.toFixed(1)}</span>}
-                          {h.cap_yi !== null && h.cap_yi !== undefined && (
-                            <span className="shrink-0">{h.cap_yi.toFixed(0)}亿</span>
-                          )}
-                          {h.sector && (
-                            <span
-                              className="shrink-0 rounded-full bg-surface px-1.5 py-0.5 text-[10px] text-ink-secondary"
-                              title={`板块热度 ${h.sector.score}（第 ${h.sector.rank}/${h.sector.total} 名）`}
-                            >
-                              板块 {h.sector.score.toFixed(0)}
-                              <span className="text-ink-muted"> · {h.sector.rank}/{h.sector.total}</span>
-                              {h.sector.delta3 !== 0 && (
-                                <span className={h.sector.delta3 > 0 ? "text-bull" : "text-bear"}>
-                                  {h.sector.delta3 > 0 ? ` +${h.sector.delta3.toFixed(0)}` : ` ${h.sector.delta3.toFixed(0)}`}
-                                </span>
-                              )}
-                            </span>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </section>
+      </Dialog>
+
+      <DragOverlay dropAnimation={{ duration: 140, easing: "ease-out" }}>
+        {activeDragFactor ? (
+          <div className="strategy-drag-overlay">
+            <Icon icon="arrowsUpDown" size="sm" />
+            <span>{activeDragFactor.name}</span>
+            <Badge label={activeDragFactor.today_hits === null ? "待计算" : `${activeDragFactor.today_hits} 只`} variant="blue" />
+          </div>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
   );
 }

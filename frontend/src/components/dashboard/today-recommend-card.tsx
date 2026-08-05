@@ -1,5 +1,6 @@
-import { useNavigate } from "react-router";
-import { BadgeCheck, CircleAlert, Sparkles } from "lucide-react";
+import { useNavigate } from "@/lib/spa-router";
+import { Button } from "@astryxdesign/core/Button";
+import { Icon } from "@astryxdesign/core/Icon";
 import { LoadError, Skeleton } from "@/components/ui";
 import { useRecommend } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
@@ -22,8 +23,10 @@ function RecommendRow({ item, list }: { item: RecommendStock; list: RecommendSto
   const sector = item.sector;
 
   return (
-    <button
-      type="button"
+    <Button
+      label={`查看 ${item.name || item.code}`}
+      variant="ghost"
+      width="100%"
       onClick={() => {
         const navList: SignalStock[] = list.map((s) => ({
           code: s.code, name: s.name, strategy: "云阶", category: "云阶",
@@ -77,7 +80,7 @@ function RecommendRow({ item, list }: { item: RecommendStock; list: RecommendSto
       {item.reason && (
         <p className="mt-1.5 pl-9 text-[11px] leading-relaxed text-ink-muted">{item.reason}</p>
       )}
-    </button>
+    </Button>
   );
 }
 
@@ -88,14 +91,14 @@ export function TodayRecommendCard() {
   return (
     <section className="card-modern mb-5" data-testid="today-recommend">
       <header className="flex items-center gap-2 px-4 pt-3.5 pb-2">
-        <Sparkles size={15} className="text-accent" strokeWidth={1.7} />
+        <Icon icon="success" size="xsm" color="accent" />
         <h2 className="text-sm font-semibold text-ink">今日推荐</h2>
         <span className="text-[11px] text-ink-muted">
           {data?.trade_date ? `截至 ${data.trade_date} 收盘` : ""}
         </span>
         {data?.core_factor && (
           <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-surface px-1.5 py-0.5 text-[10px] text-ink-secondary">
-            <BadgeCheck size={11} className="text-bull" />
+            <Icon icon="checkDouble" size="xsm" color="success" />
             云阶 · 双周期验证主策略
           </span>
         )}
@@ -112,7 +115,7 @@ export function TodayRecommendCard() {
         </div>
       ) : !data?.available ? (
         <p className="px-4 pb-4 flex items-start gap-1.5 text-xs text-ink-muted leading-relaxed">
-          <CircleAlert size={13} className="mt-0.5 shrink-0" />
+          <Icon icon="warning" size="xsm" color="warning" />
           {data?.reason ?? "数据准备中"}
         </p>
       ) : picks.length === 0 ? (

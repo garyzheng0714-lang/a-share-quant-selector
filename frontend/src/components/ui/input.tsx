@@ -1,30 +1,30 @@
+import { TextInput } from "@astryxdesign/core/TextInput";
 import { forwardRef, type InputHTMLAttributes } from "react";
 
-interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "onChange" | "size" | "value" | "type"> {
   label?: string;
   suffix?: string;
+  type?: "text" | "email" | "password";
+  value?: string;
+  onChange?: React.ChangeEventHandler<HTMLInputElement>;
 }
 
+/** Compatibility adapter. The rendered field is Astryx TextInput. */
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  function Input({ label, suffix, className = "", ...props }, ref) {
+  function Input({ label, suffix: _suffix, value = "", onChange, disabled, type = "text", ...props }, ref) {
+    void _suffix;
+    const accessibleLabel = label || props["aria-label"] || "输入";
     return (
-      <div className="flex flex-col gap-1.5">
-        {label && (
-          <label className="text-sm text-ink-secondary">{label}</label>
-        )}
-        <div className="relative">
-          <input
-            ref={ref}
-            className={`w-full h-10 px-3 rounded-[16px] text-sm text-ink bg-elevated border border-border transition-all duration-150 focus:border-border-focus focus:ring-2 focus:ring-accent/15 placeholder:text-ink-muted ${suffix ? "pr-10" : ""} ${className}`}
-            {...props}
-          />
-          {suffix && (
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-ink-muted">
-              {suffix}
-            </span>
-          )}
-        </div>
-      </div>
+      <TextInput
+        ref={ref}
+        {...props}
+        type={type}
+        label={accessibleLabel}
+        isLabelHidden={!label}
+        value={value}
+        onChange={(_nextValue, event) => onChange?.(event)}
+        isDisabled={disabled}
+      />
     );
   },
 );

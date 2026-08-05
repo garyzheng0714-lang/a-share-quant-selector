@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Tab as AstryxTab, TabList } from "@astryxdesign/core/TabList";
 import { PageTransition } from "@/components/layout/page-transition";
 import { SelectionLists } from "@/components/review/selection-lists";
 import { SectorRotationCard } from "@/components/dashboard/sector-rotation-card";
@@ -23,33 +24,28 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="max-w-4xl mx-auto px-4 sm:px-8 py-6 sm:py-10">
-        <h1 className="text-xl sm:text-2xl font-bold tracking-[-0.03em] text-ink mb-4">
-          复盘
-        </h1>
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-8 sm:py-9">
+        <header className="mb-5">
+          <p className="section-kicker">研究复盘</p>
+          <h1 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-ink">验证方法，不追逐结果</h1>
+          <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink-muted">
+            用样本外战绩与当前研究快照校准方法，不在这里制造新的推荐结论。
+          </p>
+        </header>
 
-        <div className="relative mb-5 w-full sm:w-fit">
-          <div className="flex items-center gap-1 bg-surface rounded-full p-1 overflow-x-auto scrollbar-none">
-            {TABS.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
-                className={`shrink-0 px-3 sm:px-4 py-1.5 text-xs sm:text-sm rounded-full whitespace-nowrap transition-colors duration-150 ${
-                  tab === t.key
-                    ? "bg-elevated text-ink font-medium ring-1 ring-border"
-                    : "text-ink-muted hover:text-ink-secondary"
-                }`}
-              >
-                {t.label}
-              </button>
+        <div className="mb-5 overflow-x-auto scrollbar-none">
+          <TabList value={tab} onChange={(value) => setTab(value as Tab)} size="sm" layout="hug" hasDivider>
+            {TABS.map((item) => (
+              <AstryxTab key={item.key} value={item.key} label={item.label} />
             ))}
-          </div>
-          <div className="sm:hidden pointer-events-none absolute inset-y-0 right-0 w-10 rounded-r-full bg-gradient-to-l from-surface to-transparent" />
+          </TabList>
         </div>
 
-        {tab === "lists" && <SelectionLists />}
-        {tab === "sectors" && <SectorRotationCard />}
-        {tab === "performance" && <PerformanceSection />}
+        <div id={`review-${tab}-panel`} role="tabpanel" aria-labelledby={`review-${tab}-tab`}>
+          {tab === "lists" && <SelectionLists />}
+          {tab === "sectors" && <SectorRotationCard />}
+          {tab === "performance" && <PerformanceSection />}
+        </div>
       </div>
     </PageTransition>
   );

@@ -1,8 +1,9 @@
-import { RefreshCw } from "lucide-react";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
 
 /**
- * 数据加载失败态：对交易决策系统，接口挂了必须明说，
- * 绝不能伪装成"暂无数据"的空态误导用户（诚实优先）。
+ * 数据加载失败态：错误必须留在上下文中，不伪装成空数据。
+ * 视觉与交互由 Astryx Banner/Button 负责。
  */
 export function LoadError({
   label = "数据加载失败",
@@ -12,17 +13,20 @@ export function LoadError({
   onRetry?: () => void;
 }) {
   return (
-    <div className="flex items-center justify-center gap-2 py-6 text-xs text-bull/90">
-      <span>{label}</span>
-      {onRetry && (
-        <button
-          onClick={onRetry}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-inset text-ink-secondary hover:text-ink transition-colors"
-        >
-          <RefreshCw size={11} />
-          重试
-        </button>
-      )}
-    </div>
+    <Banner
+      status="error"
+      title={label}
+      description="数据没有成功返回，可以重试；原有筛选条件会保留。"
+      endContent={
+        onRetry ? (
+          <Button
+            label="重试"
+            variant="secondary"
+            size="sm"
+            onClick={onRetry}
+          />
+        ) : undefined
+      }
+    />
   );
 }

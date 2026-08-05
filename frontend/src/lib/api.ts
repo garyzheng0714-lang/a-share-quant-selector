@@ -471,6 +471,11 @@ export interface QuantPickStock {
   J?: number | null;
   RSI?: number | null;
   pct_change?: number | null;
+  /** 按板块热度排序后的名次（1-based，rank_total 为当日命中总数） */
+  rank?: number;
+  rank_total?: number;
+  /** 推荐理由：云阶结构 + 板块热度/排名/趋势 */
+  reason?: string;
   /** 预备队专属：距突破线还差几个点 / 突破价 */
   gap_pct?: number;
   target?: number;

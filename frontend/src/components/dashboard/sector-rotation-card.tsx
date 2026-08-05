@@ -1,4 +1,4 @@
-import { Flame, Rocket } from "lucide-react";
+import { Icon } from "@astryxdesign/core/Icon";
 import { useSectors } from "@/lib/hooks";
 import { Skeleton, StrengthBar, DeltaArrow, SectionLabel } from "@/components/ui";
 import type { SectorHot, SectorRelay } from "@/lib/api";
@@ -78,7 +78,7 @@ export function SectorRotationCard() {
         <div>
           <div className="min-w-0">
             <SectionLabel
-              icon={<Flame size={12} className="text-bull" />}
+              icon={<Icon icon="warning" size="xsm" color="error" />}
               className="mb-1.5"
             >
               当前最热
@@ -89,7 +89,7 @@ export function SectorRotationCard() {
           </div>
           <div className="mt-4 min-w-0">
             <SectionLabel
-              icon={<Rocket size={12} className="text-accent" />}
+              icon={<Icon icon="arrowUp" size="xsm" color="accent" />}
               className="mb-1.5"
             >
               接力观察

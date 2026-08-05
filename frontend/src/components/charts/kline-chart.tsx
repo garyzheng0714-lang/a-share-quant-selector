@@ -91,8 +91,8 @@ const {
 } = chartColors;
 const BG_COLOR = "transparent";
 const LINE_WIDTH = 1.5;
-// 信号点用主题金（accent），与趋势线/多空线区分
-const SIGNAL_COLOR = "#e0a83c";
+// 信号点使用工作台主强调蓝，与趋势线/多空线区分
+const SIGNAL_COLOR = "#2563eb";
 
 function formatVolumeAxis(v: number): string {
   if (Math.abs(v) >= 1e8) return (v / 1e8).toFixed(1) + "\u4ebf";
