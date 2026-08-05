@@ -1,27 +1,34 @@
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { lazy, Suspense, useMemo } from "react";
 import { RootLayout } from "@/components/layout/root-layout";
 import { Component as SectorDetailPage } from "@/pages/sector-detail";
+import { Navigate, RouteProvider, useLocation } from "@/lib/spa-router";
 
-const basename = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
+const SectorsPage = lazy(() => import("@/pages/sectors").then((module) => ({ default: module.Component })));
+const StocksPage = lazy(() => import("@/pages/stocks").then((module) => ({ default: module.Component })));
+const ReviewPage = lazy(() => import("@/pages/review").then((module) => ({ default: module.Component })));
+const StockDetailPage = lazy(() => import("@/pages/stock-detail").then((module) => ({ default: module.Component })));
 
-export const router = createBrowserRouter(
-  [
-    {
-      path: "/",
-      element: <RootLayout />,
-      children: [
-        { index: true, element: <Navigate to="/sectors" replace /> },
-        { path: "sectors", lazy: () => import("@/pages/sectors") },
-        { path: "sectors/:name", element: <SectorDetailPage /> },
-        { path: "stocks", lazy: () => import("@/pages/stocks") },
-        { path: "review", lazy: () => import("@/pages/review") },
-        { path: "stock/:code", lazy: () => import("@/pages/stock-detail") },
-        // 旧路径重定向，书签不失效
-        { path: "performance", element: <Navigate to="/review" replace /> },
-        { path: "history", element: <Navigate to="/review" replace /> },
-        { path: "today", element: <Navigate to="/stocks" replace /> },
-      ],
-    },
-  ],
-  { basename },
-);
+export function AppRouter() {
+  const location = useLocation();
+  const route = useMemo(() => {
+    const stockMatch = location.pathname.match(/^\/stock\/([^/]+)\/?$/);
+    const sectorMatch = location.pathname.match(/^\/sectors\/([^/]+)\/?$/);
+    if (stockMatch) return { element: <StockDetailPage />, params: { code: decodeURIComponent(stockMatch[1]) } };
+    if (sectorMatch) return { element: <SectorDetailPage />, params: { name: decodeURIComponent(sectorMatch[1]) } };
+    if (location.pathname === "/sectors") return { element: <SectorsPage />, params: {} };
+    if (location.pathname === "/stocks") return { element: <StocksPage />, params: {} };
+    if (location.pathname === "/review") return { element: <ReviewPage />, params: {} };
+    if (["/performance", "/history"].includes(location.pathname)) return { element: <Navigate to="/review" replace />, params: {} };
+    if (location.pathname === "/today") return { element: <Navigate to="/stocks" replace />, params: {} };
+    return { element: <Navigate to="/sectors" replace />, params: {} };
+  }, [location.pathname]);
+
+  return (
+    <RouteProvider
+      params={route.params}
+      outlet={<Suspense fallback={<div className="min-h-[60vh]" aria-label="页面加载中" />}>{route.element}</Suspense>}
+    >
+      <RootLayout />
+    </RouteProvider>
+  );
+}

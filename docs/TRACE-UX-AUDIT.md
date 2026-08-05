@@ -1,0 +1,86 @@
+# QSelect 前端 TRACE / Astryx 验收记录
+
+## 1. 结果契约（Truth）
+
+当个人 A 股研究者打开每日股票池时，帮助他通过添加、拖动、排序和查看策略，得到可解释的单策略命中与多策略 AND 交集，并能进入 K 线后返回且恢复研究上下文；页面保持亮色、数据真实、操作可撤回，所有可见 UI 由项目锁定版本的 Astryx 组件、主题和令牌承载。
+
+- 当前痛点：旧页面混用原生控件、图标库和动效库，暗色/亮色不一致，策略组合与结果之间的关系不够直观。
+- 本轮结果：`/stocks` 成为策略工作台权威入口；真实 API 数据驱动策略库、扫描结果和 K 线，不再依赖演示数据。
+- 明确非目标：不改股票因子算法、后端数据口径和权限模型；ECharts 仅作为 K 线这一领域数据可视化实现，不承担通用 UI 组件职责。
+
+## 2. 方案选择（内部 Judge）
+
+| 方案 | 任务路径 | 取舍 |
+| --- | --- | --- |
+| A：筛选器 + 结果表 | 先选条件，再看结果 | 认知简单，但策略顺序和组合关系不可见 |
+| B：右侧抽屉式策略库 | 结果优先，策略按需打开 | 移动端友好，但桌面端拖动组合不连续 |
+| C：三列数据工作台（采用） | 策略库 → 组合画布 → 命中结果 | 保留拖动、AND 关系、单策略检查和结果核验；移动端改为顺序堆叠并用 Dialog 收纳策略库 |
+
+采用 C，因为它直接呈现“总池子 → 条件组合 → 交集结果”的数据关系，同时把复杂策略库渐进披露到移动端。
+
+## 3. componentSelectionReview
+
+| 页面对象/意图 | Astryx 根组件 | 默认、反馈、禁用/空错状态 | 键盘/触摸路径 |
+| --- | --- | --- | --- |
+| 产品壳层与一级导航 | `AppShell`、`TopNav`、语义 `nav`、`Icon`、`Text` | 固定亮色主题；当前入口有明确选中态；移动端保留底部导航 | Tab 顺序可达；导航使用真实路由 |
+| 复盘页内容导航 | `TabList` + `Tab` | 选中态、底部分隔线、窄屏横向可滚动 | 组件原生 tab 键盘语义 |
+| 策略库状态筛选 | `SegmentedControl` + `SegmentedControlItem` | 全部/已验证/观察中；选择即时更新库 | 单选键盘语义；触摸目标由 Astryx 提供 |
+| 策略搜索 | `TextInput` | 空值、无结果、清除、输入中 | label 隐藏但保留可访问名称；原生输入键盘 |
+| 策略条目与动作 | `Button`、`Badge`、`Icon` | 验证状态、悬停/焦点、已添加禁用、添加反馈 | 点击添加；拖动手柄支持 Pointer/Touch/Keyboard sensor |
+| 组合画布 | `Button`、`Badge`、`EmptyState`、dnd-kit 线性排序 | 空组合、AND 关系、当前检查项、上移/下移边界禁用、移除后 URL 恢复 | 拖动、触摸长按、键盘方向键排序 |
+| 命中结果 | Astryx `Table`、`TextInput`、`Banner`、`Button` | 加载、空结果、无搜索结果、部分扫描错误、重试；行与 K 线动作真实可用 | 表格动作按钮可 Tab 到达 |
+| 移动策略库 | Astryx `Dialog`、`TextInput`、`SegmentedControl`、`Badge`、`Button` | 打开/关闭、遮罩、搜索、分组、已添加禁用 | Dialog 焦点管理、Escape/关闭按钮、触摸滚动 |
+| K 线页 | Astryx `SegmentedControl`、`Button`、`Text`、`Icon` + ECharts 数据图 | 日 K/周 K、加载/错误/空数据、前后股票、返回 | 周期单选键盘；返回恢复路由 |
+| 通用状态/反馈 | Astryx `Banner`、`EmptyState`、`Skeleton`、`ToastViewport`、`ProgressBar`、`IconButton` | 默认、加载、成功、可恢复错误、无数据均有语义反馈 | 统一组件语义和焦点样式 |
+
+代码扫描结果：`frontend/src` 中不存在原生 `<button>`、`<input>`、`<select>`、`<textarea>`、`<details>`；不存在业务代码对 `lucide-react` 或 `framer-motion` 的引用。旧兼容封装只返回 Astryx 官方根组件。
+
+## 4. 关键行为证据（Action & State）
+
+| 行为 | 实际证据 |
+| --- | --- |
+| 打开工作台 | `http://localhost:3000/stocks?strategies=cloud_stair&inspect=cloud_stair` 可加载真实策略和命中结果 |
+| 单策略检查 | 云阶显示真实说明与 `命中 2 只` |
+| 多条件添加 | 添加 KDJ 金叉后 URL 变为 `strategies=cloud_stair%2Ckdj_cross`，组合显示 AND，真实交集为 `0 只` |
+| 移除/恢复 | 移除 KDJ 后恢复到云阶组合；清空组合入口保留可恢复路径 |
+| K 线 | 智度股份进入 `/stock/000676`；日 K 与周 K 单选都可切换；返回回到 `/stocks` |
+| 错误恢复 | 工作台策略、股票池、扫描区域均使用 Astryx `Banner` + `重试`，不会把失败伪装成空数据 |
+| URL 恢复 | 直接刷新带 `strategies`/`inspect` 的深链可重建组合和检查对象 |
+
+## 5. 实际验收命令与结果（Evidence）
+
+- `npx astryx doctor --json`：5 pass，0 warn，0 fail；core、CLI、theme-neutral、peer deps 均通过。
+- `npm run lint`：通过。
+- `npm run build`：TypeScript 与 Vite 构建通过。Vite 仅提示 ECharts/主入口 chunk 偏大，这是后续性能优化项，不是构建失败。
+- `npm audit --json`：info/low/moderate/high/critical 全部为 0。
+- `git diff --check`：通过。
+- 浏览器真实验收：当前 URL、真实数据、添加/移除策略、K 线日/周切换、返回路径均通过；每一步浏览器错误日志均为空。
+- 亮色视觉验收：宽屏工作台截图通过；CSS 已明确 1279px 中屏和 639px 窄屏重排，移动策略库使用 Dialog，不依赖桌面三列缩放。
+
+## 6. 剩余风险与非发布阻断项
+
+- 本地后端未提供权限、并发冲突和离线网络模拟；这些状态已保留 Banner/重试边界，但未声称完成生产权限验收。
+- Vite 的大 chunk 警告可在后续通过进一步路由/图表拆包优化；不影响当前核心任务、交互和构建通过。
+
+## 7. 第二轮真实截图复验（2026-08-05）
+
+上一轮截图仍然不能通过验收：板块排名行的 Astryx `Button` 内部 flex 层把外层 grid 直接吃掉，数字列全部落进第一列，出现竖排、截断和错位。本轮按截图复现后修复，并继续检查同类布局。
+
+- `sectors.tsx`：由项目语义行容器负责网格列，Astryx `Button` 只负责可操作的策略名称；`# / 板块阶段 / 强度 / 3日变化 / 站上 MA10 / B1` 的每一列都有独立 DOM 位置。
+- `factor-workbench.tsx`：策略库行改为响应式语义网格；桌面为 `拖动 / 名称与说明 / 命中数 / 添加`，移动 Dialog 移除隐藏拖动列，避免隐藏项占据 0px 列导致名称按钮宽度变成 24px。复盘策略库列宽同步扩大，`KDJ金叉`、`SuperB1` 等名称可见，不再只剩一两个字符。
+- `index.css`：中屏断点提前到 `1365px`，在 1280px 进入“两列 + 结果全宽”，结果表不再在 520px 面板内产生隐性横向滚动；策略状态 Badge 放到说明行，主名称独占一行，点击区域同步扩展到整行高度。
+- `nav-bar.tsx`：TopNav 使用 `bg-surface` 主题表面，页面滚动时不再让内容穿透导航栏。
+
+真实浏览器证据（均为本地真实 API 数据，不是静态 mock）：
+
+| 视口 | 页面/动作 | 结果 |
+| --- | --- | --- |
+| 390×844 | `/sectors`、点击 `IT服务Ⅱ`、页面滚动到详情 | 无横向溢出；排名行高 62px、名称按钮可读；详情图表与指标可到达；TopNav 背景为 `rgb(255,255,255)`，底部导航固定 |
+| 390×844 | `/stocks?strategies=cloud_stair&inspect=cloud_stair`、打开添加策略 Dialog、点击 `查看 KDJ金叉` | Dialog 行宽 243px；策略名/状态/说明可读；URL 变为 `inspect=kdj_cross`；无错误日志 |
+| 390×844 | `/stock/000676` 日 K → 周 K → 返回 | 日 K、周 K 图表均渲染；周期单选状态正确；返回回到 `/review`；无横向溢出 |
+| 838×903 | `/sectors`、键盘 ArrowDown | 焦点从营销代理移动到 IT服务Ⅱ，`aria-pressed` 和 URL 同步，详情更新 |
+| 1280×720 | `/sectors`、`/review` | 板块布局 `420px + 801px`；复盘策略名完整；body `clientWidth === scrollWidth` |
+| 1920×1080 | `/sectors` | 居中工作区 1440px，排名行列对齐，候选表 8 行等高，无溢出 |
+| 1920×1080 | `/stocks`、`/review` | 三列工作台和复盘策略库均由真实数据填充；策略库行名称可读；无错误日志 |
+
+复盘页的 `板块复盘 / 整体战绩 / Super B1 / 每日记录 / AI 历史 / 方法体检` 标签逐一点击检查，均有对应真实状态、无横向溢出、浏览器错误日志为空。移动端策略库的关闭按钮为 Astryx Dialog 原生 `Close`，焦点与遮罩路径可恢复。

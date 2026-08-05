@@ -1,12 +1,14 @@
 import { useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
-import { ChevronRight, Star } from "lucide-react";
+import { useNavigate } from "@/lib/spa-router";
+import { Button } from "@astryxdesign/core/Button";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
+import { Icon } from "@astryxdesign/core/Icon";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
 import { Skeleton, CopyButton, LoadError } from "@/components/ui";
 import { EmptyState } from "@/components/onboarding";
 import { useRanking } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
-import { CATEGORY_LABELS, duration, ease } from "@/lib/tokens";
+import { CATEGORY_LABELS } from "@/lib/tokens";
 import type { RankingStock } from "@/lib/api";
 
 /** B1 分数徽标：分数 + 一小段强度条，越高越红（越像历史强势样本） */
@@ -88,7 +90,10 @@ function CandidateRow({
   const score = stock.similarity_score;
 
   return (
-    <button
+    <Button
+      label={`查看 ${stock.name || stock.code}`}
+      variant="ghost"
+      width="100%"
       onClick={onClick}
       className="w-full px-3 sm:px-4 py-3 rounded-xl hover:bg-elevated active:bg-inset transition-colors duration-100 text-left group"
     >
@@ -111,10 +116,7 @@ function CandidateRow({
         </span>
         <span className="ml-auto shrink-0 flex items-center gap-2">
           {score != null && <B1Badge score={score} />}
-          <ChevronRight
-            size={14}
-            className="text-ink-muted/50 group-hover:text-ink-muted transition-colors shrink-0"
-          />
+          <Icon icon="chevronRight" size="xsm" color="secondary" />
         </span>
       </div>
       <div className="flex items-center gap-3 mt-1 pl-8 text-xs whitespace-nowrap min-w-0">
@@ -138,19 +140,15 @@ function CandidateRow({
           <CategoryTag category={stock.category} />
         </span>
       </div>
-    </button>
+    </Button>
   );
 }
 
 function ChevronToggle({ expanded }: { expanded: boolean }) {
   return (
-    <motion.span
-      animate={{ rotate: expanded ? 90 : 0 }}
-      transition={{ duration: duration.fast }}
-      className="inline-flex"
-    >
-      <ChevronRight size={16} />
-    </motion.span>
+    <span className={`inline-flex transition-transform ${expanded ? "rotate-90" : ""}`}>
+      <Icon icon="chevronRight" size="sm" />
+    </span>
   );
 }
 
@@ -169,43 +167,11 @@ function IndustryGroup({
 }) {
   return (
     <div>
-      <motion.button
-        onClick={onToggle}
-        className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 rounded-xl hover:bg-elevated transition-colors duration-150 text-left"
+      <Collapsible
+        trigger={<span className="flex items-center gap-2 sm:gap-3"><ChevronToggle expanded={expanded} /><span className="font-medium text-sm text-ink shrink-0">{industry}</span><span className="text-xs text-ink-muted tabular-nums shrink-0">{stocks.length}只</span><span className="hidden sm:flex items-center gap-1.5 ml-auto">{Object.entries(stocks.reduce<Record<string, number>>((acc, s) => { acc[s.category] = (acc[s.category] ?? 0) + 1; return acc; }, {})).map(([cat, count]) => <span key={cat} className="text-xs bg-inset text-ink-muted px-2 py-0.5 rounded-md whitespace-nowrap">{CATEGORY_LABELS[cat] ?? cat} {count}</span>)}</span></span>}
+        isOpen={expanded}
+        onOpenChange={onToggle}
       >
-        <ChevronToggle expanded={expanded} />
-        <span className="font-medium text-sm text-ink shrink-0">
-          {industry}
-        </span>
-        <span className="text-xs text-ink-muted tabular-nums shrink-0">
-          {stocks.length}只
-        </span>
-        <div className="hidden sm:flex items-center gap-1.5 ml-auto">
-          {Object.entries(
-            stocks.reduce<Record<string, number>>((acc, s) => {
-              acc[s.category] = (acc[s.category] ?? 0) + 1;
-              return acc;
-            }, {}),
-          ).map(([cat, count]) => (
-            <span
-              key={cat}
-              className="text-xs bg-inset text-ink-muted px-2 py-0.5 rounded-md whitespace-nowrap"
-            >
-              {CATEGORY_LABELS[cat] ?? cat} {count}
-            </span>
-          ))}
-        </div>
-      </motion.button>
-
-      <AnimatePresence>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: duration.normal, ease: [...ease.default] }}
-            className="overflow-hidden"
-          >
             <div className="divide-y divide-border/30 ml-6 mr-2 mb-3 border-l border-border/40 pl-1">
               {stocks.map((stock, i) => (
                 <CandidateRow
@@ -216,9 +182,7 @@ function IndustryGroup({
                 />
               ))}
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      </Collapsible>
     </div>
   );
 }
@@ -286,38 +250,27 @@ export function CandidateList() {
           </p>
         </div>
         <div className="flex items-center bg-surface rounded-full p-0.5 shrink-0 mt-0.5">
-          {(["ranking", "industry"] as const).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => {
-                setViewMode(mode);
-                if (mode === "industry") setExpandedIndustry(null);
-              }}
-              className={`px-3.5 py-1.5 text-xs rounded-full whitespace-nowrap transition-colors duration-150 ${
-                viewMode === mode
-                  ? "bg-elevated text-ink font-medium ring-1 ring-border"
-                  : "text-ink-muted"
-              }`}
-            >
-              {mode === "ranking" ? "排名" : "行业"}
-            </button>
-          ))}
+          <SegmentedControl value={viewMode} onChange={(value) => { const mode = value as ViewMode; setViewMode(mode); if (mode === "industry") setExpandedIndustry(null); }} label="候选视图" size="sm">
+            <SegmentedControlItem value="ranking" label="排名" />
+            <SegmentedControlItem value="industry" label="行业" />
+          </SegmentedControl>
         </div>
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-2 mb-4 overflow-x-auto scrollbar-none">
         {FILTERS.map((f) => (
-          <button
+          <Button
             key={f.key}
+            label={f.label}
+            variant={filter === f.key ? "primary" : "secondary"}
+            size="sm"
             onClick={() => setFilter(f.key)}
             className={`px-2.5 sm:px-4 py-1.5 text-xs sm:text-sm rounded-full whitespace-nowrap shrink-0 transition-colors duration-150 ${
               filter === f.key
                 ? "bg-accent text-ink-inverse font-medium"
                 : "bg-surface text-ink-muted hover:bg-elevated hover:text-ink-secondary"
             }`}
-          >
-            {f.label}
-          </button>
+          >{f.label}</Button>
         ))}
       </div>
 
@@ -331,49 +284,26 @@ export function CandidateList() {
         <LoadError label="候选数据加载失败" onRetry={() => mutate()} />
       ) : filtered.length === 0 ? (
         <EmptyState
-          icon={<Star size={24} strokeWidth={1.5} />}
+          icon={<Icon icon="success" size="md" />}
           title="暂无候选"
           description="每个交易日选股后，候选票会在这里展示"
         />
       ) : (
         <div className="card-modern px-1 py-1">
-        <AnimatePresence mode="wait">
-          {viewMode === "ranking" ? (
-            <motion.div
-              key={`ranking-${filter}`}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: duration.fast }}
-              className="divide-y divide-border/40"
-            >
+        {viewMode === "ranking" ? (
+            <div key={`ranking-${filter}`} className="view-enter divide-y divide-border/40">
               {filtered.map((stock, i) => (
-                <motion.div
-                  key={stock.code}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{
-                    duration: 0.15,
-                    delay: Math.min(i * 0.02, 0.4),
-                  }}
-                >
+                <div key={stock.code}>
                   <CandidateRow
                     stock={stock}
                     rank={i + 1}
                     onClick={() => handleClick(filtered, stock, i)}
                   />
-                </motion.div>
+                </div>
               ))}
-            </motion.div>
+            </div>
           ) : (
-            <motion.div
-              key={`industry-${filter}`}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: duration.fast }}
-              className="space-y-0.5"
-            >
+            <div key={`industry-${filter}`} className="view-enter space-y-0.5">
               {industryGroups.map(([industry, groupStocks]) => (
                 <IndustryGroup
                   key={industry}
@@ -390,9 +320,8 @@ export function CandidateList() {
                   }
                 />
               ))}
-            </motion.div>
+            </div>
           )}
-        </AnimatePresence>
         </div>
       )}
     </section>

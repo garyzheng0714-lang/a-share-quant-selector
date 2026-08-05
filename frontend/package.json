@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "astryx": {
+    "theme": "@astryxdesign/theme-neutral"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -10,16 +13,20 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "echarts": "^6.0.0",
-    "framer-motion": "^11.18.2",
-    "lucide-react": "^1.24.0",
+    "@astryxdesign/core": "^0.2.0",
+    "@astryxdesign/theme-neutral": "^0.2.0",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@stylexjs/stylex": "^0.19.0",
+    "echarts": "^6.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-router-dom": "^7.13.1",
     "swr": "^2.4.1",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@astryxdesign/cli": "^0.2.0",
     "@eslint/js": "^9.39.1",
     "@tailwindcss/vite": "^4.2.1",
     "@types/node": "^24.10.1",

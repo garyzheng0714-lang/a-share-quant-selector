@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Tab as AstryxTab, TabList } from "@astryxdesign/core/TabList";
 import { PageTransition } from "@/components/layout/page-transition";
 import { SelectionLists } from "@/components/review/selection-lists";
 import { SectorRotationCard } from "@/components/dashboard/sector-rotation-card";
@@ -7,15 +8,15 @@ import { PerformanceSection } from "@/components/review/performance-section";
 import { HistorySection } from "@/components/review/history-section";
 import { SuperB1PerformanceSection } from "@/components/review/super-b1-performance";
 
-type Tab = "lists" | "sectors" | "performance" | "superb1" | "history" | "picks";
+type ReviewTab = "lists" | "sectors" | "performance" | "superb1" | "history" | "picks";
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: "lists", label: "选股名单" },
-  { key: "sectors", label: "板块风向" },
+const TABS: { key: ReviewTab; label: string }[] = [
+  { key: "lists", label: "方法体检" },
+  { key: "sectors", label: "板块复盘" },
   { key: "performance", label: "整体战绩" },
-  { key: "superb1", label: "超级B1" },
-  { key: "history", label: "每日名单" },
-  { key: "picks", label: "旧版 AI" },
+  { key: "superb1", label: "Super B1" },
+  { key: "history", label: "每日记录" },
+  { key: "picks", label: "AI 历史" },
 ];
 
 /**
@@ -27,42 +28,31 @@ const TABS: { key: Tab; label: string }[] = [
  * AI 现在只在主页为量化选出的票写点评，不再自己挑票）
  */
 export function Component() {
-  const [tab, setTab] = useState<Tab>("lists");
+  const [tab, setTab] = useState<ReviewTab>("lists");
 
   return (
     <PageTransition>
-      <div className="max-w-4xl mx-auto px-4 sm:px-8 py-6 sm:py-10">
-        <h1 className="text-xl sm:text-2xl font-bold tracking-[-0.03em] text-ink mb-4">
-          复盘
-        </h1>
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-8 sm:py-9">
+        <header className="mb-5">
+          <p className="section-kicker">研究复盘</p>
+          <h1 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-ink">验证方法，不追逐结果</h1>
+          <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink-muted">用样本外战绩、每日记录和历史版本校准研究方法，不在这里制造新的推荐结论。</p>
+        </header>
 
-        {/* 手机上 6 个 tab 一行放不下（是我从 4 个加到 6 个撑破的），需要横滑。
-            右侧渐隐是唯一的"右边还有"提示——没有它，用户根本不知道能滑 */}
-        <div className="relative mb-5 w-full sm:w-fit">
-          <div className="flex items-center gap-1 bg-surface rounded-full p-1 overflow-x-auto scrollbar-none">
-            {TABS.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
-                className={`shrink-0 px-3 sm:px-4 py-1.5 text-xs sm:text-sm rounded-full whitespace-nowrap transition-colors duration-150 ${
-                  tab === t.key
-                    ? "bg-elevated text-ink font-medium ring-1 ring-border"
-                    : "text-ink-muted hover:text-ink-secondary"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-          <div className="sm:hidden pointer-events-none absolute inset-y-0 right-0 w-10 rounded-r-full bg-gradient-to-l from-surface to-transparent" />
+        <div className="mb-5 overflow-x-auto scrollbar-none">
+          <TabList value={tab} onChange={(value) => setTab(value as ReviewTab)} size="sm" layout="hug" hasDivider>
+            {TABS.map((item) => <AstryxTab key={item.key} value={item.key} label={item.label} />)}
+          </TabList>
         </div>
 
-        {tab === "lists" && <SelectionLists />}
-        {tab === "sectors" && <SectorRotationCard />}
-        {tab === "performance" && <PerformanceSection />}
-        {tab === "superb1" && <SuperB1PerformanceSection />}
-        {tab === "history" && <HistorySection />}
-        {tab === "picks" && <PicksHistory />}
+        <div id={`review-${tab}-panel`} role="tabpanel" aria-labelledby={`review-${tab}-tab`}>
+          {tab === "lists" && <SelectionLists />}
+          {tab === "sectors" && <SectorRotationCard />}
+          {tab === "performance" && <PerformanceSection />}
+          {tab === "superb1" && <SuperB1PerformanceSection />}
+          {tab === "history" && <HistorySection />}
+          {tab === "picks" && <PicksHistory />}
+        </div>
       </div>
     </PageTransition>
   );

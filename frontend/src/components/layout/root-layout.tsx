@@ -1,6 +1,6 @@
 import { useEffect } from "react";
-import { Outlet, useLocation } from "react-router-dom";
-import { AnimatePresence } from "framer-motion";
+import { Outlet, useLocation } from "@/lib/spa-router";
+import { AppShell } from "@astryxdesign/core/AppShell";
 import { NavBar } from "./nav-bar";
 import { BottomNav } from "./bottom-nav";
 import { ToastContainer } from "@/components/ui/toast";
@@ -14,12 +14,17 @@ export function RootLayout() {
 
   return (
     <>
-      <NavBar />
-      <main id="main-content" className="min-h-[100dvh] pt-14 pb-[calc(4rem+env(safe-area-inset-bottom))] sm:pb-8">
-        <AnimatePresence mode="wait">
+      <AppShell
+        topNav={<NavBar />}
+        contentPadding={0}
+        height="auto"
+        variant="section"
+        mobileNav={false}
+      >
+        <div className="min-h-[calc(100dvh-56px)] pb-[calc(4rem+env(safe-area-inset-bottom))] sm:pb-0">
           <Outlet />
-        </AnimatePresence>
-      </main>
+        </div>
+      </AppShell>
       <BottomNav />
       <ToastContainer />
     </>

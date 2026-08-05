@@ -468,6 +468,11 @@ export interface QuantPickStock {
   J?: number | null;
   RSI?: number | null;
   pct_change?: number | null;
+  /** 按板块热度排序后的名次（1-based，rank_total 为当日命中总数） */
+  rank?: number;
+  rank_total?: number;
+  /** 推荐理由：云阶结构 + 板块热度/排名/趋势 */
+  reason?: string;
   /** 预备队专属：距突破线还差几个点 / 突破价 */
   gap_pct?: number;
   target?: number;
@@ -709,6 +714,8 @@ export interface FactorHit {
   RSI: number | null;
   industry: string;
   cap_yi: number | null;
+  /** 所属行业板块的冷热（全行业热度榜；只读展示，不参与排序） */
+  sector?: SectorState | null;
   /** 策略特有附加字段（detail 等） */
   [key: string]: unknown;
 }

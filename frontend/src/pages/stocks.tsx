@@ -1,61 +1,72 @@
 import { useState } from "react";
-import { Database, SlidersHorizontal, Target } from "lucide-react";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
+import { Heading } from "@astryxdesign/core/Heading";
+import { Icon } from "@astryxdesign/core/Icon";
+import { Text } from "@astryxdesign/core/Text";
 import { PageTransition } from "@/components/layout/page-transition";
 import { QuantPickCard } from "@/components/dashboard/quant-pick-card";
 import { FactorWorkbench } from "@/components/today/factor-workbench";
 import { useCoverage } from "@/lib/hooks";
 
-type View = "decision" | "research";
+type View = "workspace" | "decision";
 
 function CoverageDetails() {
   const { data: coverage } = useCoverage();
 
-  if (!coverage) return <p className="mt-2 pl-5 text-ink-muted">正在读取覆盖率…</p>;
+  if (!coverage) return <Text type="supporting" className="mt-2 block">正在读取覆盖率…</Text>;
 
   return (
-    <p className="mt-2 pl-5 leading-relaxed">
+    <Text type="body" className="mt-2 block leading-relaxed">
       已覆盖 {coverage.covered_count}/{coverage.universe_count}，可训练 {coverage.trainable_count}/{coverage.trainable_eligible_count}，次新股 {coverage.short_history_count} 只单列。
       {coverage.running ? `后台仍在补齐 ${coverage.remaining_count} 只。` : "当前回补任务已结束。"}
-    </p>
+    </Text>
   );
 }
 
 export function Component() {
-  const [view, setView] = useState<View>("decision");
+  const [view, setView] = useState<View>("workspace");
   const [coverageOpen, setCoverageOpen] = useState(false);
 
   return (
     <PageTransition>
-      <div className="mx-auto max-w-4xl px-4 py-7 sm:px-6 sm:py-10">
-        <header className="mb-6">
-          <h1 className="text-[28px] font-semibold tracking-[-0.045em] text-ink">个股</h1>
-          <p className="mt-1.5 text-sm text-ink-muted">B1 信号与分层证据，先复核再研究</p>
-        </header>
-
-        <div className="mb-6 flex border-b border-border" role="tablist" aria-label="个股视图">
-          <button type="button" role="tab" aria-selected={view === "decision"} onClick={() => setView("decision")} className={`relative flex min-h-11 flex-1 items-center justify-center gap-2 text-sm font-medium transition-colors active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${view === "decision" ? "text-accent" : "text-ink-muted hover:text-ink-secondary"}`}><Target size={16} strokeWidth={1.7} />B1{view === "decision" && <span className="absolute inset-x-6 bottom-0 h-px bg-accent" />}</button>
-          <button type="button" role="tab" aria-selected={view === "research"} onClick={() => setView("research")} className={`relative flex min-h-11 flex-1 items-center justify-center gap-2 text-sm font-medium transition-colors active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${view === "research" ? "text-accent" : "text-ink-muted hover:text-ink-secondary"}`}><SlidersHorizontal size={16} strokeWidth={1.7} />其他策略{view === "research" && <span className="absolute inset-x-6 bottom-0 h-px bg-accent" />}</button>
+      <div className="strategy-page">
+        <div className="flex min-h-12 items-center justify-between gap-3 border-b border-border bg-surface px-3 py-2 sm:px-5">
+          <div className="min-w-0">
+            <Heading level={1} className="truncate">每日策略池</Heading>
+            <Text type="supporting" className="hidden sm:block">真实数据驱动的条件组合与结果复核</Text>
+          </div>
+          <SegmentedControl
+            value={view}
+            onChange={(value) => setView(value as View)}
+            label="研究模式"
+            size="sm"
+          >
+            <SegmentedControlItem value="workspace" label="策略组合" />
+            <SegmentedControlItem value="decision" label="B1 决策" />
+          </SegmentedControl>
         </div>
 
-        {view === "decision" ? (
-          <div className="view-enter">
-            <QuantPickCard />
-            <details
-              className="mt-5 px-1 py-2 text-xs text-ink-muted"
-              onToggle={(event) => setCoverageOpen(event.currentTarget.open)}
-            >
-              <summary className="flex cursor-pointer list-none items-center gap-2 hover:text-ink-secondary"><Database size={13} />数据底座</summary>
-              {coverageOpen && <CoverageDetails />}
-            </details>
-          </div>
-        ) : (
-          <section className="view-enter">
-            <div className="mb-4">
-              <h2 className="text-base font-semibold text-ink">其他策略</h2>
-              <p className="mt-1 text-xs text-ink-muted">这些只做参考，B1 仍是主策略。</p>
-            </div>
+        {view === "workspace" ? (
+          <section aria-label="策略组合工作台" className="view-enter">
             <FactorWorkbench />
           </section>
+        ) : (
+          <div className="mx-auto max-w-[1440px] px-3 py-5 sm:px-5 sm:py-7">
+            <header className="mb-4">
+              <Heading level={2}>B1 分层决策</Heading>
+              <Text type="supporting" className="mt-1 block">作为预设决策模型独立展示；不伪装成可与因子做交集的同类数据源。</Text>
+            </header>
+            <QuantPickCard />
+            <Collapsible
+              trigger={<span className="flex items-center gap-2"><Icon icon="viewColumns" size="xsm" />查看全市场数据覆盖</span>}
+              isOpen={coverageOpen}
+              onOpenChange={setCoverageOpen}
+              className="mt-3"
+            >
+              <CoverageDetails />
+            </Collapsible>
+          </div>
         )}
       </div>
     </PageTransition>

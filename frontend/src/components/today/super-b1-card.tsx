@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Button } from "@astryxdesign/core/Button";
+import { Icon } from "@astryxdesign/core/Icon";
+import { useNavigate } from "@/lib/spa-router";
 import { Skeleton, LoadError } from "@/components/ui";
 import { useSuperB1 } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
@@ -67,8 +68,11 @@ export function SuperB1Card({ initialLimit }: { initialLimit?: number } = {}) {
         <div className="card-modern px-1 py-1">
           <div className="reveal-list divide-y divide-border/40">
             {visibleHits.map((h) => (
-              <button
+              <Button
                 key={h.code}
+                label={`查看 ${h.name || h.code}`}
+                variant="ghost"
+                width="100%"
                 onClick={() => openStock(hits, h.code)}
                 className="w-full px-3 sm:px-4 py-2.5 hover:bg-elevated active:bg-inset rounded-xl transition-colors duration-100 text-left"
               >
@@ -105,14 +109,14 @@ export function SuperB1Card({ initialLimit }: { initialLimit?: number } = {}) {
                     </span>
                   )}
                 </div>
-              </button>
+              </Button>
             ))}
           </div>
           {initialLimit && hits.length > initialLimit && (
-            <button onClick={() => setShowAll((value) => !value)} className="flex w-full items-center justify-center gap-2 border-t border-border px-3 py-3 text-xs font-medium text-accent hover:bg-surface-hover active:bg-inset">
+            <Button label={showAll ? "收起" : `查看全部 ${hits.length} 只`} variant="ghost" width="100%" onClick={() => setShowAll((value) => !value)} className="border-t border-border">
               {showAll ? "收起" : `查看全部 ${hits.length} 只`}
-              <ChevronDown size={14} className={`transition-transform ${showAll ? "rotate-180" : ""}`} />
-            </button>
+              <Icon icon="chevronDown" size="xsm" />
+            </Button>
           )}
         </div>
       )}

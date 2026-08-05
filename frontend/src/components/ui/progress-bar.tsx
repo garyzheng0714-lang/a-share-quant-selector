@@ -1,5 +1,4 @@
-import { motion } from "framer-motion";
-import { duration, ease } from "@/lib/tokens";
+import { ProgressBar as AstryxProgressBar } from "@astryxdesign/core/ProgressBar";
 
 interface ProgressBarProps {
   value: number;
@@ -8,28 +7,17 @@ interface ProgressBarProps {
   colorByValue?: boolean;
 }
 
-export function ProgressBar({
-  value,
-  max = 100,
-  className = "",
-  colorByValue = false,
-}: ProgressBarProps) {
-  const pct = Math.min(100, (value / max) * 100);
-  let barColor = "bg-accent";
-  if (colorByValue) {
-    if (pct >= 85) barColor = "bg-bear";
-    else if (pct < 60) barColor = "bg-ink-muted";
-  }
+export function ProgressBar({ value, max = 100, className, colorByValue = false }: ProgressBarProps) {
+  const percentage = max > 0 ? (value / max) * 100 : 0;
+  const variant = colorByValue ? (percentage >= 85 ? "success" : percentage < 60 ? "neutral" : "accent") : "accent";
   return (
-    <div
-      className={`h-1.5 rounded-full overflow-hidden bg-elevated ${className}`}
-    >
-      <motion.div
-        className={`h-full rounded-full ${barColor}`}
-        initial={{ width: 0 }}
-        animate={{ width: `${pct}%` }}
-        transition={{ duration: duration.slow, ease: [...ease.default] }}
-      />
-    </div>
+    <AstryxProgressBar
+      className={className}
+      value={value}
+      max={max}
+      variant={variant}
+      label="进度"
+      isLabelHidden
+    />
   );
 }

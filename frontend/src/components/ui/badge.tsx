@@ -1,25 +1,22 @@
-type BadgeVariant = "bowl" | "duokong" | "short" | "active" | "inactive";
+import { Badge as AstryxBadge } from "@astryxdesign/core/Badge";
 
-const variantStyles: Record<BadgeVariant, string> = {
-  bowl: "bg-bull-dim text-bull border border-bull/20",
-  duokong: "bg-accent-dim text-accent border border-accent/20",
-  short: "bg-bear-dim text-bear border border-bear/20",
-  active: "bg-bear-dim text-bear border border-bear/20",
-  inactive: "bg-elevated text-ink-muted border border-border",
-};
+type LegacyBadgeVariant = "bowl" | "duokong" | "short" | "active" | "inactive";
 
-interface BadgeProps {
-  variant: BadgeVariant;
+export interface BadgeProps {
+  variant: LegacyBadgeVariant;
   children: React.ReactNode;
   className?: string;
 }
 
-export function Badge({ variant, children, className = "" }: BadgeProps) {
-  return (
-    <span
-      className={`inline-flex items-center px-2 py-0.5 rounded-lg text-xs font-medium ${variantStyles[variant]} ${className}`}
-    >
-      {children}
-    </span>
-  );
+const variantMap: Record<LegacyBadgeVariant, React.ComponentProps<typeof AstryxBadge>["variant"]> = {
+  bowl: "error",
+  duokong: "blue",
+  short: "warning",
+  active: "success",
+  inactive: "neutral",
+};
+
+/** Compatibility adapter. The visual root is Astryx Badge. */
+export function Badge({ variant, children, className }: BadgeProps) {
+  return <AstryxBadge variant={variantMap[variant]} label={children} className={className} />;
 }

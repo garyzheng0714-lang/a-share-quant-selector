@@ -1,5 +1,6 @@
-import { useNavigate } from "react-router-dom";
-import { Bot } from "lucide-react";
+import { useNavigate } from "@/lib/spa-router";
+import { Button } from "@astryxdesign/core/Button";
+import { Icon } from "@astryxdesign/core/Icon";
 import { Skeleton, Gauge } from "@/components/ui";
 import { EmptyState } from "@/components/onboarding";
 import { useDailyPickHistory } from "@/lib/hooks";
@@ -30,7 +31,10 @@ function fmtRet(v: number | null): string {
 function PickRow({ pick, onClick }: { pick: DailyPick; onClick: () => void }) {
   const perf = pick.performance;
   return (
-    <button
+    <Button
+      label={`查看 ${pick.name || pick.code || "记录"}`}
+      variant="ghost"
+      width="100%"
       onClick={onClick}
       className="w-full px-3 sm:px-4 py-2.5 rounded-xl hover:bg-elevated active:bg-inset transition-colors duration-100 text-left"
     >
@@ -74,7 +78,7 @@ function PickRow({ pick, onClick }: { pick: DailyPick; onClick: () => void }) {
           </span>
         )}
       </div>
-    </button>
+    </Button>
   );
 }
 
@@ -99,7 +103,7 @@ export function PicksHistory() {
   if (picks.length === 0) {
     return (
       <EmptyState
-        icon={<Bot size={24} strokeWidth={1.5} />}
+        icon={<Icon icon="wrench" size="md" />}
         title="旧版 AI 档案为空"
         description="自主荐股已经停用，后续策略决策不会写入这里"
       />

@@ -1,6 +1,4 @@
-import { useMotionValue, animate } from "framer-motion";
-import { useEffect, useRef } from "react";
-import { duration, ease } from "@/lib/tokens";
+import { Text } from "@astryxdesign/core/Text";
 
 interface AnimatedNumberProps {
   value: number;
@@ -8,20 +6,7 @@ interface AnimatedNumberProps {
   className?: string;
 }
 
-export function AnimatedNumber({ value, format = (n) => Math.round(n).toString(), className = "" }: AnimatedNumberProps) {
-  const motionVal = useMotionValue(0);
-  const ref = useRef<HTMLSpanElement>(null);
-
-  useEffect(() => {
-    const controls = animate(motionVal, value, {
-      duration: duration.count,
-      ease: [...ease.default],
-      onUpdate: (v) => {
-        if (ref.current) ref.current.textContent = format(v);
-      },
-    });
-    return controls.stop;
-  }, [value, motionVal, format]);
-
-  return <span ref={ref} className={className} />;
+/** Data display remains deterministic; motion is intentionally delegated to the design system. */
+export function AnimatedNumber({ value, format = (n) => Math.round(n).toString(), className }: AnimatedNumberProps) {
+  return <Text type="large" className={className} hasTabularNumbers>{format(value)}</Text>;
 }

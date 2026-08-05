@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { AnimatePresence, motion } from "framer-motion";
-import { ChevronRight, CalendarClock } from "lucide-react";
+import { useNavigate } from "@/lib/spa-router";
+import { Button } from "@astryxdesign/core/Button";
+import { Icon } from "@astryxdesign/core/Icon";
+import { Selector } from "@astryxdesign/core/Selector";
 import { Skeleton, Badge, CopyButton } from "@/components/ui";
 import { EmptyState } from "@/components/onboarding";
 import { useViews, useViewResults } from "@/lib/hooks";
-import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT, duration, ease } from "@/lib/tokens";
+import { CATEGORY_LABELS, CATEGORY_BADGE_VARIANT } from "@/lib/tokens";
 import type { SelectionResult, SignalStock } from "@/lib/api";
 
 // 选股结果里的 market_cap 单位是「亿」（策略层已除过 1e8），与 candidate-list 同口径
@@ -17,13 +18,9 @@ function formatMarketCap(value: number): string {
 
 function ChevronToggle({ expanded }: { expanded: boolean }) {
   return (
-    <motion.span
-      animate={{ rotate: expanded ? 90 : 0 }}
-      transition={{ duration: duration.fast }}
-      className="inline-flex"
-    >
-      <ChevronRight size={16} />
-    </motion.span>
+    <span className={`inline-flex transition-transform ${expanded ? "rotate-90" : ""}`}>
+      <Icon icon="chevronRight" size="sm" />
+    </span>
   );
 }
 
@@ -37,7 +34,10 @@ function StockRow({
   const score = stock.similarity_score;
 
   return (
-    <button
+    <Button
+      label={`查看 ${stock.name || stock.code}`}
+      variant="ghost"
+      width="100%"
       onClick={onClick}
       className="w-full flex items-center gap-3 px-3 sm:px-4 py-2 sm:py-2.5 hover:bg-elevated active:bg-inset transition-colors duration-100 text-left group"
     >
@@ -86,11 +86,8 @@ function StockRow({
         </span>
       )}
 
-      <ChevronRight
-        size={14}
-        className="text-ink-muted/50 shrink-0 group-hover:text-ink-muted transition-colors"
-      />
-    </button>
+      <Icon icon="chevronRight" size="xsm" color="secondary" />
+    </Button>
   );
 }
 
@@ -109,7 +106,10 @@ function DateRow({
 
   return (
     <div>
-      <motion.button
+      <Button
+        label={`展开 ${result.run_date}`}
+        variant="ghost"
+        width="100%"
         onClick={onToggle}
         className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 rounded-xl hover:bg-elevated transition-colors duration-150 text-left"
       >
@@ -130,17 +130,10 @@ function DateRow({
             </span>
           ))}
         </div>
-      </motion.button>
+      </Button>
 
-      <AnimatePresence>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: duration.normal, ease: [...ease.default] }}
-            className="overflow-hidden"
-          >
+      {expanded && (
+          <div className="view-enter overflow-hidden">
             <div className="divide-y divide-border/30 ml-6 mr-2 mb-3 border-l border-border/40 pl-1">
               {result.stocks.map((stock) => (
                 <StockRow
@@ -150,9 +143,8 @@ function DateRow({
                 />
               ))}
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
+      )}
     </div>
   );
 }
@@ -175,25 +167,18 @@ export function HistorySection() {
       {views && views.length > 1 && (
         <div className="flex justify-end mb-3">
           <div className="relative">
-            <select
-              value={effectiveViewId ?? ""}
-              onChange={(e) => {
-                const val = e.target.value;
+            <Selector
+              label="历史视图"
+              isLabelHidden
+              options={(views ?? []).map((view) => ({ value: String(view.id), label: view.name }))}
+              value={effectiveViewId == null ? "" : String(effectiveViewId)}
+              onChange={(val) => {
                 setSelectedViewId(val ? Number(val) : null);
                 setExpandedDate(null);
               }}
-              className="h-9 pl-3 pr-7 bg-elevated rounded-full text-xs sm:text-sm text-ink border border-border appearance-none cursor-pointer transition-all duration-150 focus:border-border-focus focus:ring-2 focus:ring-accent/10"
+              size="sm"
             >
-              {views.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name}
-                </option>
-              ))}
-            </select>
-            <ChevronRight
-              size={12}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-ink-muted rotate-90"
-            />
+            </Selector>
           </div>
         </div>
       )}
@@ -206,20 +191,12 @@ export function HistorySection() {
         </div>
       ) : !results?.length ? (
         <EmptyState
-          icon={<CalendarClock size={24} strokeWidth={1.5} />}
+          icon={<Icon icon="calendar" size="md" />}
           title="暂无历史记录"
           description="每个交易日选股后，当天的名单会自动保存在这里"
         />
       ) : (
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={effectiveViewId}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: duration.fast }}
-            className="space-y-0.5"
-          >
+        <div key={effectiveViewId} className="view-enter space-y-0.5">
             {results.map((result) => (
               <DateRow
                 key={result.run_date}
@@ -233,8 +210,7 @@ export function HistorySection() {
                 onStockClick={handleStockClick}
               />
             ))}
-          </motion.div>
-        </AnimatePresence>
+        </div>
       )}
     </div>
   );

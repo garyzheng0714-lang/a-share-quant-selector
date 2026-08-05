@@ -13,8 +13,8 @@ export function useView(id: number | null) {
   return useSWR(id !== null ? `view-${id}` : null, () => api.getView(id!).then((r) => r.data));
 }
 
-export function useStocks(page: number = 1) {
-  return useSWR(`stocks-${page}`, () => api.getStocks(page));
+export function useStocks(page: number = 1, perPage: number = 500) {
+  return useSWR(`stocks-${page}-${perPage}`, () => api.getStocks(page, perPage));
 }
 
 export function useKline(code: string | null, period: string = "daily") {

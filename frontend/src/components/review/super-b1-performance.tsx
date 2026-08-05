@@ -1,10 +1,9 @@
-import { useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
-import { Zap } from "lucide-react";
+import { useNavigate } from "@/lib/spa-router";
+import { Button } from "@astryxdesign/core/Button";
+import { Icon } from "@astryxdesign/core/Icon";
 import { Skeleton, Gauge, LoadError } from "@/components/ui";
 import { EmptyState } from "@/components/onboarding";
 import { useSuperB1Performance } from "@/lib/hooks";
-import { duration } from "@/lib/tokens";
 import type { PerfAgg, SuperB1PerfRecord, WindowAgg } from "@/lib/api";
 
 type RetKey = "ret_1" | "ret_5" | "ret_10" | "ret_20";
@@ -102,7 +101,7 @@ export function SuperB1PerformanceSection() {
   if (!data || data.total_recorded === 0) {
     return (
       <EmptyState
-        icon={<Zap size={24} strokeWidth={1.5} />}
+        icon={<Icon icon="arrowUp" size="md" />}
         title="超级B1战绩还没开始积累"
         description="每个交易日收盘扫描后，命中的票会自动录入并追踪后续真实涨跌"
       />
@@ -112,11 +111,7 @@ export function SuperB1PerformanceSection() {
   const records = data.records ?? [];
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: duration.normal }}
-    >
+    <div className="view-enter">
       <p className="text-xs text-ink-muted mb-4 leading-relaxed">
         超级B1公式命中的票自动追踪后续真实涨跌（按信号次日开盘价买入模拟计算）·
         已录入 {data.total_recorded} 条，其中 {data.total_records} 条已有后续行情
@@ -187,8 +182,11 @@ export function SuperB1PerformanceSection() {
       <h3 className="text-sm font-semibold text-ink mb-2">明细</h3>
       <div className="divide-y divide-border/40">
         {records.map((r: SuperB1PerfRecord) => (
-          <button
+          <Button
             key={r.id}
+            label={`查看 ${r.name || r.code}`}
+            variant="ghost"
+            width="100%"
             onClick={() => navigate(`/stock/${r.code}`)}
             className="w-full px-3 sm:px-4 py-2.5 rounded-xl hover:bg-elevated active:bg-inset transition-colors duration-100 text-left"
           >
@@ -239,9 +237,9 @@ export function SuperB1PerformanceSection() {
                 <span className="text-[11px] text-ink-muted">等待行情回填</span>
               )}
             </div>
-          </button>
+          </Button>
         ))}
       </div>
-    </motion.div>
+    </div>
   );
 }
