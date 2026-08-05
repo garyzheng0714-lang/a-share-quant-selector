@@ -95,47 +95,69 @@ def fetch_industry_mapping(
         import akshare as ak
 
         board_df = ak.stock_board_industry_name_em()
-        if board_df is None or board_df.empty:
-            logger.warning("获取行业板块名称失败")
-            return _load_cached_industry(industry_cache) if allow_stale_cache else {}
+        if board_df is not None and not board_df.empty:
+            industry_names = board_df["板块名称"].tolist()
+            total = len(industry_names)
+            logger.info("共 %d 个行业板块，开始获取成分股...", total)
 
-        industry_names = board_df["板块名称"].tolist()
-        total = len(industry_names)
-        logger.info("共 %d 个行业板块，开始获取成分股...", total)
+            for i, name in enumerate(industry_names, 1):
+                try:
+                    cons_df = ak.stock_board_industry_cons_em(symbol=name)
+                    if cons_df is not None and not cons_df.empty:
+                        for code in cons_df["代码"].tolist():
+                            mapping[str(code)] = name
 
-        for i, name in enumerate(industry_names, 1):
-            try:
-                cons_df = ak.stock_board_industry_cons_em(symbol=name)
-                if cons_df is not None and not cons_df.empty:
-                    for code in cons_df["代码"].tolist():
-                        mapping[str(code)] = name
+                    if i % 20 == 0 or i == total:
+                        logger.info(
+                            "  行业分类进度: [%d/%d] 已映射 %d 只股票",
+                            i,
+                            total,
+                            len(mapping),
+                        )
 
-                if i % 20 == 0 or i == total:
-                    logger.info(
-                        "  行业分类进度: [%d/%d] 已映射 %d 只股票",
-                        i,
-                        total,
-                        len(mapping),
-                    )
+                    time.sleep(0.15)
+                except Exception as e:
+                    logger.debug("获取行业 [%s] 成分股失败: %s", name, e)
+                    continue
 
-                time.sleep(0.15)
-            except Exception as e:
-                logger.debug("获取行业 [%s] 成分股失败: %s", name, e)
-                continue
-
-        if mapping:
-            cache_data = {**mapping, "_updated_at": datetime.now().isoformat()}
-            data_root.mkdir(parents=True, exist_ok=True)
-            tmp = industry_cache.with_suffix(f".{os.getpid()}.tmp")
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(cache_data, f, ensure_ascii=False, indent=2)
-            tmp.replace(industry_cache)
-            logger.info("行业分类缓存已保存: %d 只股票", len(mapping))
+            if mapping:
+                cache_data = {**mapping, "_updated_at": datetime.now().isoformat()}
+                data_root.mkdir(parents=True, exist_ok=True)
+                tmp = industry_cache.with_suffix(f".{os.getpid()}.tmp")
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(cache_data, f, ensure_ascii=False, indent=2)
+                tmp.replace(industry_cache)
+                logger.info("行业分类缓存已保存: %d 只股票", len(mapping))
+                return mapping
 
     except ImportError:
         logger.error("akshare 未安装，无法获取行业分类")
     except Exception as e:
         logger.error("获取行业分类失败: %s", e)
+
+    # 东财行业接口不可用（如被风控）时，用新浪行业板块构建映射作为兜底。
+    try:
+        import akshare as ak
+
+        sina_df = ak.stock_sector_spot(indicator="新浪行业")
+        if sina_df is not None and not sina_df.empty:
+            for _, row in sina_df.iterrows():
+                raw_code = str(row.get("股票代码", ""))
+                code = raw_code[2:] if raw_code[:2] in {"sh", "sz", "bj"} else raw_code
+                industry = str(row.get("板块", "")).strip()
+                if code.isdigit() and industry:
+                    mapping[code.zfill(6)] = industry
+            if mapping:
+                cache_data = {**mapping, "_updated_at": datetime.now().isoformat()}
+                data_root.mkdir(parents=True, exist_ok=True)
+                tmp = industry_cache.with_suffix(f".{os.getpid()}.tmp")
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(cache_data, f, ensure_ascii=False, indent=2)
+                tmp.replace(industry_cache)
+                logger.info("行业分类兜底（新浪）: %d 只股票", len(mapping))
+                return mapping
+    except Exception as e:
+        logger.error("新浪行业兜底失败: %s", e)
 
     if mapping:
         return mapping
