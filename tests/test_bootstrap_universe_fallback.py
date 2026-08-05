@@ -117,6 +117,16 @@ class UniverseSeedTest(unittest.TestCase):
             names = {f"{600000 + i:06d}": f"股票{i}" for i in range(3000)}
             fetcher = AKShareFetcher(current_payload)
             fetcher._save_stock_names(names, source="akshare")
+            (current_payload / "stock_industry.json").write_text(
+                json.dumps({code: "银行" for code in names}),
+                encoding="utf-8",
+            )
+            (current_payload / "stock_market_cap.json").write_text(
+                json.dumps(
+                    {code: {"total_mv": 1e10, "circ_mv": 1e10} for code in names}
+                ),
+                encoding="utf-8",
+            )
             (current_payload / "60" / "600000.csv").parent.mkdir(parents=True)
             (current_payload / "60" / "600000.csv").write_text(
                 "date,close\n", encoding="utf-8"
@@ -141,6 +151,8 @@ class UniverseSeedTest(unittest.TestCase):
             self.assertTrue(result["seeded"])
             self.assertTrue((staging.payload_dir / "stock_names.json").is_file())
             self.assertTrue((staging.payload_dir / "universe_manifest.json").is_file())
+            self.assertTrue((staging.payload_dir / "stock_industry.json").is_file())
+            self.assertTrue((staging.payload_dir / "stock_market_cap.json").is_file())
             self.assertFalse((staging.payload_dir / "60" / "600000.csv").exists())
             seeded_names = json.loads(
                 (staging.payload_dir / "stock_names.json").read_text(encoding="utf-8")

@@ -135,33 +135,72 @@ def fetch_industry_mapping(
     except Exception as e:
         logger.error("获取行业分类失败: %s", e)
 
-    # 东财行业接口不可用（如被风控）时，用新浪行业板块构建映射作为兜底。
-    try:
-        import akshare as ak
-
-        sina_df = ak.stock_sector_spot(indicator="新浪行业")
-        if sina_df is not None and not sina_df.empty:
-            for _, row in sina_df.iterrows():
-                raw_code = str(row.get("股票代码", ""))
-                code = raw_code[2:] if raw_code[:2] in {"sh", "sz", "bj"} else raw_code
-                industry = str(row.get("板块", "")).strip()
-                if code.isdigit() and industry:
-                    mapping[code.zfill(6)] = industry
-            if mapping:
-                cache_data = {**mapping, "_updated_at": datetime.now().isoformat()}
-                data_root.mkdir(parents=True, exist_ok=True)
-                tmp = industry_cache.with_suffix(f".{os.getpid()}.tmp")
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(cache_data, f, ensure_ascii=False, indent=2)
-                tmp.replace(industry_cache)
-                logger.info("行业分类兜底（新浪）: %d 只股票", len(mapping))
-                return mapping
-    except Exception as e:
-        logger.error("新浪行业兜底失败: %s", e)
+    # 东财行业接口不可用时，用新浪行业板块成分详情构建完整映射。
+    # stock_sector_spot 本身只返回各板块领涨股，覆盖率远不够，必须再拉 detail。
+    sina_mapping = _fetch_industry_mapping_sina()
+    if len(sina_mapping) >= 3000:
+        cache_data = {**sina_mapping, "_updated_at": datetime.now().isoformat()}
+        data_root.mkdir(parents=True, exist_ok=True)
+        tmp = industry_cache.with_suffix(f".{os.getpid()}.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, ensure_ascii=False, indent=2)
+        tmp.replace(industry_cache)
+        logger.info("行业分类兜底（新浪成分）: %d 只股票", len(sina_mapping))
+        return sina_mapping
+    if sina_mapping:
+        logger.warning(
+            "新浪行业成分映射仅 %d 只，低于可用门槛，不覆盖本地缓存",
+            len(sina_mapping),
+        )
 
     if mapping:
         return mapping
     return _load_cached_industry(industry_cache) if allow_stale_cache else {}
+
+
+def _fetch_industry_mapping_sina() -> dict[str, str]:
+    """通过新浪行业板块列表 + 成分详情构建 {code: industry}。"""
+    try:
+        import akshare as ak
+
+        sina_df = ak.stock_sector_spot(indicator="新浪行业")
+    except Exception as e:
+        logger.error("新浪行业列表失败: %s", e)
+        return {}
+    if sina_df is None or sina_df.empty or "label" not in sina_df.columns:
+        return {}
+
+    mapping: dict[str, str] = {}
+    # 同一 label 可能对应多行领涨股；按 label 去重后拉成分。
+    sector_rows = list(
+        sina_df.drop_duplicates(subset=["label"])[["label", "板块"]]
+        .dropna()
+        .itertuples(index=False)
+    )
+    try:
+        import akshare as ak
+    except ImportError:
+        return {}
+    for label, industry_name in sector_rows:
+        industry = str(industry_name).strip()
+        sector = str(label).strip()
+        if not industry or not sector:
+            continue
+        try:
+            detail = ak.stock_sector_detail(sector=sector)
+        except Exception as e:
+            logger.debug("新浪行业成分 [%s] 失败: %s", sector, e)
+            continue
+        if detail is None or detail.empty:
+            continue
+        if "code" not in detail.columns:
+            continue
+        for raw_code in detail["code"].tolist():
+            code = str(raw_code).zfill(6)
+            if code.isdigit():
+                mapping[code] = industry
+        time.sleep(0.05)
+    return mapping
 
 
 def _load_cached_industry(cache_path: Path = INDUSTRY_CACHE) -> dict[str, str]:
@@ -369,9 +408,17 @@ def refresh_reference_metadata(
     minimum_industry_coverage: float = 0.80,
     minimum_cap_coverage: float = 0.95,
 ) -> dict:
-    """为一个 staging snapshot 获取当日参考数据；失败时不沿用旧映射。"""
+    """为一个 staging snapshot 获取当日参考数据；失败时不沿用随机旧缓存。
+
+    日更 staging 会从上一版验证快照复制 industry/cap 文件。若东财/新浪实时
+    刷新达不到覆盖率，允许在“当前 staging 已有文件仍满足覆盖率”时继承这些
+    已验证映射，并在 manifest 标明 inherited-from-staging。
+    """
     root = Path(data_dir)
     codes = sorted({str(code).zfill(6) for code in stock_codes})
+    # 先快照 staging 里已有的映射，避免 force 刷新写坏文件后无法继承。
+    inherited_industries = _load_cached_industry(root / "stock_industry.json")
+    inherited_caps = _load_cached_market_caps(root / "stock_market_cap.json")
     industries = fetch_industry_mapping(
         force=True,
         data_dir=root,
@@ -383,36 +430,67 @@ def refresh_reference_metadata(
         data_dir=root,
         allow_stale_cache=False,
     )
-    industry_count = sum(
-        code in industries and bool(industries[code]) for code in codes
-    )
-    cap_count = sum(
-        code in caps
-        and isinstance(caps[code], dict)
-        and bool(caps[code].get("circ_mv") or caps[code].get("total_mv"))
-        for code in codes
-    )
+    industry_source = "akshare-eastmoney|sina-sector-detail"
+    cap_source = "akshare-eastmoney+tencent"
+    industry_count, industry_ratio = _coverage_count(codes, industries, kind="industry")
+    cap_count, cap_ratio = _coverage_count(codes, caps, kind="market_cap")
     total = len(codes)
-    industry_ratio = industry_count / total if total else 0.0
-    cap_ratio = cap_count / total if total else 0.0
     valid = (
         total >= 3000
         and industry_ratio >= minimum_industry_coverage
         and cap_ratio >= minimum_cap_coverage
     )
+    if not valid:
+        inherited_industry_count, inherited_industry_ratio = _coverage_count(
+            codes, inherited_industries, kind="industry"
+        )
+        inherited_cap_count, inherited_cap_ratio = _coverage_count(
+            codes, inherited_caps, kind="market_cap"
+        )
+        if (
+            inherited_industry_ratio >= minimum_industry_coverage
+            and inherited_cap_ratio >= minimum_cap_coverage
+        ):
+            industries = inherited_industries
+            caps = inherited_caps
+            industry_count = inherited_industry_count
+            cap_count = inherited_cap_count
+            industry_ratio = inherited_industry_ratio
+            cap_ratio = inherited_cap_ratio
+            industry_source = "inherited-staging-snapshot"
+            cap_source = "inherited-staging-snapshot"
+            valid = total >= 3000
+            # 把继承结果写回，避免后续读取到 force 刷新留下的残缺文件。
+            if industries:
+                cache_data = {
+                    **industries,
+                    "_updated_at": datetime.now().isoformat(),
+                }
+                industry_path = root / "stock_industry.json"
+                tmp = industry_path.with_suffix(f".{os.getpid()}.tmp")
+                with open(tmp, "w", encoding="utf-8") as handle:
+                    json.dump(cache_data, handle, ensure_ascii=False, indent=2)
+                tmp.replace(industry_path)
+            if caps:
+                _save_market_caps(caps, root / "stock_market_cap.json")
+            logger.warning(
+                "实时参考数据不足，继承 staging 已有映射 (industry=%.3f cap=%.3f)",
+                industry_ratio,
+                cap_ratio,
+            )
     manifest = {
         "schema_version": "reference-data-v1",
         "as_of": trade_date,
         "captured_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "universe_count": total,
         "industry": {
-            "source_id": "akshare-eastmoney",
+            "source_id": industry_source,
             "count": industry_count,
             "coverage_ratio": round(industry_ratio, 6),
             "content_hash": _content_hash(industries),
         },
         "market_cap": {
-            "source_id": "akshare-eastmoney+tencent",
+            "source_id": cap_source,
             "count": cap_count,
             "coverage_ratio": round(cap_ratio, 6),
             "content_hash": _content_hash(caps),
@@ -426,6 +504,25 @@ def refresh_reference_metadata(
     )
     tmp.replace(target)
     return manifest
+
+
+def _coverage_count(
+    codes: list[str],
+    mapping: dict,
+    *,
+    kind: str,
+) -> tuple[int, float]:
+    if kind == "industry":
+        count = sum(code in mapping and bool(mapping[code]) for code in codes)
+    else:
+        count = sum(
+            code in mapping
+            and isinstance(mapping[code], dict)
+            and bool(mapping[code].get("circ_mv") or mapping[code].get("total_mv"))
+            for code in codes
+        )
+    total = len(codes)
+    return count, (count / total if total else 0.0)
 
 
 def fetch_stock_profile(code: str) -> Optional[dict]:

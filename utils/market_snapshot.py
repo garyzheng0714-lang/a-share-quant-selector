@@ -62,6 +62,8 @@ METADATA_FILES = (
 UNIVERSE_SEED_FILES = (
     "stock_names.json",
     "universe_manifest.json",
+    "stock_industry.json",
+    "stock_market_cap.json",
 )
 _CURRENT_SNAPSHOT = object()
 
