@@ -72,7 +72,12 @@ class AKShareFetcher:
         return {}
 
     def _save_stock_names(
-        self, stock_dict, source: str, *, exclusions: dict | None = None
+        self,
+        stock_dict,
+        source: str,
+        *,
+        exclusions: dict | None = None,
+        verification: dict | None = None,
     ):
         """保存可审计的 last-known-good 股票池及其版本元数据。"""
         if len(stock_dict) < MIN_UNIVERSE_SIZE:
@@ -99,12 +104,153 @@ class AKShareFetcher:
         }
         if exclusions:
             manifest["exclusions"] = exclusions
+        if verification:
+            manifest["verification"] = verification
         manifest_tmp = self.universe_manifest_file.with_suffix(f".{os.getpid()}.tmp")
         manifest_tmp.write_text(
             json.dumps(manifest, ensure_ascii=False, sort_keys=True),
             encoding="utf-8",
         )
         manifest_tmp.replace(self.universe_manifest_file)
+
+    def _load_trusted_universe_manifest(self, stock_dict: dict) -> dict:
+        """只接受内容 hash、来源和时效都可验证的上一版股票主表。"""
+        try:
+            manifest = json.loads(
+                self.universe_manifest_file.read_text(encoding="utf-8")
+            )
+            captured_at = datetime.fromisoformat(str(manifest.get("captured_at") or ""))
+            if captured_at.tzinfo is None:
+                return {}
+            maximum_age_days = max(
+                1, int(os.environ.get("QUANT_UNIVERSE_LKG_MAX_AGE_DAYS", "30"))
+            )
+            age_seconds = (
+                datetime.now().astimezone() - captured_at.astimezone()
+            ).total_seconds()
+            canonical = json.dumps(
+                stock_dict,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+            valid = bool(
+                manifest.get("schema_version") == "universe-v1"
+                and manifest.get("source") in {"akshare", "tencent"}
+                and manifest.get("stale") is False
+                and manifest.get("count") == len(stock_dict)
+                and manifest.get("content_hash")
+                == hashlib.sha256(canonical).hexdigest()
+                and len(stock_dict) >= MIN_UNIVERSE_SIZE
+                and 0 <= age_seconds <= maximum_age_days * 86400
+            )
+            return manifest if valid else {}
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return {}
+
+    @staticmethod
+    def _confirm_cached_universe_tencent(
+        stock_dict: dict,
+        minimum_ratio: float,
+    ) -> dict:
+        """批量确认上一版股票代码仍能被腾讯当前行情主表识别。"""
+        codes = sorted(stock_dict)
+        total = len(codes)
+        confirmed: set[str] = set()
+        failed_batches = 0
+        for offset in range(0, len(codes), 100):
+            batch = codes[offset : offset + 100]
+            query_codes = [
+                f"sh{code}" if code.startswith(("6", "8")) else f"sz{code}"
+                for code in batch
+            ]
+            try:
+                response = requests.get(
+                    f"https://qt.gtimg.cn/q={','.join(query_codes)}",
+                    timeout=10,
+                    headers={
+                        "User-Agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36"
+                        )
+                    },
+                )
+                response.raise_for_status()
+            except Exception:
+                failed_batches += 1
+            else:
+                for line in response.text.split(";"):
+                    if "v_" not in line or "~" not in line:
+                        continue
+                    try:
+                        symbol = line.split("v_", 1)[1].split("=", 1)[0]
+                        code = symbol[2:]
+                        parts = line.split("~")
+                        if code in stock_dict and len(parts) >= 3 and parts[1].strip():
+                            confirmed.add(code)
+                    except (IndexError, AttributeError):
+                        continue
+            remaining = total - min(offset + len(batch), total)
+            maximum_possible_ratio = (
+                (len(confirmed) + remaining) / total if total else 0.0
+            )
+            if maximum_possible_ratio < minimum_ratio:
+                break
+        return {
+            "schema_version": "universe-verification-v1",
+            "source_id": "tencent:qt.gtimg.cn",
+            "confirmed_count": len(confirmed),
+            "coverage_ratio": round(len(confirmed) / total, 6) if total else 0.0,
+            "failed_batches": failed_batches,
+            "verified_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+
+    def _restore_verified_cached_universe(
+        self,
+        previous: dict,
+        trade_date: str | None,
+        failure_reason: str,
+    ) -> dict | None:
+        """主表发现源故障时，以当前行情确认过的 LKG 继续日更。"""
+        if not trade_date:
+            return None
+        manifest = self._load_trusted_universe_manifest(previous)
+        if not manifest:
+            return None
+        try:
+            configured_ratio = float(
+                os.environ.get("QUANT_UNIVERSE_CONFIRMATION_RATIO", "0.98")
+            )
+        except ValueError:
+            configured_ratio = 0.98
+        minimum_ratio = min(1.0, max(0.90, configured_ratio))
+        verification = self._confirm_cached_universe_tencent(
+            previous,
+            minimum_ratio,
+        )
+        if verification["coverage_ratio"] < minimum_ratio:
+            return None
+        try:
+            suspension_frame = ak.stock_tfp_em(date=trade_date.replace("-", ""))
+            self._save_security_status(previous, suspension_frame, trade_date)
+        except Exception:
+            return None
+        verification["discovery_mode"] = "last_known_good"
+        verification["primary_failure"] = failure_reason
+        self._save_stock_names(
+            previous,
+            source="tencent",
+            exclusions=manifest.get("exclusions"),
+            verification=verification,
+        )
+        self.universe_refresh_status = {
+            "fresh": True,
+            "source": "tencent-confirmed-last-known-good",
+            "count": len(previous),
+            "coverage_ratio": verification["coverage_ratio"],
+            "primary_failure": failure_reason,
+        }
+        return previous
 
     def _universe_size_is_safe(self, candidate: dict, previous: dict) -> bool:
         """阻断虽高于绝对下限、但相对上一版异常骤降的股票池。"""
@@ -1216,6 +1362,13 @@ class AKShareFetcher:
         except Exception as exc:
             print(f"  刷新股票名单失败: {exc}，继续使用本地完整名单")
             failure_reason = f"live_universe_source_failed:{type(exc).__name__}"
+        restored = self._restore_verified_cached_universe(
+            previous,
+            trade_date,
+            failure_reason,
+        )
+        if restored is not None:
+            return restored
         self._mark_universe_stale(failure_reason)
         self.universe_refresh_status = {
             "fresh": False,
