@@ -15,6 +15,7 @@ from utils.market_snapshot import (
     prepare_empty_staging_snapshot,
     prepare_staging_snapshot,
     promote_staging_snapshot,
+    seed_universe_metadata_from_current,
 )
 from utils.decision_versions import git_commit_sha
 from utils.stock_info import refresh_reference_metadata
@@ -162,8 +163,13 @@ def _run_full_rebuild(
     )
     staging = find_resumable_rebuild_snapshot(data_dir, max_age_hours=resume_age_hours)
     resumed_staging = staging is not None
+    universe_seed: dict = {"seeded": False, "reason": "resumed_staging"}
     if staging is None:
         staging = prepare_empty_staging_snapshot(data_dir)
+        universe_seed = seed_universe_metadata_from_current(
+            data_dir,
+            staging.payload_dir,
+        )
     try:
         refresh_trade_calendar(staging.payload_dir)
     except Exception as exc:
@@ -172,6 +178,7 @@ def _run_full_rebuild(
             "reason": "trading_calendar_refresh_failed",
             "error_type": type(exc).__name__,
             "staging_dir": str(staging.root),
+            "universe_seed": universe_seed,
         }
     trade_date = expected_completed_trade_date(
         data_dir=staging.payload_dir,
@@ -182,6 +189,7 @@ def _run_full_rebuild(
             "success": False,
             "reason": "completed_trade_date_unavailable",
             "staging_dir": str(staging.root),
+            "universe_seed": universe_seed,
         }
     fetcher = AKShareFetcher(
         staging.payload_dir,
@@ -195,6 +203,8 @@ def _run_full_rebuild(
             "staging_dir": str(staging.root),
             "universe_count": len(universe),
             "universe_status": fetcher.universe_refresh_status,
+            "universe_seed": universe_seed,
+            "trade_date": trade_date,
         }
     try:
         reference = refresh_reference_metadata(

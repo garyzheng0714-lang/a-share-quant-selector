@@ -2,7 +2,8 @@
 """首次生产发布前构建可验证的行情快照。
 
 该命令只在独立的发布前容器中运行。已有完整且新鲜的快照时会直接复用；
-否则从可信外部源全量重建，不读取或升格 legacy CSV。
+若已有完整但过期的验证快照，优先做日更；否则从可信外部源全量重建，
+不读取或升格 legacy CSV。
 """
 
 from __future__ import annotations
@@ -54,6 +55,9 @@ def _rebuild_summary(result: dict[str, Any]) -> dict[str, Any]:
         "trade_date": result.get("trade_date"),
         "staging_dir": result.get("staging_dir"),
         "resumed_staging": result.get("resumed_staging") is True,
+        "universe_count": result.get("universe_count"),
+        "universe_status": result.get("universe_status"),
+        "universe_seed": result.get("universe_seed"),
         "bootstrap": {
             key: bootstrap.get(key)
             for key in (
@@ -88,6 +92,20 @@ def _rebuild_summary(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _daily_summary(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "success": result.get("success") is True,
+        "reason": result.get("reason"),
+        "snapshot_id": result.get("snapshot_id"),
+        "trade_date": result.get("trade_date"),
+        "staging_dir": result.get("staging_dir"),
+        "universe_count": result.get("universe_count"),
+        "universe_status": result.get("universe_status"),
+        "detail": result.get("detail"),
+        "error_type": result.get("error_type"),
+    }
+
+
 def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
@@ -104,6 +122,34 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.check_only:
         return 3
+
+    # 已有完整验证快照但交易日过期时，优先日更；全量重建成本高且空 staging
+    # 没有 LKG 名单，东财一断就会 approved_universe_unavailable。
+    if status.get("snapshot_id"):
+        from utils.market_ingestion import run_daily_ingestion
+
+        daily = run_daily_ingestion(args.data_dir)
+        print(
+            json.dumps(
+                {"stage": "daily_ingestion", **_daily_summary(daily)},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        if daily.get("success") is True:
+            final_status = snapshot_status(args.data_dir)
+            print(
+                json.dumps(
+                    {"stage": "final_snapshot", **final_status},
+                    ensure_ascii=False,
+                )
+            )
+            return 0 if final_status["ready"] else 1
+        print(
+            "Daily ingestion did not produce a fresh snapshot "
+            f"({daily.get('reason')}); falling back to trusted full rebuild.",
+            file=sys.stderr,
+        )
 
     from utils.market_ingestion import run_full_rebuild
 
