@@ -121,7 +121,9 @@ def test_enrich_and_summary_hold_windows():
 
 def test_build_review_empty_cache(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("utils.cloud_stair_review.CACHE_DIR", tmp_path)
-    monkeypatch.setattr("utils.cloud_stair_review.LEDGER_PATH", tmp_path / "empty-ledger.json")
+    monkeypatch.setattr(
+        "utils.cloud_stair_review.LEDGER_PATH", tmp_path / "empty-ledger.json"
+    )
     payload = build_cloud_stair_review(_FakeCSV({}), limit=10)
     assert payload["available"] is False
     assert payload["picks"] == []

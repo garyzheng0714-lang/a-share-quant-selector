@@ -226,9 +226,7 @@ def api_cloud_stair_review():
 
         manager = _price_manager()
         payload = build_cloud_stair_review(manager, limit=limit)
-        payload["source"] = (
-            "worker_snapshot" if manager.snapshot_id else "local_csv"
-        )
+        payload["source"] = "worker_snapshot" if manager.snapshot_id else "local_csv"
         return jsonify(payload)
     except Exception as e:
         logger.error("云阶复盘查询失败: %s", e, exc_info=True)

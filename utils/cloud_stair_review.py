@@ -53,14 +53,20 @@ def _normalize_daily(frame: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     daily = frame.copy()
     daily["date"] = daily["date"].astype(str).str[:10]
-    daily = daily.sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
+    daily = (
+        daily.sort_values("date")
+        .drop_duplicates("date", keep="last")
+        .reset_index(drop=True)
+    )
     return daily
 
 
 def _load_bucket(payload: dict) -> dict | None:
     if not isinstance(payload, dict):
         return None
-    results = payload.get("results") if isinstance(payload.get("results"), dict) else payload
+    results = (
+        payload.get("results") if isinstance(payload.get("results"), dict) else payload
+    )
     if not isinstance(results, dict):
         return None
     bucket = results.get(STRATEGY_KEY)
@@ -123,7 +129,9 @@ def _write_ledger(picks: list[dict], path: Path | None = None) -> None:
     }
     tmp = ledger.with_suffix(f".{os.getpid()}.tmp")
     try:
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         os.replace(tmp, ledger)
     finally:
         try:
@@ -283,7 +291,12 @@ def enrich_pick(csv_manager, pick: dict) -> dict:
 
     latest_i = len(daily) - 1
     latest_close = _finite(daily.iloc[latest_i]["close"])
-    if entry_open and entry_open > 0 and latest_close is not None and latest_i >= entry_i:
+    if (
+        entry_open
+        and entry_open > 0
+        and latest_close is not None
+        and latest_i >= entry_i
+    ):
         # 持有至今：次日开盘买入 → 最新收盘（毛收益，便于对照「拿到现在」）
         row["ret_to_date"] = round((latest_close / entry_open - 1) * 100, 2)
         row["holding_sessions_to_date"] = int(latest_i - entry_i + 1)
@@ -312,7 +325,10 @@ def summarize_picks(picks: list[dict]) -> dict:
     """从明细汇总：隔日表现、持有窗口、建议卖点。"""
     next_day = _agg_window([p.get("next_day_chg") for p in picks])
     to_date = _agg_window([p.get("ret_to_date") for p in picks])
-    windows = {f"ret_{n}": _agg_window([p.get(f"ret_{n}") for p in picks]) for n in HOLD_WINDOWS}
+    windows = {
+        f"ret_{n}": _agg_window([p.get(f"ret_{n}") for p in picks])
+        for n in HOLD_WINDOWS
+    }
 
     scored = []
     for n in HOLD_WINDOWS:
@@ -338,7 +354,9 @@ def summarize_picks(picks: list[dict]) -> dict:
         for p in picks
         if isinstance(p.get("holding_sessions_to_date"), int)
     ]
-    avg_holding = round(sum(holding_days) / len(holding_days), 1) if holding_days else None
+    avg_holding = (
+        round(sum(holding_days) / len(holding_days), 1) if holding_days else None
+    )
 
     return {
         "pick_count": len(picks),
