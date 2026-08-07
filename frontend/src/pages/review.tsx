@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Tab as AstryxTab, TabList } from "@astryxdesign/core/TabList";
+import { PageHeader, PageShell } from "@/components/layout/page-shell";
 import { PageTransition } from "@/components/layout/page-transition";
-import { SelectionLists } from "@/components/review/selection-lists";
+import { ListSourceControl, ListSourceBody, type ListSource } from "@/components/review/selection-lists";
 import { SectorRotationCard } from "@/components/dashboard/sector-rotation-card";
 import { PerformanceSection } from "@/components/review/performance-section";
 
@@ -18,20 +19,24 @@ const TABS: { key: Tab; label: string }[] = [
  *
  * 生产复盘只展示当前快照研究产物和 canonical decision outcomes。
  * 旧 views/results、旧 Super B1 tracker 与 AI 自主荐票已经从产品入口移除。
+ *
+ * 策略因子（FactorWorkbench）是三栏全宽工作台，不能塞进本页的定宽 PageShell——
+ * 命中「选股名单」Tab 且来源为「策略因子」时，工作台在 PageShell 外全宽渲染，
+ * 与个股页研究视图（stocks.tsx）保持同一处理方式；其余 Tab 与名单来源仍在
+ * PageShell 内定宽展示。
  */
 export function Component() {
   const [tab, setTab] = useState<Tab>("lists");
+  const [listSource, setListSource] = useState<ListSource>("factors");
+  const isFactorWorkbench = tab === "lists" && listSource === "factors";
 
   return (
     <PageTransition>
-      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-8 sm:py-9">
-        <header className="mb-5">
-          <p className="section-kicker">研究复盘</p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-ink">验证方法，不追逐结果</h1>
-          <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink-muted">
-            用样本外战绩与当前研究快照校准方法，不在这里制造新的推荐结论。
-          </p>
-        </header>
+      <PageShell className={isFactorWorkbench ? "pb-0" : undefined}>
+        <PageHeader
+          title="验证方法，不追逐结果"
+          description="用样本外战绩与当前研究快照校准方法，不在这里制造新的推荐结论。"
+        />
 
         <div className="mb-5 overflow-x-auto scrollbar-none">
           <TabList value={tab} onChange={(value) => setTab(value as Tab)} size="sm" layout="hug" hasDivider>
@@ -42,11 +47,26 @@ export function Component() {
         </div>
 
         <div id={`review-${tab}-panel`} role="tabpanel" aria-labelledby={`review-${tab}-tab`}>
-          {tab === "lists" && <SelectionLists />}
+          {tab === "lists" && (
+            <>
+              <ListSourceControl value={listSource} onChange={setListSource} />
+              {listSource !== "factors" && (
+                <div className="mt-4">
+                  <ListSourceBody source={listSource} />
+                </div>
+              )}
+            </>
+          )}
           {tab === "sectors" && <SectorRotationCard />}
           {tab === "performance" && <PerformanceSection />}
         </div>
-      </div>
+      </PageShell>
+
+      {isFactorWorkbench && (
+        <div className="mt-4">
+          <ListSourceBody source="factors" />
+        </div>
+      )}
     </PageTransition>
   );
 }

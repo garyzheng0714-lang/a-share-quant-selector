@@ -5,8 +5,9 @@ export function useStats() {
   return useSWR("stats", () => api.getStats().then((r) => r.data), { refreshInterval: 30_000 });
 }
 
-export function useStocks(page: number = 1, perPage: number = 500) {
-  return useSWR(`stocks-${page}-${perPage}`, () => api.getStocks(page, perPage));
+export function useStocks(page: number = 1, perPage: number = 100) {
+  const safePerPage = Math.min(Math.max(perPage, 1), 100);
+  return useSWR(`stocks-${page}-${safePerPage}`, () => api.getStocks(page, safePerPage));
 }
 
 export function useKline(code: string | null, period: string = "daily") {

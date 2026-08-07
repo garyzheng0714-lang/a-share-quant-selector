@@ -4,6 +4,7 @@ import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { Heading } from "@astryxdesign/core/Heading";
 import { Icon } from "@astryxdesign/core/Icon";
 import { Text } from "@astryxdesign/core/Text";
+import { PageShell } from "@/components/layout/page-shell";
 import { PageTransition } from "@/components/layout/page-transition";
 import { QuantPickCard } from "@/components/dashboard/quant-pick-card";
 import { TodayRecommendCard } from "@/components/dashboard/today-recommend-card";
@@ -63,7 +64,7 @@ export function Component() {
         </header>
 
         {view === "decision" ? (
-          <div className="mx-auto max-w-[1440px] px-4 py-6 sm:px-5 sm:py-7 view-enter">
+          <PageShell className="view-enter">
             <TodayRecommendCard />
             <QuantPickCard />
             <Collapsible
@@ -79,15 +80,9 @@ export function Component() {
             >
               <CoverageDetails />
             </Collapsible>
-          </div>
+          </PageShell>
         ) : (
           <section aria-label="其他策略工作台" className="view-enter">
-            <div className="mx-auto max-w-[1440px] px-4 pt-6 sm:px-5">
-              <Heading level={2}>其他策略</Heading>
-              <Text type="supporting" className="mt-1 block">
-                这些只做参考，B1 仍是主策略。
-              </Text>
-            </div>
             <FactorWorkbench />
           </section>
         )}

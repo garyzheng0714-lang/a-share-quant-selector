@@ -29,6 +29,7 @@ import { Button } from "@astryxdesign/core/Button";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { Icon } from "@astryxdesign/core/Icon";
+import { IconButton } from "@astryxdesign/core/IconButton";
 import { Heading } from "@astryxdesign/core/Heading";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
@@ -128,35 +129,40 @@ function StrategyLibraryRow({
       ref={setNodeRef}
       className={`strategy-library-row grid grid-cols-[minmax(0,1fr)_40px_32px] sm:grid-cols-[32px_minmax(0,1fr)_40px_32px] ${active ? "is-active" : ""} ${isDragging ? "is-dragging" : ""}`}
     >
-      <Button
+      <IconButton
         ref={setActivatorNodeRef}
         aria-label={`拖动添加 ${factor.name}`}
         label={`拖动添加 ${factor.name}`}
         variant="ghost"
         size="sm"
-        isIconOnly
         className="strategy-drag-handle hidden sm:grid"
         icon={<Icon icon="arrowsUpDown" size="xsm" />}
         {...attributes}
         {...listeners}
       />
-      <Button label={`查看 ${factor.name}`} variant="ghost" size="sm" className="min-w-0 w-full min-h-10 h-auto flex-1 justify-start py-1 text-left" onClick={onInspect}>
-        <span className="min-w-0" title={factor.name}>
+      {/* Astryx Button 是定高组件，这里名称+说明是两行内容，用原生 block button
+          承载（DnD 行的自定义布局），不能用 Button 包多行 children。 */}
+      <button
+        type="button"
+        onClick={onInspect}
+        aria-label={`查看 ${factor.name}`}
+        className="block h-auto min-h-10 w-full min-w-0 flex-1 rounded-lg px-1 py-1 text-left transition-colors duration-100 hover:bg-elevated active:bg-inset"
+      >
+        <span className="block min-w-0" title={factor.name}>
           <Text type="label" className="block truncate">{factor.name}</Text>
           <span className="mt-0.5 flex min-w-0 items-center gap-1">
             <Badge variant={status.variant} label={status.label} />
             <Text type="supporting" className="min-w-0 truncate">{factor.plain || factor.desc}</Text>
           </span>
         </span>
-      </Button>
+      </button>
       <span className="w-10 shrink-0 text-right text-xs tabular-nums text-ink-secondary">
         {factor.today_hits === null ? "—" : factor.today_hits}
       </span>
-      <Button
+      <IconButton
         label={selected ? `${factor.name} 已添加` : `添加 ${factor.name}`}
         variant="ghost"
         size="sm"
-        isIconOnly
         icon={selected ? <Icon icon="check" size="xsm" /> : <span aria-hidden="true">＋</span>}
         isDisabled={selected}
         onClick={onAdd}
@@ -299,13 +305,12 @@ function SortableStrategyBlock({
     <div ref={setNodeRef} style={style} className="strategy-block-wrap">
       {index > 0 && <div className="strategy-and" aria-hidden="true"><span>AND</span></div>}
       <div className={`strategy-block ${active ? "is-active" : ""}`}>
-        <Button
+        <IconButton
           ref={setActivatorNodeRef}
           aria-label={`拖动排序 ${factor.name}`}
           label={`拖动排序 ${factor.name}`}
           variant="ghost"
           size="sm"
-          isIconOnly
           className="strategy-drag-handle"
           icon={<Icon icon="arrowsUpDown" size="xsm" />}
           {...attributes}
@@ -314,17 +319,24 @@ function SortableStrategyBlock({
         <span className="strategy-order" aria-label={`第 ${index + 1} 个条件`}>
           {String(index + 1).padStart(2, "0")}
         </span>
-        <Button label={`查看 ${factor.name}`} variant="ghost" size="sm" width="100%" className="min-w-0 flex-1 justify-start text-left" onClick={onInspect} aria-pressed={active}>
+        {/* 名称+说明两行内容，Astryx Button 定高不能承载，用原生 block button */}
+        <button
+          type="button"
+          onClick={onInspect}
+          aria-pressed={active}
+          aria-label={`查看 ${factor.name}`}
+          className="block h-auto min-w-0 flex-1 rounded-lg px-2 py-1 text-left transition-colors duration-100 hover:bg-elevated active:bg-inset"
+        >
           <Text type="label" className="block truncate">{factor.name}</Text>
           <Text type="supporting" className="mt-1 block truncate">
             {factor.plain || factor.desc} · {entry?.error ? "读取失败" : hitCount === null ? "待计算" : `命中 ${hitCount} 只`}
           </Text>
-        </Button>
+        </button>
         <div className="hidden items-center gap-0.5 lg:flex">
-          <Button label={`上移 ${factor.name}`} variant="ghost" size="sm" isIconOnly icon={<Icon icon="arrowUp" size="xsm" />} isDisabled={index === 0} onClick={() => onMove(-1)} />
-          <Button label={`下移 ${factor.name}`} variant="ghost" size="sm" isIconOnly icon={<Icon icon="arrowDown" size="xsm" />} isDisabled={index === total - 1} onClick={() => onMove(1)} />
+          <IconButton label={`上移 ${factor.name}`} variant="ghost" size="sm" icon={<Icon icon="arrowUp" size="xsm" />} isDisabled={index === 0} onClick={() => onMove(-1)} />
+          <IconButton label={`下移 ${factor.name}`} variant="ghost" size="sm" icon={<Icon icon="arrowDown" size="xsm" />} isDisabled={index === total - 1} onClick={() => onMove(1)} />
         </div>
-        <Button label={`移除 ${factor.name}`} variant="ghost" size="sm" isIconOnly icon={<Icon icon="close" size="xsm" />} onClick={onRemove} />
+        <IconButton label={`移除 ${factor.name}`} variant="ghost" size="sm" icon={<Icon icon="close" size="xsm" />} onClick={onRemove} />
       </div>
     </div>
   );
@@ -414,7 +426,7 @@ function StrategyCanvas({
 export function FactorWorkbench() {
   const { data: meta, isLoading: metaLoading, error: metaError, mutate: retryMeta } = useFactors();
   const { data: coverage } = useCoverage();
-  const { data: stockPage, isLoading: poolLoading, error: poolError, mutate: retryPool } = useStocks(1, 200);
+  const { data: stockPage, isLoading: poolLoading, error: poolError, mutate: retryPool } = useStocks(1, 100);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const setStockNav = useAppStore((state) => state.setStockNav);

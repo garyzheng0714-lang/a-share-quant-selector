@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "@/lib/spa-router";
 import { Button } from "@astryxdesign/core/Button";
 import { Icon } from "@astryxdesign/core/Icon";
+import { List, ListItem } from "@astryxdesign/core/List";
 import { Skeleton, Gauge, LoadError } from "@/components/ui";
 import { EmptyState } from "@/components/onboarding";
 import { usePerformanceRecords, usePerformanceSummary } from "@/lib/hooks";
@@ -233,7 +234,7 @@ function GroupSection({
   );
 }
 
-/** 明细行：两行式（名称+代码+分类点 / 日期+四窗口收益） */
+/** 明细行：ListItem 两行式（名称+代码，分类点落在行尾 / 日期+四窗口收益） */
 function RecordRow({
   record,
   onClick,
@@ -242,53 +243,54 @@ function RecordRow({
   onClick: () => void;
 }) {
   return (
-    <Button
-      label={`查看 ${record.name || record.code}`}
-      variant="ghost"
-      width="100%"
-      onClick={onClick}
-      className="w-full px-3 sm:px-4 py-2.5 rounded-xl hover:bg-elevated active:bg-inset transition-colors duration-100 text-left"
-    >
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="text-sm font-medium text-ink truncate">
-          {record.name || record.code}
-        </span>
-        {record.name && (
-          <span className="font-mono text-xs text-ink-muted shrink-0">
-            {record.code}
+    <ListItem
+      label={
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="truncate text-sm font-medium text-ink">
+            {record.name || record.code}
           </span>
-        )}
-        <span className="ml-auto inline-flex items-center gap-1 shrink-0 text-[11px] text-ink-muted whitespace-nowrap">
+          {record.name && (
+            <span className="shrink-0 font-mono text-xs text-ink-muted">
+              {record.code}
+            </span>
+          )}
+        </span>
+      }
+      description={
+        <div className="mt-1 flex items-center gap-2 tabular-nums">
+          <span className="text-[11px] text-ink-muted w-[74px] shrink-0">
+            {record.run_date}
+          </span>
+          <div className="grid grid-cols-4 flex-1 gap-x-2">
+            {WINDOWS.map((w) => {
+              const v = record[w.key as keyof PerformanceRecord] as number | null;
+              return (
+                <div
+                  key={w.key}
+                  className="flex items-baseline gap-0.5 justify-end min-w-0"
+                >
+                  <span className="text-[10px] text-ink-muted shrink-0">
+                    {w.label}
+                  </span>
+                  <span className={`text-[11px] font-medium ${retColor(v)}`}>
+                    {fmtRet(v)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      }
+      endContent={
+        <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-ink-muted">
           <span
-            className={`w-1.5 h-1.5 rounded-full ${CATEGORY_DOT_COLOR[record.category] ?? "bg-ink-muted"}`}
+            className={`h-1.5 w-1.5 rounded-full ${CATEGORY_DOT_COLOR[record.category] ?? "bg-ink-muted"}`}
           />
           {CATEGORY_LABELS[record.category] ?? record.category}
         </span>
-      </div>
-      <div className="flex items-center gap-2 mt-1 tabular-nums">
-        <span className="text-[11px] text-ink-muted w-[74px] shrink-0">
-          {record.run_date}
-        </span>
-        <div className="grid grid-cols-4 flex-1 gap-x-2">
-          {WINDOWS.map((w) => {
-            const v = record[w.key as keyof PerformanceRecord] as number | null;
-            return (
-              <div
-                key={w.key}
-                className="flex items-baseline gap-0.5 justify-end min-w-0"
-              >
-                <span className="text-[10px] text-ink-muted shrink-0">
-                  {w.label}
-                </span>
-                <span className={`text-[11px] font-medium ${retColor(v)}`}>
-                  {fmtRet(v)}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </Button>
+      }
+      onClick={onClick}
+    />
   );
 }
 
@@ -361,7 +363,7 @@ export function PerformanceSection() {
       />
 
       <h3 className="text-sm font-semibold text-ink mb-2">明细</h3>
-      <div className="divide-y divide-border/40">
+      <List density="compact" hasDividers aria-label="选股记录明细">
         {visible.map((r) => (
           <RecordRow
             key={r.id}
@@ -369,17 +371,15 @@ export function PerformanceSection() {
             onClick={() => navigate(`/stock/${r.code}`)}
           />
         ))}
-      </div>
+      </List>
       {!showAll && records.length > 30 && (
         <Button
           label={`展开全部 ${records.length} 条`}
           variant="ghost"
           width="100%"
           onClick={() => setShowAll(true)}
-          className="w-full mt-3 py-2.5 text-xs text-ink-muted hover:text-ink-secondary transition-colors"
-        >
-          展开全部 {records.length} 条
-        </Button>
+          className="mt-3"
+        />
       )}
     </div>
   );

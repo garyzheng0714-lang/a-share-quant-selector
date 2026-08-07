@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "@/lib/spa-router";
 import { Button } from "@astryxdesign/core/Button";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { Icon } from "@astryxdesign/core/Icon";
+import { List, ListItem } from "@astryxdesign/core/List";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
 import { Text } from "@astryxdesign/core/Text";
 import { PageTransition } from "@/components/layout/page-transition";
@@ -36,7 +37,7 @@ export function Component() {
   // 联动列表当前项：只在切换股票时滚动到可见——内联 callback ref 会在每次
   // 重渲染（如鼠标划过K线触发 overlay 更新）都执行 scrollIntoView，
   // 用户手动滚列表会被不停拽回（review 确认的交互缺陷）
-  const activeNavItemRef = useRef<HTMLButtonElement | null>(null);
+  const activeNavItemRef = useRef<HTMLLIElement | null>(null);
   useEffect(() => {
     activeNavItemRef.current?.scrollIntoView({ block: "nearest" });
   }, [stockNavIndex]);
@@ -169,7 +170,7 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="h-[calc(100dvh-48px)] flex">
+      <div className="flex h-[calc(100dvh-56px-4rem-env(safe-area-inset-bottom))] sm:h-[calc(100dvh-56px)]">
         {/* 桌面联动列表：从候选/因子/超级B1列表进来时，左侧保留整份名单，
             点一只切一只（知弈策行"翻牌式复盘"），不用回退页面 */}
         {hasNav && (
@@ -178,42 +179,39 @@ export function Component() {
               候选名单 · {stockNavList.length}只
             </div>
             <div className="flex-1 overflow-y-auto py-1">
-              {stockNavList.map((s, i) => (
-                <Button
-                  key={s.code}
-                  ref={i === stockNavIndex ? activeNavItemRef : undefined}
-                  label={`查看 ${s.name || s.code}`}
-                  variant="ghost"
-                  size="sm"
-                  width="100%"
-                  onClick={() => {
-                    setStockNavIndex(i);
-                    navigate(`/stock/${s.code}`, { replace: true });
-                  }}
-                  className={`w-full px-3 py-2 text-left transition-colors duration-100 ${
-                    i === stockNavIndex
-                      ? "bg-accent/10 border-l-2 border-accent"
-                      : "hover:bg-elevated border-l-2 border-transparent"
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span className={`text-xs font-medium truncate ${i === stockNavIndex ? "text-accent" : "text-ink"}`}>
-                      {s.name || s.code}
-                    </span>
-                    <span className="ml-auto text-[11px] text-ink-secondary tabular-nums shrink-0">
-                      {s.close ? s.close.toFixed(2) : ""}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    <span className="font-mono text-[10px] text-ink-muted">{s.code}</span>
-                    {s.industry && (
-                      <span className="text-[10px] text-ink-muted/70 truncate min-w-0">
-                        {s.industry}
+              <List density="compact" aria-label="候选名单">
+                {stockNavList.map((s, i) => (
+                  <ListItem
+                    key={s.code}
+                    ref={i === stockNavIndex ? activeNavItemRef : undefined}
+                    isSelected={i === stockNavIndex}
+                    label={
+                      <span className={`truncate text-xs font-medium ${i === stockNavIndex ? "text-accent" : "text-ink"}`}>
+                        {s.name || s.code}
                       </span>
-                    )}
-                  </div>
-                </Button>
-              ))}
+                    }
+                    description={
+                      <span className="flex items-center gap-1.5">
+                        <span className="font-mono text-[10px] text-ink-muted">{s.code}</span>
+                        {s.industry && (
+                          <span className="min-w-0 truncate text-[10px] text-ink-muted/70">
+                            {s.industry}
+                          </span>
+                        )}
+                      </span>
+                    }
+                    endContent={
+                      <span className="text-[11px] tabular-nums text-ink-secondary">
+                        {s.close ? s.close.toFixed(2) : ""}
+                      </span>
+                    }
+                    onClick={() => {
+                      setStockNavIndex(i);
+                      navigate(`/stock/${s.code}`, { replace: true });
+                    }}
+                  />
+                ))}
+              </List>
             </div>
           </aside>
         )}
