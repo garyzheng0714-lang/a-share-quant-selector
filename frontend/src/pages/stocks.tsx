@@ -15,12 +15,22 @@ type View = "decision" | "research";
 function CoverageDetails() {
   const { data: coverage } = useCoverage();
 
-  if (!coverage) return <Text type="supporting" className="mt-2 block">正在读取覆盖率…</Text>;
+  if (!coverage) {
+    return (
+      <Text type="supporting" className="mt-2 block">
+        正在读取覆盖率…
+      </Text>
+    );
+  }
 
   return (
-    <Text type="body" className="mt-2 block leading-relaxed">
-      已覆盖 {coverage.covered_count}/{coverage.universe_count}，可训练 {coverage.trainable_count}/{coverage.trainable_eligible_count}，次新股 {coverage.short_history_count} 只单列。
-      {coverage.running ? `后台仍在补齐 ${coverage.remaining_count} 只。` : "当前回补任务已结束。"}
+    <Text type="body" className="mt-2 block leading-6">
+      已覆盖 {coverage.covered_count}/{coverage.universe_count}，可训练{" "}
+      {coverage.trainable_count}/{coverage.trainable_eligible_count}，次新股{" "}
+      {coverage.short_history_count} 只单列。
+      {coverage.running
+        ? `后台仍在补齐 ${coverage.remaining_count} 只。`
+        : "当前回补任务已结束。"}
     </Text>
   );
 }
@@ -32,10 +42,14 @@ export function Component() {
   return (
     <PageTransition>
       <div className="strategy-page">
-        <div className="flex min-h-12 items-center justify-between gap-3 border-b border-border bg-surface px-3 py-2 sm:px-5">
+        <header className="flex min-h-14 items-center justify-between gap-4 border-b border-border bg-surface px-4 py-3 sm:px-5">
           <div className="min-w-0">
-            <Heading level={1} className="truncate">个股</Heading>
-            <Text type="supporting" className="hidden sm:block">B1 信号与分层证据，先复核再研究</Text>
+            <Heading level={1} className="truncate">
+              个股
+            </Heading>
+            <Text type="supporting" className="mt-0.5 hidden sm:block">
+              B1 信号与分层证据，先复核再研究
+            </Text>
           </div>
           <SegmentedControl
             value={view}
@@ -46,26 +60,33 @@ export function Component() {
             <SegmentedControlItem value="decision" label="B1" />
             <SegmentedControlItem value="research" label="其他策略" />
           </SegmentedControl>
-        </div>
+        </header>
 
         {view === "decision" ? (
-          <div className="mx-auto max-w-[1440px] px-3 py-5 sm:px-5 sm:py-7 view-enter">
+          <div className="mx-auto max-w-[1440px] px-4 py-6 sm:px-5 sm:py-7 view-enter">
             <TodayRecommendCard />
             <QuantPickCard />
             <Collapsible
-              trigger={<span className="flex items-center gap-2"><Icon icon="viewColumns" size="xsm" />数据底座</span>}
+              trigger={
+                <span className="flex items-center gap-2">
+                  <Icon icon="viewColumns" size="xsm" />
+                  数据底座
+                </span>
+              }
               isOpen={coverageOpen}
               onOpenChange={setCoverageOpen}
-              className="mt-3"
+              className="mt-4"
             >
               <CoverageDetails />
             </Collapsible>
           </div>
         ) : (
           <section aria-label="其他策略工作台" className="view-enter">
-            <div className="mx-auto max-w-[1440px] px-3 pt-5 sm:px-5">
+            <div className="mx-auto max-w-[1440px] px-4 pt-6 sm:px-5">
               <Heading level={2}>其他策略</Heading>
-              <Text type="supporting" className="mt-1 block">这些只做参考，B1 仍是主策略。</Text>
+              <Text type="supporting" className="mt-1 block">
+                这些只做参考，B1 仍是主策略。
+              </Text>
             </div>
             <FactorWorkbench />
           </section>

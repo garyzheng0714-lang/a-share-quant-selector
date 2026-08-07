@@ -1,8 +1,15 @@
-import { useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useNavigate } from "@/lib/spa-router";
 import { Button } from "@astryxdesign/core/Button";
+import { Card } from "@astryxdesign/core/Card";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
+import { Heading } from "@astryxdesign/core/Heading";
 import { Icon } from "@astryxdesign/core/Icon";
+import { List, ListItem } from "@astryxdesign/core/List";
+import { ProgressBar } from "@astryxdesign/core/ProgressBar";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { Table, pixel, proportional, type TableColumn, type TablePlugin } from "@astryxdesign/core/Table";
+import { Text } from "@astryxdesign/core/Text";
 import { LoadError, Skeleton } from "@/components/ui";
 import { useEvolutionStatus, useLatestDecision } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
@@ -14,11 +21,16 @@ import type {
   SignalStock,
 } from "@/lib/api";
 
-const ACTION: Record<DecisionAction, { label: string; className: string; dotClassName: string }> = {
-  buy: { label: "通过复核", className: "text-bull", dotClassName: "bg-bull" },
-  observe: { label: "研究候选", className: "text-accent", dotClassName: "bg-accent" },
-  avoid: { label: "未通过", className: "text-bear", dotClassName: "bg-bear" },
-  none: { label: "无信号", className: "text-ink-muted", dotClassName: "bg-ink-muted" },
+type CandidateRow = DecisionCandidate & Record<string, unknown>;
+
+const ACTION: Record<
+  DecisionAction,
+  { label: string; tone: "success" | "accent" | "error" | "neutral" }
+> = {
+  buy: { label: "通过复核", tone: "success" },
+  observe: { label: "研究候选", tone: "accent" },
+  avoid: { label: "未通过", tone: "error" },
+  none: { label: "无信号", tone: "neutral" },
 };
 
 function modelFor(models: DecisionModel[], key: string) {
@@ -31,10 +43,10 @@ function layerState(mode?: "off" | "shadow" | "active") {
   return "未启用";
 }
 
-function layerTone(mode?: "off" | "shadow" | "active") {
-  if (mode === "active") return "text-bear";
-  if (mode === "shadow") return "text-accent";
-  return "text-ink-muted";
+function layerTone(mode?: "off" | "shadow" | "active"): "success" | "accent" | "neutral" {
+  if (mode === "active") return "success";
+  if (mode === "shadow") return "accent";
+  return "neutral";
 }
 
 function modelState(model: DecisionModel | undefined, mode?: "off" | "shadow" | "active") {
@@ -64,92 +76,78 @@ function toNav(list: DecisionCandidate[]): SignalStock[] {
   }));
 }
 
+function weeklySummary(item: DecisionCandidate) {
+  const weekly = item.baseline.weekly;
+  const weeklyLines = (["MA5", "MA10", "MA20", "MA60"] as const).map((line) => weekly?.directions?.[line]);
+  const hasWeeklyDirections = weeklyLines.every((rising) => rising != null);
+  return {
+    label: hasWeeklyDirections
+      ? `${weekly?.rising_count ?? 0}/4 向上 · ${weekly?.aligned ? "多头排列" : "未多头"}`
+      : "历史数据不足",
+    hint: weekly?.gate_mode === "shadow" ? "影子门槛，不影响当前结果" : "四周线均线证据",
+  };
+}
+
 function CandidateStatus({ action }: { action: DecisionAction }) {
   const meta = ACTION[action];
   return (
-    <span className={`inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium ${meta.className}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${meta.dotClassName}`} aria-hidden="true" />
+    <span className="inline-flex items-center gap-2 whitespace-nowrap text-xs font-medium text-ink">
+      <StatusDot variant={meta.tone} label={meta.label} />
       {meta.label}
     </span>
   );
 }
 
-function CandidateRow({ item, list }: { item: DecisionCandidate; list: DecisionCandidate[] }) {
+function MobileCandidateRow({
+  item,
+  list,
+}: {
+  item: DecisionCandidate;
+  list: DecisionCandidate[];
+}) {
   const navigate = useNavigate();
   const setStockNav = useAppStore((state) => state.setStockNav);
+  const weekly = weeklySummary(item);
+  const close = item.baseline.close?.toFixed(2) ?? "—";
+  const j = item.baseline.J?.toFixed(2) ?? "—";
+  const sector = item.sector?.score != null ? Math.round(item.sector.score).toString() : "—";
   const signal = item.baseline.signal_labels?.[0] ?? "B1";
-  const weekly = item.baseline.weekly;
-  const weeklyLines = (["MA5", "MA10", "MA20", "MA60"] as const).map((line) => ({
-    line,
-    rising: weekly?.directions?.[line],
-  }));
-  const hasWeeklyDirections = weeklyLines.every(({ rising }) => rising != null);
-  const weeklyLabel = hasWeeklyDirections
-    ? `${weekly?.rising_count ?? 0}/4 向上 · ${weekly?.aligned ? "多头排列" : "未多头"}`
-    : "历史数据不足";
-  const close = item.baseline.close?.toFixed(2) ?? "--";
-  const j = item.baseline.J?.toFixed(2) ?? "--";
-  const sector = item.sector?.score != null ? Math.round(item.sector.score).toString() : "--";
-  const action = ACTION[item.action];
-
-  const openStock = () => {
-    setStockNav(toNav(list), list.findIndex((stock) => stock.code === item.code));
-    navigate(`/stock/${item.code}`);
-  };
 
   return (
-    <Button
-      label={`${item.name} ${item.code}，查看 K 线`}
-      variant="ghost"
-      width="100%"
-      onClick={openStock}
-      aria-label={`${item.name} ${item.code}，收盘 ${close}，J ${j}，板块 ${sector}，${weeklyLabel}，${action.label}，查看 K 线`}
-      className="group w-full border-b border-border/70 px-4 py-4 text-left transition-colors last:border-b-0 hover:bg-surface-hover focus-visible:relative focus-visible:z-10 sm:px-5 md:py-0"
-    >
-      <span className="block md:hidden">
-        <span className="flex items-start justify-between gap-3">
-          <span className="min-w-0">
-            <span className="block truncate text-sm font-semibold text-ink">{item.name}</span>
-            <span className="mt-0.5 block font-mono text-[10px] text-ink-muted">{item.code}</span>
-          </span>
-          <CandidateStatus action={item.action} />
+    <ListItem
+      label={
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="truncate text-sm font-semibold text-ink">{item.name}</span>
+          <span className="shrink-0 font-mono text-[11px] text-ink-muted">{item.code}</span>
         </span>
-        <span className="mt-3 grid grid-cols-3 gap-x-3 gap-y-2 text-xs">
-          <span><span className="block text-[10px] text-ink-muted">收盘</span><span className="num mt-0.5 block text-ink">{close}</span></span>
-          <span><span className="block text-[10px] text-ink-muted">J</span><span className="num mt-0.5 block text-ink">{j}</span></span>
-          <span><span className="block text-[10px] text-ink-muted">板块</span><span className="num mt-0.5 block text-ink">{sector}</span></span>
+      }
+      description={
+        <div className="mt-1 grid grid-cols-3 gap-x-3 gap-y-2 text-xs leading-5">
+          <span>
+            <span className="block text-[10px] text-ink-muted">收盘</span>
+            <span className="num mt-0.5 block text-ink">{close}</span>
+          </span>
+          <span>
+            <span className="block text-[10px] text-ink-muted">J</span>
+            <span className="num mt-0.5 block text-ink">{j}</span>
+          </span>
+          <span>
+            <span className="block text-[10px] text-ink-muted">板块</span>
+            <span className="num mt-0.5 block text-ink">{sector}</span>
+          </span>
           <span className="col-span-3 flex min-w-0 items-center gap-2 text-ink-muted">
             <span className="truncate">{item.industry || "未分类"}</span>
             <span className="shrink-0 text-ink-secondary">{signal}</span>
-            <span className="ml-auto shrink-0 text-ink-secondary">{weeklyLabel}</span>
+            <span className="ml-auto shrink-0 text-ink-secondary">{weekly.label}</span>
           </span>
-        </span>
-      </span>
-
-      <span className="hidden min-h-[82px] grid-cols-[minmax(160px,1.4fr)_72px_68px_80px_minmax(180px,1.25fr)_96px_20px] items-center gap-3 md:grid">
-        <span className="min-w-0">
-          <span className="flex items-baseline gap-2">
-            <span className="truncate text-sm font-semibold text-ink">{item.name}</span>
-            <span className="shrink-0 font-mono text-[10px] text-ink-muted">{item.code}</span>
-          </span>
-          <span className="mt-1 flex min-w-0 items-center gap-2 text-[11px] text-ink-muted">
-            <span className="truncate">{item.industry || "未分类"}</span>
-            <span className="shrink-0 text-ink-secondary">{signal}</span>
-          </span>
-        </span>
-        <span className="num text-sm font-medium text-ink">{close}</span>
-        <span className="num text-sm text-ink-secondary">{j}</span>
-        <span className="num text-sm text-ink-secondary">{sector}</span>
-        <span className="min-w-0">
-          <span className="block text-xs text-ink-secondary">{weeklyLabel}</span>
-          <span className="mt-1 block truncate text-[10px] text-ink-muted">
-            {weekly?.gate_mode === "shadow" ? "影子门槛，不影响当前结果" : "四周线均线证据"}
-          </span>
-        </span>
-        <CandidateStatus action={item.action} />
-        <Icon icon="externalLink" size="xsm" color="secondary" />
-      </span>
-    </Button>
+        </div>
+      }
+      endContent={<CandidateStatus action={item.action} />}
+      onClick={() => {
+        setStockNav(toNav(list), list.findIndex((stock) => stock.code === item.code));
+        navigate(`/stock/${item.code}`);
+      }}
+    />
   );
 }
 
@@ -165,25 +163,20 @@ function EvolutionSummary({ evolution }: { evolution: EvolutionStatus }) {
         : "挑战模型尚未通过验证";
 
   return (
-    <div className="py-4">
-      <div className="flex items-center justify-between gap-3 text-xs">
-        <span className="font-medium text-ink-secondary">验证进度</span>
-        <span className="num text-ink">{coveragePercent}%</span>
-      </div>
-      <div
-        className="mt-2 h-1.5 overflow-hidden rounded-full bg-inset"
-        role="progressbar"
-        aria-label="行情数据覆盖率"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={coveragePercent}
-      >
-        <span className="block h-full rounded-full bg-accent" style={{ width: `${coveragePercent}%` }} />
-      </div>
-      <p className="mt-2 text-xs leading-relaxed text-ink-muted">{status}</p>
-      <p className="mt-1 text-[10px] leading-relaxed text-ink-muted">
+    <div className="border-t border-border px-1 py-4">
+      <ProgressBar
+        label="验证进度"
+        value={coveragePercent}
+        max={100}
+        hasValueLabel
+        variant="accent"
+      />
+      <Text type="supporting" className="mt-3 block leading-5">
+        {status}
+      </Text>
+      <Text type="supporting" className="mt-1 block leading-5">
         覆盖 {evolution.covered_count}/{evolution.universe_count} 只，可训练样本 {evolution.dataset_rows} 条。
-      </p>
+      </Text>
     </div>
   );
 }
@@ -193,38 +186,166 @@ function EvidenceRow({
   label,
   value,
   hint,
-  valueClassName = "text-ink-secondary",
+  tone = "neutral",
 }: {
   icon: ReactNode;
   label: string;
   value: string;
   hint: string;
-  valueClassName?: string;
+  tone?: "success" | "accent" | "error" | "neutral";
 }) {
   return (
-    <div className="border-b border-border/70 py-4 last:border-b-0">
-      <div className="flex items-start gap-3">
-        <span className="mt-0.5 text-ink-muted" aria-hidden="true">{icon}</span>
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <span className="text-xs font-medium text-ink-secondary">{label}</span>
-            <span className={`text-xs font-medium ${valueClassName}`}>{value}</span>
+    <ListItem
+      label={
+        <span className="flex w-full min-w-0 items-baseline justify-between gap-3">
+          <span className="text-xs font-medium text-ink-secondary">{label}</span>
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-ink">
+            <StatusDot variant={tone} label={value} />
+            {value}
           </span>
-          <span className="mt-1.5 block text-[11px] leading-relaxed text-ink-muted">{hint}</span>
         </span>
-      </div>
-    </div>
+      }
+      description={<span className="block text-[11px] leading-5 text-ink-muted">{hint}</span>}
+      startContent={<span className="text-ink-muted">{icon}</span>}
+    />
   );
 }
 
 export function QuantPickCard() {
   const [showAll, setShowAll] = useState(false);
+  const navigate = useNavigate();
+  const setStockNav = useAppStore((state) => state.setStockNav);
   const { data, isLoading, error, mutate } = useLatestDecision();
   const { data: evolutionResponse } = useEvolutionStatus();
 
+  const candidates = useMemo(() => data?.candidates ?? [], [data?.candidates]);
+  const visible = showAll ? candidates : candidates.slice(0, 8);
+  const rows = useMemo(() => visible as CandidateRow[], [visible]);
+
+  const openStock = useCallback(
+    (item: DecisionCandidate) => {
+      setStockNav(toNav(candidates), candidates.findIndex((stock) => stock.code === item.code));
+      navigate(`/stock/${item.code}`);
+    },
+    [candidates, navigate, setStockNav],
+  );
+
+  const columns: TableColumn<CandidateRow>[] = useMemo(
+    () => [
+      {
+        key: "name",
+        header: "代码 / 名称",
+        width: proportional(1.5, { minWidth: 168 }),
+        renderCell: (item) => {
+          const signal = item.baseline.signal_labels?.[0] ?? "B1";
+          return (
+            <div className="min-w-0 py-1">
+              <div className="flex min-w-0 items-baseline gap-2">
+                <span className="truncate text-sm font-semibold text-ink">{item.name}</span>
+                <span className="shrink-0 font-mono text-[11px] text-ink-muted">{item.code}</span>
+              </div>
+              <div className="mt-1 flex min-w-0 items-center gap-2 text-[11px] leading-4 text-ink-muted">
+                <span className="truncate">{item.industry || "未分类"}</span>
+                <span className="shrink-0 text-ink-secondary">{signal}</span>
+              </div>
+            </div>
+          );
+        },
+      },
+      {
+        key: "close",
+        header: "收盘",
+        width: pixel(72),
+        align: "end",
+        renderCell: (item) => (
+          <span className="num text-sm font-medium text-ink">
+            {item.baseline.close?.toFixed(2) ?? "—"}
+          </span>
+        ),
+      },
+      {
+        key: "J",
+        header: "J",
+        width: pixel(68),
+        align: "end",
+        renderCell: (item) => (
+          <span className="num text-sm text-ink-secondary">
+            {item.baseline.J?.toFixed(2) ?? "—"}
+          </span>
+        ),
+      },
+      {
+        key: "sector",
+        header: "板块",
+        width: pixel(72),
+        align: "end",
+        renderCell: (item) => (
+          <span className="num text-sm text-ink-secondary">
+            {item.sector?.score != null ? Math.round(item.sector.score) : "—"}
+          </span>
+        ),
+      },
+      {
+        key: "weekly",
+        header: "周线证据",
+        width: proportional(1.2, { minWidth: 160 }),
+        renderCell: (item) => {
+          const weekly = weeklySummary(item);
+          return (
+            <div className="min-w-0 py-1">
+              <div className="text-xs leading-5 text-ink-secondary">{weekly.label}</div>
+              <div className="mt-0.5 truncate text-[11px] leading-4 text-ink-muted">{weekly.hint}</div>
+            </div>
+          );
+        },
+      },
+      {
+        key: "action",
+        header: "状态",
+        width: pixel(108),
+        renderCell: (item) => <CandidateStatus action={item.action} />,
+      },
+      {
+        key: "go",
+        header: "",
+        width: pixel(36),
+        align: "end",
+        renderCell: () => <Icon icon="externalLink" size="xsm" color="secondary" />,
+      },
+    ],
+    [],
+  );
+
+  const rowClickPlugin = useMemo<Record<string, TablePlugin<CandidateRow>>>(
+    () => ({
+      rowClick: {
+        transformBodyRow: (props, item) => ({
+          ...props,
+          htmlProps: {
+            ...props.htmlProps,
+            role: "link",
+            tabIndex: 0,
+            onClick: () => openStock(item),
+            onKeyDown: (event: KeyboardEvent) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openStock(item);
+              }
+            },
+            style: {
+              ...props.htmlProps?.style,
+              cursor: "pointer",
+            },
+          },
+        }),
+      },
+    }),
+    [openStock],
+  );
+
   if (isLoading) {
     return (
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px]">
         <Skeleton className="h-[520px] w-full rounded-[10px]" />
         <Skeleton className="h-[420px] w-full rounded-[10px]" />
       </div>
@@ -233,34 +354,34 @@ export function QuantPickCard() {
 
   if (error) {
     return (
-      <section className="workspace-panel" aria-label="B1 决策加载失败">
+      <Card className="p-5" aria-label="B1 决策加载失败">
         <LoadError label="B1 决策加载失败" onRetry={() => mutate()} />
-      </section>
+      </Card>
     );
   }
 
   if (!data?.available) {
     const stale = data?.reason === "stale_market_data";
     return (
-      <section className="workspace-panel p-5" aria-labelledby="decision-unavailable-title">
+      <Card className="p-5" aria-labelledby="decision-unavailable-title">
         <div className="flex items-start gap-3">
           <Icon icon="warning" size="sm" color="accent" />
-          <div>
-            <h2 id="decision-unavailable-title" className="text-sm font-semibold text-ink">
+          <div className="min-w-0">
+            <Heading level={2} id="decision-unavailable-title">
               {stale ? "行情未更新，暂无可回放决策" : "当前没有可用决策"}
-            </h2>
-            <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-              {stale ? `当前数据截至 ${data?.freshness?.local_date ?? "未知"}，请在行情更新后重试。` : data?.reason ?? "数据准备中"}
-            </p>
+            </Heading>
+            <Text type="supporting" className="mt-1 block leading-5">
+              {stale
+                ? `当前数据截至 ${data?.freshness?.local_date ?? "未知"}，请在行情更新后重试。`
+                : data?.reason ?? "数据准备中"}
+            </Text>
           </div>
         </div>
-      </section>
+      </Card>
     );
   }
 
-  const candidates = data.candidates ?? [];
   const buys = candidates.filter((item) => item.action === "buy");
-  const visible = showAll ? candidates : candidates.slice(0, 8);
   const models = data.models ?? [];
   const hasApproved = buys.length > 0;
   const decisionTitle = hasApproved
@@ -280,119 +401,183 @@ export function QuantPickCard() {
   const expectedDate = data.freshness?.expected_date;
 
   return (
-    <section className="grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px]" data-testid="hierarchical-decision">
-      <div className="workspace-panel overflow-hidden">
+    <section
+      className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px]"
+      data-testid="hierarchical-decision"
+    >
+      <Card className="overflow-hidden">
         {data.is_stale && (
-          <div className="border-b border-accent/25 bg-accent-dim px-4 py-3 text-xs leading-relaxed text-ink-secondary sm:px-5" role="status">
-            正在回放最近一次有效决策。行情截至 <span className="num text-ink">{localDate}</span>
-            {expectedDate ? <>，当前应更新到 <span className="num text-ink">{expectedDate}</span></> : null}。
+          <div
+            className="border-b border-accent/25 bg-accent-dim px-4 py-3 text-xs leading-5 text-ink-secondary sm:px-5"
+            role="status"
+          >
+            正在回放最近一次有效决策。行情截至{" "}
+            <span className="num text-ink">{localDate}</span>
+            {expectedDate ? (
+              <>
+                ，当前应更新到 <span className="num text-ink">{expectedDate}</span>
+              </>
+            ) : null}
+            。
           </div>
         )}
 
         <div className="px-4 py-5 sm:px-5 sm:py-6">
           <div className="flex items-start gap-3">
-            <div className={`mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-lg ${hasApproved ? "bg-bull-dim text-bull" : "bg-accent-dim text-accent"}`}>
+            <div
+              className={`mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-lg ${
+                hasApproved ? "bg-bull-dim text-bull" : "bg-accent-dim text-accent"
+              }`}
+            >
               {hasApproved ? <Icon icon="success" size="sm" /> : <Icon icon="stop" size="sm" />}
             </div>
             <div className="min-w-0">
               <p className="section-kicker">策略决策</p>
-              <h2 className="mt-1.5 text-2xl font-semibold tracking-[-0.04em] text-ink">{decisionTitle}</h2>
-              <p className="mt-2 max-w-3xl text-sm leading-relaxed text-ink-secondary">{decisionNote}</p>
-              <p className="mt-3 text-xs text-ink-muted">
-                面向 <span className="num text-ink-secondary">{data.market?.decision_for_date ?? "下一交易日"}</span>，
-                基于 <span className="num text-ink-secondary">{data.trade_date}</span> 收盘数据
-              </p>
+              <Heading level={2} className="mt-1.5 tracking-[-0.04em]">
+                {decisionTitle}
+              </Heading>
+              <Text type="body" className="mt-2 block max-w-3xl leading-6 text-ink-secondary">
+                {decisionNote}
+              </Text>
+              <Text type="supporting" className="mt-3 block">
+                面向 <span className="num text-ink-secondary">{data.market?.decision_for_date ?? "下一交易日"}</span>
+                ，基于 <span className="num text-ink-secondary">{data.trade_date}</span> 收盘数据
+              </Text>
             </div>
           </div>
         </div>
 
         <div className="flex items-end justify-between border-y border-border bg-inset px-4 py-3 sm:px-5">
           <div>
-            <h3 className="text-sm font-semibold text-ink">候选比较</h3>
-            <p className="mt-1 text-[10px] text-ink-muted">点击任意一行打开个股 K 线并保留候选顺序</p>
+            <Heading level={3} className="text-sm">候选比较</Heading>
+            <Text type="supporting" className="mt-1 block">
+              点击任意一行打开个股 K 线并保留候选顺序
+            </Text>
           </div>
           <span className="num text-xs text-ink-muted">{candidates.length} 只</span>
         </div>
 
         {candidates.length ? (
           <>
-            <div className="hidden min-h-9 grid-cols-[minmax(160px,1.4fr)_72px_68px_80px_minmax(180px,1.25fr)_96px_20px] items-center gap-3 border-b border-border bg-canvas/35 px-5 text-[10px] text-ink-muted md:grid" aria-hidden="true">
-              <span>代码 / 名称</span><span>收盘</span><span>J</span><span>板块</span><span>周线证据</span><span>状态</span><span />
+            <div className="hidden md:block">
+              <Table
+                data={rows}
+                columns={columns}
+                idKey="code"
+                density="balanced"
+                dividers="rows"
+                hasHover
+                verticalAlign="middle"
+                textOverflow="wrap"
+                plugins={rowClickPlugin}
+                aria-label="研究候选列表"
+              />
             </div>
-            <div>{visible.map((item) => <CandidateRow key={item.code} item={item} list={candidates} />)}</div>
+            <div className="md:hidden">
+              <List density="spacious" hasDividers aria-label="研究候选列表">
+                {visible.map((item) => (
+                  <MobileCandidateRow key={item.code} item={item} list={candidates} />
+                ))}
+              </List>
+            </div>
             {candidates.length > 8 && (
-              <Button
-                label={showAll ? "收起多余候选" : `查看全部 ${candidates.length} 只`}
-                variant="ghost"
-                width="100%"
-                onClick={() => setShowAll((value) => !value)}
-                aria-expanded={showAll}
-                className="flex min-h-11 w-full items-center justify-center gap-2 border-t border-border px-4 text-xs font-medium text-accent transition-colors hover:bg-surface-hover"
-              >
-                {showAll ? "收起多余候选" : `查看全部 ${candidates.length} 只`}
-                <Icon icon="chevronDown" size="xsm" />
-              </Button>
+              <div className="border-t border-border p-2">
+                <Button
+                  label={showAll ? "收起多余候选" : `查看全部 ${candidates.length} 只`}
+                  variant="ghost"
+                  width="100%"
+                  onClick={() => setShowAll((value) => !value)}
+                  aria-expanded={showAll}
+                  endContent={<Icon icon="chevronDown" size="xsm" />}
+                />
+              </div>
             )}
           </>
         ) : (
-          <p className="px-5 py-8 text-sm text-ink-muted">当前规则没有产生 B1 候选。</p>
+          <div className="px-5 py-8">
+            <Text type="body">当前规则没有产生 B1 候选。</Text>
+          </div>
         )}
-      </div>
+      </Card>
 
-      <aside className="workspace-panel self-start px-4 sm:px-5 lg:sticky lg:top-20" aria-labelledby="decision-evidence-title">
-        <div className="border-b border-border py-4">
-          <h2 id="decision-evidence-title" className="text-base font-semibold text-ink">决策依据</h2>
-          <p className="mt-1 text-[11px] leading-relaxed text-ink-muted">只展示真实的启用状态与可追溯证据。</p>
+      <Card className="self-start lg:sticky lg:top-20" aria-labelledby="decision-evidence-title">
+        <div className="border-b border-border px-4 py-4 sm:px-5">
+          <Heading level={2} id="decision-evidence-title">决策依据</Heading>
+          <Text type="supporting" className="mt-1 block leading-5">
+            只展示真实的启用状态与可追溯证据。
+          </Text>
         </div>
 
-        <EvidenceRow
-          icon={<Icon icon="clock" size="sm" />}
-          label="数据时点"
-          value={data.is_stale ? "数据过期" : "数据就绪"}
-          valueClassName={data.is_stale ? "text-bull" : "text-bear"}
-          hint={data.is_stale && expectedDate ? `${localDate} 收盘；当前应更新到 ${expectedDate}。` : `${localDate} 收盘数据。`}
-        />
-        <EvidenceRow
-          icon={<Icon icon="viewColumns" size="sm" />}
-          label="周线四均线"
-          value={layerState(weeklyMode)}
-          valueClassName={layerTone(weeklyMode)}
-          hint={weeklyMode === "shadow" ? "只记录影子结果，不影响当前决策。" : "按当前完整策略记录。"}
-        />
-        <EvidenceRow
-          icon={<Icon icon="viewColumns" size="sm" />}
-          label="市场模型"
-          value={modelState(modelFor(models, "market"), marketMode)}
-          valueClassName={layerTone(marketMode)}
-          hint="未通过样本外验证时，不参与生产策略。"
-        />
-        <EvidenceRow
-          icon={<Icon icon="viewColumns" size="sm" />}
-          label="板块模型"
-          value={modelState(modelFor(models, "sector"), sectorMode)}
-          valueClassName={layerTone(sectorMode)}
-          hint="板块热度是研究特征，不单独构成买入理由。"
-        />
+        <List density="balanced" hasDividers>
+          <EvidenceRow
+            icon={<Icon icon="clock" size="sm" />}
+            label="数据时点"
+            value={data.is_stale ? "数据过期" : "数据就绪"}
+            tone={data.is_stale ? "error" : "success"}
+            hint={
+              data.is_stale && expectedDate
+                ? `${localDate} 收盘；当前应更新到 ${expectedDate}。`
+                : `${localDate} 收盘数据。`
+            }
+          />
+          <EvidenceRow
+            icon={<Icon icon="viewColumns" size="sm" />}
+            label="周线四均线"
+            value={layerState(weeklyMode)}
+            tone={layerTone(weeklyMode)}
+            hint={weeklyMode === "shadow" ? "只记录影子结果，不影响当前决策。" : "按当前完整策略记录。"}
+          />
+          <EvidenceRow
+            icon={<Icon icon="viewColumns" size="sm" />}
+            label="市场模型"
+            value={modelState(modelFor(models, "market"), marketMode)}
+            tone={layerTone(marketMode)}
+            hint="未通过样本外验证时，不参与生产策略。"
+          />
+          <EvidenceRow
+            icon={<Icon icon="viewColumns" size="sm" />}
+            label="板块模型"
+            value={modelState(modelFor(models, "sector"), sectorMode)}
+            tone={layerTone(sectorMode)}
+            hint="板块热度是研究特征，不单独构成买入理由。"
+          />
+        </List>
 
-        {evolutionResponse?.available && evolutionResponse.data ? (
-          <EvolutionSummary evolution={evolutionResponse.data} />
-        ) : (
-          <p className="border-b border-border/70 py-4 text-xs text-ink-muted">当前没有可用的模型验证记录。</p>
-        )}
+        <div className="px-4 sm:px-5">
+          {evolutionResponse?.available && evolutionResponse.data ? (
+            <EvolutionSummary evolution={evolutionResponse.data} />
+          ) : (
+            <div className="border-t border-border py-4">
+              <Text type="supporting">当前没有可用的模型验证记录。</Text>
+            </div>
+          )}
 
-        <Collapsible className="border-t border-border py-3 text-xs text-ink-muted" trigger="版本与可追溯记录">
-          <dl className="mt-2 grid gap-2 rounded-md bg-inset p-3 text-[11px]">
-            <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2"><dt>策略版本</dt><dd className="break-all text-ink-secondary">{data.strategy_version ?? "未记录"}</dd></div>
-            <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2"><dt>模型版本</dt><dd className="break-all text-ink-secondary">{data.model_version ?? "未记录"}</dd></div>
-            <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2"><dt>决策 run</dt><dd className="break-all text-ink-secondary">{data.run_id ?? "未记录"}</dd></div>
-            <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2"><dt>来源记录</dt><dd className="text-ink-secondary">{data.source_refs?.length ?? 0} 条</dd></div>
-          </dl>
-        </Collapsible>
+          <Collapsible className="border-t border-border py-3 text-xs text-ink-muted" trigger="版本与可追溯记录">
+            <dl className="mt-2 grid gap-2 rounded-md bg-inset p-3 text-[11px] leading-5">
+              <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+                <dt>策略版本</dt>
+                <dd className="break-all text-ink-secondary">{data.strategy_version ?? "未记录"}</dd>
+              </div>
+              <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+                <dt>模型版本</dt>
+                <dd className="break-all text-ink-secondary">{data.model_version ?? "未记录"}</dd>
+              </div>
+              <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+                <dt>决策 run</dt>
+                <dd className="break-all text-ink-secondary">{data.run_id ?? "未记录"}</dd>
+              </div>
+              <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+                <dt>来源记录</dt>
+                <dd className="text-ink-secondary">{data.source_refs?.length ?? 0} 条</dd>
+              </div>
+            </dl>
+          </Collapsible>
 
-        <p className="border-t border-border py-4 text-[11px] leading-relaxed text-ink-muted">
-          研究工具，不构成投资建议。任何决策都需要结合自身风险承受能力独立判断。
-        </p>
-      </aside>
+          <p className="border-t border-border py-4 text-[11px] leading-5 text-ink-muted">
+            研究工具，不构成投资建议。任何决策都需要结合自身风险承受能力独立判断。
+          </p>
+        </div>
+      </Card>
     </section>
   );
 }
