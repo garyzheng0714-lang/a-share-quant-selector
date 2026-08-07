@@ -30,6 +30,7 @@ import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { Icon } from "@astryxdesign/core/Icon";
 import { Heading } from "@astryxdesign/core/Heading";
+import { List, ListItem } from "@astryxdesign/core/List";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
 import { Selector } from "@astryxdesign/core/Selector";
 import { Table, pixel, proportional, type TableColumn } from "@astryxdesign/core/Table";
@@ -613,10 +614,15 @@ export function FactorWorkbench() {
       header: "股票",
       width: proportional(1.4, { minWidth: 150 }),
       renderCell: (hit) => (
-      <Button label={`查看 ${hit.name || hit.code}`} variant="ghost" size="sm" className="justify-start text-left" onClick={() => openStock(hit)}>
-        <span className="block text-xs font-medium text-ink">{hit.name || "未知"}</span>
-        <span className="mt-0.5 block font-mono text-[11px] text-ink-muted">{hit.code}</span>
-      </Button>
+        <button
+          type="button"
+          className="min-w-0 text-left"
+          onClick={() => openStock(hit)}
+          aria-label={`查看 ${hit.name || hit.code}`}
+        >
+          <span className="block text-xs font-medium text-ink">{hit.name || "未知"}</span>
+          <span className="mt-0.5 block font-mono text-[11px] leading-4 text-ink-muted">{hit.code}</span>
+        </button>
       ),
     },
     { key: "close", header: "最新价", width: pixel(84), align: "end", renderCell: (hit) => <span className="tabular-nums">{formatNumber(hit.close)}</span> },
@@ -802,25 +808,39 @@ export function FactorWorkbench() {
                   aria-label={`${resultTitle}股票列表`}
                 />
               </div>
-              <div className="min-h-0 flex-1 divide-y divide-border overflow-y-auto md:hidden">
-                {visibleResults.slice(0, MAX_RESULTS).map((hit) => (
-                  <Button key={hit.code} label={`查看 ${hit.name || hit.code}`} variant="ghost" width="100%" className="mobile-stock-row" onClick={() => openStock(hit)}>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium text-ink">{hit.name || "未知"}</span>
-                      <span className="mt-0.5 block font-mono text-[11px] text-ink-muted">
-                        {hit.code} · {hit.industry || "未分类"}
-                        {hit.sector ? ` · 板块 ${hit.sector.score.toFixed(0)}` : ""}
-                      </span>
-                    </span>
-                    <span className="text-right">
-                      <span className="block text-sm tabular-nums text-ink">{formatNumber(hit.close)}</span>
-                      <span className={`mt-0.5 block text-xs tabular-nums ${pctClass(hit.pct_change)}`}>
-                        {hit.pct_change === null ? `J ${formatNumber(hit.J)}` : `${hit.pct_change > 0 ? "+" : ""}${hit.pct_change.toFixed(2)}%`}
-                      </span>
-                    </span>
-                    <Icon icon="chevronRight" size="sm" color="secondary" />
-                  </Button>
-                ))}
+              <div className="min-h-0 flex-1 overflow-y-auto md:hidden">
+                <List density="spacious" hasDividers aria-label={`${resultTitle}股票列表`}>
+                  {visibleResults.slice(0, MAX_RESULTS).map((hit) => (
+                    <ListItem
+                      key={hit.code}
+                      label={
+                        <span className="block truncate text-sm font-medium text-ink">
+                          {hit.name || "未知"}
+                        </span>
+                      }
+                      description={
+                        <span className="mt-0.5 block font-mono text-[11px] leading-4 text-ink-muted">
+                          {hit.code} · {hit.industry || "未分类"}
+                          {hit.sector ? ` · 板块 ${hit.sector.score.toFixed(0)}` : ""}
+                        </span>
+                      }
+                      endContent={
+                        <span className="flex items-center gap-2">
+                          <span className="text-right">
+                            <span className="block text-sm tabular-nums text-ink">{formatNumber(hit.close)}</span>
+                            <span className={`mt-0.5 block text-xs tabular-nums ${pctClass(hit.pct_change)}`}>
+                              {hit.pct_change === null
+                                ? `J ${formatNumber(hit.J)}`
+                                : `${hit.pct_change > 0 ? "+" : ""}${hit.pct_change.toFixed(2)}%`}
+                            </span>
+                          </span>
+                          <Icon icon="chevronRight" size="sm" color="secondary" />
+                        </span>
+                      }
+                      onClick={() => openStock(hit)}
+                    />
+                  ))}
+                </List>
               </div>
               {rawResults.length > MAX_RESULTS && (
                 <p className="border-t border-border px-3 py-2 text-[11px] text-ink-muted">为保持交互流畅，仅显示前 {MAX_RESULTS} 只；交集计算仍使用全部 {rawResults.length} 只。</p>
