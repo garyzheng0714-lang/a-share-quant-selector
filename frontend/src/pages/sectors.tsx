@@ -1,9 +1,8 @@
 import { useMemo, useState } from "react";
-import {
-  AlertTriangle, Bot, CheckCircle2, CircleDot, Database,
-  Eye, Layers3, Search, Settings2, WalletCards,
-} from "lucide-react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useNavigate, useSearchParams } from "@/lib/spa-router";
+import { Heading } from "@astryxdesign/core/Heading";
+import { Icon } from "@astryxdesign/core/Icon";
+import { Text } from "@astryxdesign/core/Text";
 import { SectorHeatChart } from "@/components/charts/sector-heat-chart";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button, Input, LoadError, Skeleton } from "@/components/ui";
@@ -75,31 +74,31 @@ function SystemStrip({ data }: { data?: SystemStatusResponse }) {
   const evolution = data?.evolution;
   const items = [
     {
-      Icon: Settings2,
+      icon: "wrench" as const,
       label: "量化策略",
       value: decision?.model_version ?? "等待决策",
       tone: "text-ink-secondary",
     },
     {
-      Icon: Layers3,
+      icon: "viewColumns" as const,
       label: "分层模型",
       value: data?.policy?.state === "active" ? "完整策略已发布" : "未启用",
       tone: data?.policy?.state === "active" ? "text-bear" : "text-ink-muted",
     },
     {
-      Icon: CheckCircle2,
+      icon: "success" as const,
       label: "合格候选",
       value: decision ? String(decision.candidate_counts.buy) : "—",
       tone: decision?.candidate_counts.buy ? "text-bull" : "text-ink-secondary",
     },
     {
-      Icon: Eye,
+      icon: "eyeSlash" as const,
       label: "观察候选",
       value: decision ? String(decision.candidate_counts.observe) : "—",
       tone: "text-accent",
     },
     {
-      Icon: WalletCards,
+      icon: "viewColumns" as const,
       label: "模拟盘",
       value: !paper?.established
         ? "未建立"
@@ -109,7 +108,7 @@ function SystemStrip({ data }: { data?: SystemStatusResponse }) {
       tone: paper?.nav_days ? "text-ink-secondary" : "text-ink-muted",
     },
     {
-      Icon: Bot,
+      icon: "wrench" as const,
       label: "AI",
       value: ai?.status === "explained"
         ? "已解释"
@@ -123,7 +122,7 @@ function SystemStrip({ data }: { data?: SystemStatusResponse }) {
       tone: ai?.status === "failed" ? "text-bull" : "text-ink-secondary",
     },
     {
-      Icon: AlertTriangle,
+      icon: "warning" as const,
       label: "进化任务",
       value: evolution?.status === "failed"
         ? "失败"
@@ -138,11 +137,11 @@ function SystemStrip({ data }: { data?: SystemStatusResponse }) {
 
   return (
     <section className="scrollbar-none flex overflow-x-auto rounded-xl border border-border bg-surface" aria-label="系统运行状态">
-      {items.map(({ Icon, label, value, tone }) => (
+      {items.map(({ icon, label, value, tone }) => (
         <div key={label} className="flex min-w-max flex-1 items-center gap-2 border-r border-border/70 px-4 py-3 last:border-r-0">
-          <Icon size={15} className="shrink-0 text-accent" aria-hidden="true" />
-          <span className="text-[11px] text-ink-muted">{label}</span>
-          <span className={`text-xs font-medium ${tone}`}>{value}</span>
+          <Icon icon={icon} size="xsm" color="accent" />
+          <Text type="supporting">{label}</Text>
+          <Text type="label" className={tone}>{value}</Text>
         </div>
       ))}
     </section>
@@ -160,29 +159,35 @@ function RankingRow({
   onMove: (delta: -1 | 1) => void;
 }) {
   return (
-    <button
-      id={`sector-row-${item.rank}`}
-      type="button"
-      aria-pressed={selected}
-      onClick={onSelect}
-      onKeyDown={(event) => {
-        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-          event.preventDefault();
-          onMove(event.key === "ArrowDown" ? 1 : -1);
-        }
-      }}
-      className={`grid min-h-[62px] w-full grid-cols-[28px_minmax(96px,1fr)_48px_58px_42px] items-center gap-2 border-b border-border/60 px-3 text-left transition-colors last:border-b-0 hover:bg-surface-hover focus-visible:relative focus-visible:z-10 sm:grid-cols-[28px_minmax(118px,1fr)_48px_60px_58px_42px] ${selected ? "bg-accent-dim ring-1 ring-inset ring-accent/60" : ""}`}
+    <div
+      className={`group grid min-h-[62px] w-full grid-cols-[28px_minmax(96px,1fr)_48px_58px_42px] items-center gap-2 border-b border-border/60 px-3 text-left transition-colors last:border-b-0 hover:bg-surface-hover sm:grid-cols-[28px_minmax(118px,1fr)_48px_60px_58px_42px] ${selected ? "bg-accent-dim ring-1 ring-inset ring-accent/60" : ""}`}
     >
       <span className={`num text-xs font-semibold ${item.rank <= 3 ? "text-accent" : "text-ink-muted"}`}>{item.rank}</span>
-      <span className="min-w-0">
-        <span className="block truncate text-sm font-semibold text-ink">{item.name}</span>
-        <span className="mt-1 block text-[10px] text-ink-muted">{kind} · {item.stage}</span>
-      </span>
+      <Button
+        id={`sector-row-${item.rank}`}
+        label={`查看 ${item.name}`}
+        variant="ghost"
+        width="100%"
+        aria-pressed={selected}
+        onClick={onSelect}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            onMove(event.key === "ArrowDown" ? 1 : -1);
+          }
+        }}
+        className="min-w-0 justify-start self-stretch px-1 text-left group-hover:bg-transparent"
+      >
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-semibold text-ink">{item.name}</span>
+          <span className="mt-1 block truncate text-[10px] text-ink-muted">{kind} · {item.stage}</span>
+        </span>
+      </Button>
       <span className="num text-right text-sm font-semibold text-ink">{Math.round(item.score)}</span>
       <span className={`num text-right text-xs ${trendClass(item.delta3)}`}>{signed(item.delta3, 1)}</span>
       <span className="num hidden text-right text-xs text-ink-secondary sm:block">{item.breadth_ma10 == null ? "—" : `${Math.round(item.breadth_ma10)}%`}</span>
       <span className={`num text-right text-xs ${b1Count ? "text-bull" : "text-ink-muted"}`}>{b1Count}</span>
-    </button>
+    </div>
   );
 }
 
@@ -193,7 +198,7 @@ function CandidateRow({ stock, onOpen, onSelect }: { stock: SectorDetailStock; o
   return (
     <div className="grid min-h-[58px] grid-cols-[minmax(132px,1.35fr)_minmax(135px,1.2fr)_92px_70px_76px_62px_72px] items-center gap-3 border-b border-border/60 px-3 text-xs last:border-b-0">
       <div className="min-w-0">
-        <button type="button" onClick={onSelect} className="truncate font-semibold text-ink hover:text-accent">{stock.name} <span className="ml-1 font-mono text-[10px] font-normal text-ink-muted">{stock.code}</span></button>
+        <Button label={`查看 ${stock.name}`} variant="ghost" size="sm" className="justify-start truncate font-semibold text-ink hover:text-accent" onClick={onSelect}>{stock.name} <span className="ml-1 font-mono text-[10px] font-normal text-ink-muted">{stock.code}</span></Button>
         <p className="mt-1 text-[10px] text-ink-muted">1日 {signed(stock.ret1, 2, "%")} · 5日 {signed(stock.ret5, 2, "%")}</p>
       </div>
       <div className="min-w-0">
@@ -216,7 +221,7 @@ function CandidateCard({ stock, onOpen, onSelect }: { stock: SectorDetailStock; 
     <article className="border-b border-border/60 p-4 last:border-b-0">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <button type="button" onClick={onSelect} className="font-semibold text-ink hover:text-accent">{stock.name} <span className="font-mono text-[10px] font-normal text-ink-muted">{stock.code}</span></button>
+          <Button label={`查看 ${stock.name}`} variant="ghost" size="sm" className="justify-start font-semibold text-ink hover:text-accent" onClick={onSelect}>{stock.name} <span className="font-mono text-[10px] font-normal text-ink-muted">{stock.code}</span></Button>
           <p className="mt-1 text-xs text-ink-muted">1日 {signed(stock.ret1, 2, "%")} · 5日 {signed(stock.ret5, 2, "%")}</p>
         </div>
         <span className="rounded-md border border-accent/25 bg-accent-dim px-2 py-1 text-[10px] text-accent">
@@ -312,10 +317,10 @@ export function Component() {
       <div className="mx-auto max-w-[1480px] px-3 py-5 sm:px-5 sm:py-7">
         <header className="mb-4 flex flex-wrap items-end justify-between gap-3 px-1">
           <div className="flex items-baseline gap-3">
-            <h1 className="text-2xl font-semibold tracking-[-0.04em] text-ink">板块工作台</h1>
-            <p className="hidden text-xs text-ink-muted sm:block">当前仅展示研究候选，不构成交易动作</p>
+          <Heading level={1}>板块工作台</Heading>
+            <Text type="supporting" className="hidden sm:block">当前仅展示研究候选，不构成交易动作</Text>
           </div>
-          <p className="num text-xs text-ink-muted">数据截至 {data?.trade_date ?? systemData?.market_data?.local_date ?? "待更新"} 收盘</p>
+          <Text type="supporting" className="num">数据截至 {data?.trade_date ?? systemData?.market_data?.local_date ?? "待更新"} 收盘</Text>
         </header>
 
         <SystemStrip data={systemData} />
@@ -324,17 +329,17 @@ export function Component() {
           <section className="overflow-hidden rounded-xl border border-border bg-surface" aria-label="板块排名">
             <div className="border-b border-border p-3">
               <div className="flex items-center justify-between gap-3">
-                <h2 className="text-base font-semibold text-ink">板块排名</h2>
+                <Heading level={2}>板块排名</Heading>
                 <div className="relative w-48 max-w-[58%]">
                   <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索板块" aria-label="搜索板块" className="h-9 pr-8 text-xs" />
-                  <Search size={14} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ink-muted" aria-hidden="true" />
+                  <Icon icon="search" size="xsm" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" color="secondary" />
                 </div>
               </div>
               <div className="mt-3 flex gap-1" role="group" aria-label="板块状态筛选">
                 {([[
                   "all", "全部",
                 ], ["leader", "主线"], ["warming", "升温/接力"]] as const).map(([key, label]) => (
-                  <button key={key} type="button" aria-pressed={filter === key} onClick={() => setFilter(key)} className={`min-h-8 rounded-lg px-3 text-xs transition-colors ${filter === key ? "bg-accent-dim text-accent ring-1 ring-inset ring-accent/25" : "text-ink-muted hover:bg-elevated hover:text-ink-secondary"}`}>{label}</button>
+                  <Button key={key} label={label} variant={filter === key ? "primary" : "ghost"} size="sm" aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</Button>
                 ))}
               </div>
             </div>
@@ -352,7 +357,7 @@ export function Component() {
                   onSelect={() => selectSector(item.name)}
                   onMove={(delta) => moveSelection(item, delta)}
                 />
-              )) : <p className="px-4 py-10 text-center text-sm text-ink-muted">没有符合条件的板块</p>}
+              )) : <Text type="supporting" className="block px-4 py-10 text-center">没有符合条件的板块</Text>}
             </div>
           </section>
 
@@ -361,10 +366,10 @@ export function Component() {
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-2">
-                    <h2 className="text-xl font-semibold text-ink">{effectiveSelectedName || "未选择板块"}</h2>
+                    <Heading level={2}>{effectiveSelectedName || "未选择板块"}</Heading>
                     <span className="rounded-md border border-accent/25 bg-accent-dim px-2 py-0.5 text-[10px] text-accent">{selectedKind}</span>
                   </div>
-                  <p className="mt-2 text-sm font-medium text-ink-secondary">结论：{conclusion}</p>
+                  <Text type="body" className="mt-2 block" weight="bold">结论：{conclusion}</Text>
                 </div>
                 <dl className="flex gap-5 text-right text-xs sm:gap-7">
                   <div><dt className="text-ink-muted">强度排名</dt><dd className="num mt-1 text-base font-semibold text-ink">{selected?.rank ?? "—"}<span className="ml-1 text-[10px] font-normal text-ink-muted">/ {selected?.total ?? "—"}</span></dd></div>
@@ -420,7 +425,7 @@ export function Component() {
             {selectedStock && (
               <section className="rounded-xl border border-border bg-surface p-4">
                 <div className="flex min-h-8 items-center gap-2 text-left text-sm font-semibold text-ink">
-                  <CircleDot size={14} className="text-accent" />{selectedStock.name}<span className="font-mono text-[10px] font-normal text-ink-muted">{selectedStock.code}</span>
+                  <Icon icon="success" size="xsm" color="accent" />{selectedStock.name}<span className="font-mono text-[10px] font-normal text-ink-muted">{selectedStock.code}</span>
                 </div>
                 <div className="mt-3 grid gap-4 text-xs sm:grid-cols-3">
                   <div className="sm:border-r sm:border-border sm:pr-4">
@@ -475,7 +480,7 @@ export function Component() {
           )}
         </section>
 
-        <p className="mt-3 flex items-center gap-2 px-1 text-[10px] text-ink-muted"><Database size={12} />板块热度是研究特征，尚未被证明能单独预测个股收益；页面不构成投资建议。</p>
+        <Text type="supporting" className="mt-3 flex items-center gap-2 px-1"><Icon icon="info" size="xsm" />板块热度是研究特征，尚未被证明能单独预测个股收益；页面不构成投资建议。</Text>
       </div>
     </PageTransition>
   );

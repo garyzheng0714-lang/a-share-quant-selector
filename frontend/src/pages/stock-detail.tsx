@@ -1,12 +1,16 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useParams, useNavigate } from "react-router";
-import { motion, AnimatePresence } from "framer-motion";
+import { useParams, useNavigate } from "@/lib/spa-router";
+import { Button } from "@astryxdesign/core/Button";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
+import { Icon } from "@astryxdesign/core/Icon";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
+import { Text } from "@astryxdesign/core/Text";
 import { PageTransition } from "@/components/layout/page-transition";
 import { KlineChart, type KlineOverlay } from "@/components/charts/kline-chart";
 import { CopyButton } from "@/components/ui";
 import { useKline, useStockProfile } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
-import { chartColors, ease } from "@/lib/tokens";
+import { chartColors } from "@/lib/tokens";
 
 type Period = "daily" | "weekly";
 type WeeklyLineMode = "trend" | "ma";
@@ -175,9 +179,13 @@ export function Component() {
             </div>
             <div className="flex-1 overflow-y-auto py-1">
               {stockNavList.map((s, i) => (
-                <button
+                <Button
                   key={s.code}
                   ref={i === stockNavIndex ? activeNavItemRef : undefined}
+                  label={`查看 ${s.name || s.code}`}
+                  variant="ghost"
+                  size="sm"
+                  width="100%"
                   onClick={() => {
                     setStockNavIndex(i);
                     navigate(`/stock/${s.code}`, { replace: true });
@@ -204,7 +212,7 @@ export function Component() {
                       </span>
                     )}
                   </div>
-                </button>
+                </Button>
               ))}
             </div>
           </aside>
@@ -215,13 +223,17 @@ export function Component() {
         <div className="px-3 sm:px-6 py-2 sm:py-3 border-b border-border bg-surface">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-              <button
+              <Button
                 onClick={() => navigate(-1)}
+                label="返回上一页"
+                variant="ghost"
+                size="sm"
+                isIconOnly
+                icon={<Icon icon="chevronLeft" size="xsm" />}
                 aria-label="返回上一页"
-                className="min-h-9 min-w-9 rounded-lg text-sm text-ink-secondary hover:bg-elevated hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent transition-colors shrink-0"
+                className="shrink-0"
               >
-                ←
-              </button>
+              </Button>
 
               <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
                 <span className="text-sm sm:text-base font-mono font-semibold text-ink shrink-0">
@@ -281,62 +293,16 @@ export function Component() {
               )}
             </div>
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            <div
-              className="flex items-center gap-0.5 bg-inset rounded-[10px] p-0.5"
-              role="tablist"
-              aria-label="K线周期"
-            >
-              {(["daily", "weekly"] as Period[]).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  role="tab"
-                  aria-selected={period === p}
-                  onClick={() => handlePeriodChange(p)}
-                  className={`relative isolate min-h-8 px-2.5 sm:px-3 text-xs sm:text-sm rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent transition-colors ${
-                    period === p
-                      ? "text-ink font-medium"
-                      : "text-ink-secondary hover:text-ink"
-                  }`}
-                >
-                  {p === "daily" ? "日K" : "周K"}
-                  {period === p && (
-                    <motion.div
-                      layoutId="period-indicator"
-                      className="absolute inset-0 bg-elevated rounded-md -z-10"
-                      transition={ease.spring}
-                    />
-                  )}
-                </button>
-              ))}
-            </div>
+            <SegmentedControl value={period} onChange={(value) => handlePeriodChange(value as Period)} label="K线周期" size="sm">
+              <SegmentedControlItem value="daily" label="日K" />
+              <SegmentedControlItem value="weekly" label="周K" />
+            </SegmentedControl>
 
             {period === "weekly" && (
-              <div
-                className="flex items-center gap-0.5 rounded-[10px] border border-border bg-surface p-0.5"
-                role="tablist"
-                aria-label="周线指标"
-              >
-                {([
-                  ["ma", "四均线"],
-                  ["trend", "黄白趋势"],
-                ] as const).map(([mode, label]) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    role="tab"
-                    aria-selected={weeklyLineMode === mode}
-                    onClick={() => handleWeeklyLineModeChange(mode)}
-                    className={`min-h-8 rounded-lg px-2 text-[11px] sm:px-2.5 sm:text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent transition-colors ${
-                      weeklyLineMode === mode
-                        ? "bg-elevated font-medium text-ink"
-                        : "text-ink-muted hover:text-ink-secondary"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <SegmentedControl value={weeklyLineMode} onChange={(value) => handleWeeklyLineModeChange(value as WeeklyLineMode)} label="周线指标" size="sm">
+                <SegmentedControlItem value="ma" label="四均线" />
+                <SegmentedControlItem value="trend" label="黄白趋势" />
+              </SegmentedControl>
             )}
             </div>
           </div>
@@ -379,46 +345,17 @@ export function Component() {
         {/* Company info panel */}
         {profile && (
           <div className="bg-surface border-b border-border">
-            <button
-              onClick={() => setProfileOpen((v) => !v)}
-              aria-expanded={profileOpen}
-              aria-controls="stock-company-profile"
-              className="w-full px-3 py-2 flex items-center gap-1 text-xs text-ink-secondary hover:text-ink transition-colors"
+            <Collapsible
+              trigger="公司信息"
+              isOpen={profileOpen}
+              onOpenChange={setProfileOpen}
+              className="px-3"
             >
-              <span>公司信息</span>
-              <motion.span
-                animate={{ rotate: profileOpen ? 90 : 0 }}
-                transition={{ duration: 0.15 }}
-                className="text-[10px]"
-              >
-                ▸
-              </motion.span>
-            </button>
-            <AnimatePresence initial={false}>
-              {profileOpen && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
-                  className="overflow-hidden"
-                >
-                  <div id="stock-company-profile" className="px-3 pb-2.5 space-y-1.5">
-                    {profile.business && (
-                      <p className="text-xs text-ink-secondary leading-relaxed break-all">
-                        <span className="text-ink-muted">主营业务：</span>
-                        {profile.business}
-                      </p>
-                    )}
-                    {profile.listing_date && (
-                      <p className="text-xs text-ink-muted">
-                        上市日期：{profile.listing_date}
-                      </p>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+              <div id="stock-company-profile" className="space-y-1.5 px-1 pb-2.5">
+                {profile.business && <Text type="supporting" className="block break-all leading-relaxed"><span className="text-ink-muted">主营业务：</span>{profile.business}</Text>}
+                {profile.listing_date && <Text type="supporting" className="block">上市日期：{profile.listing_date}</Text>}
+              </div>
+            </Collapsible>
           </div>
         )}
 
@@ -529,36 +466,34 @@ export function Component() {
               {/* Floating side nav buttons */}
               {hasNav && (
                 <>
-                  <button
+                  <Button
                     onClick={() => goToStock(-1)}
-                    disabled={stockNavIndex <= 0}
+                    isDisabled={stockNavIndex <= 0}
+                    label="查看上一只候选股票"
+                    variant="ghost"
+                    size="sm"
+                    isIconOnly
+                    icon={<Icon icon="chevronLeft" size="sm" />}
                     aria-label="查看上一只候选股票"
-                    className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-16 sm:w-10 sm:h-20 flex items-center justify-center bg-surface/60 backdrop-blur-sm rounded-r-xl border border-l-0 border-border/30 text-ink-muted hover:text-ink hover:bg-surface/80 disabled:opacity-20 disabled:pointer-events-none transition-all active:scale-95"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 14 14" fill="none">
-                      <path d="M8.75 3.5L5.25 7l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                  <button
+                    className="absolute left-0 top-1/2 z-10 -translate-y-1/2 rounded-r-xl border border-l-0 border-border/30 bg-surface/80"
+                  />
+                  <Button
                     onClick={() => goToStock(1)}
-                    disabled={stockNavIndex >= stockNavList.length - 1}
+                    isDisabled={stockNavIndex >= stockNavList.length - 1}
+                    label="查看下一只候选股票"
+                    variant="ghost"
+                    size="sm"
+                    isIconOnly
+                    icon={<Icon icon="chevronRight" size="sm" />}
                     aria-label="查看下一只候选股票"
-                    className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-16 sm:w-10 sm:h-20 flex items-center justify-center bg-surface/60 backdrop-blur-sm rounded-l-xl border border-r-0 border-border/30 text-ink-muted hover:text-ink hover:bg-surface/80 disabled:opacity-20 disabled:pointer-events-none transition-all active:scale-95"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 14 14" fill="none">
-                      <path d="M5.25 3.5L8.75 7l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
+                    className="absolute right-0 top-1/2 z-10 -translate-y-1/2 rounded-l-xl border border-r-0 border-border/30 bg-surface/80"
+                  />
                 </>
               )}
 
               {/* Data overlay */}
-              <AnimatePresence>
-                {overlay && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
+              {overlay && (
+                  <div
                     className="absolute top-2 left-2 sm:top-3 sm:left-3 glass-elevated rounded-lg sm:rounded-xl px-2 py-1.5 sm:px-4 sm:py-3 shadow-float pointer-events-none max-w-[calc(100%-16px)]"
                   >
                     {/* Line 1: OHLCV */}
@@ -629,13 +564,12 @@ export function Component() {
                         <span style={{ color: chartColors.kdjJ }}>J:{overlay.kdjJ?.toFixed(1)}</span>
                       </div>
                     )}
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                  </div>
+              )}
             </>
           ) : (
             <div className="h-full flex items-center justify-center">
-              <p className="text-ink-secondary">暂无K线数据</p>
+              <Text type="supporting">暂无K线数据</Text>
             </div>
           )}
         </div>

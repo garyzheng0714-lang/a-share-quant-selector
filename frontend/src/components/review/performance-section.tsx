@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
-import { motion } from "framer-motion";
-import { LineChart } from "lucide-react";
+import { useNavigate } from "@/lib/spa-router";
+import { Button } from "@astryxdesign/core/Button";
+import { Icon } from "@astryxdesign/core/Icon";
 import { Skeleton, Gauge, LoadError } from "@/components/ui";
 import { EmptyState } from "@/components/onboarding";
 import { usePerformanceRecords, usePerformanceSummary } from "@/lib/hooks";
-import { CATEGORY_LABELS, duration } from "@/lib/tokens";
+import { CATEGORY_LABELS } from "@/lib/tokens";
 import type { BenchmarkAgg, PerfAgg, PerformanceRecord, WindowAgg } from "@/lib/api";
 
 type RetKey = "ret_1" | "ret_5" | "ret_10" | "ret_20";
@@ -242,7 +242,10 @@ function RecordRow({
   onClick: () => void;
 }) {
   return (
-    <button
+    <Button
+      label={`查看 ${record.name || record.code}`}
+      variant="ghost"
+      width="100%"
       onClick={onClick}
       className="w-full px-3 sm:px-4 py-2.5 rounded-xl hover:bg-elevated active:bg-inset transition-colors duration-100 text-left"
     >
@@ -285,7 +288,7 @@ function RecordRow({
           })}
         </div>
       </div>
-    </button>
+    </Button>
   );
 }
 
@@ -323,7 +326,7 @@ export function PerformanceSection() {
   if (!hasData) {
     return (
       <EmptyState
-        icon={<LineChart size={24} strokeWidth={1.5} />}
+        icon={<Icon icon="viewColumns" size="md" />}
         title="战绩还在积累中"
         description="每天选股后，这里会自动记录每只票的后续涨跌。跑几天就有数据了"
       />
@@ -331,11 +334,7 @@ export function PerformanceSection() {
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: duration.normal }}
-    >
+    <div className="view-enter">
       <p className="text-xs text-ink-muted mb-4 leading-relaxed">
         每天选出的票自动追踪后续真实涨跌（按选出次日开盘价买入计算）· 共{" "}
         {summary!.total_records} 条
@@ -372,13 +371,16 @@ export function PerformanceSection() {
         ))}
       </div>
       {!showAll && records.length > 30 && (
-        <button
+        <Button
+          label={`展开全部 ${records.length} 条`}
+          variant="ghost"
+          width="100%"
           onClick={() => setShowAll(true)}
           className="w-full mt-3 py-2.5 text-xs text-ink-muted hover:text-ink-secondary transition-colors"
         >
           展开全部 {records.length} 条
-        </button>
+        </Button>
       )}
-    </motion.div>
+    </div>
   );
 }
