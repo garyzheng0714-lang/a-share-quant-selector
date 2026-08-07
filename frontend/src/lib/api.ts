@@ -767,10 +767,12 @@ export interface RecommendResponse {
 
 export const api = {
   getStats: () => request<ApiResponse<StatsData>>("/api/stats"),
-  getStocks: (page: number = 1, perPage: number = 50) =>
-    request<ApiResponse<StockItem[]> & { total: number; page: number; total_pages: number }>(
-      `/api/stocks?page=${page}&per_page=${perPage}`,
-    ),
+  getStocks: (page: number = 1, perPage: number = 50) => {
+    const safePerPage = Math.min(Math.max(perPage, 1), 100);
+    return request<ApiResponse<StockItem[]> & { total: number; page: number; total_pages: number }>(
+      `/api/stocks?page=${page}&per_page=${safePerPage}`,
+    );
+  },
   getStockProfile: (code: string) =>
     request<ApiResponse<StockProfile>>(`/api/stock/${code}/profile`),
   getKline: (code: string, period: string = "daily", days?: number) =>

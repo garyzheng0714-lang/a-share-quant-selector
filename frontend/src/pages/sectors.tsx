@@ -1,9 +1,12 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type KeyboardEvent } from "react";
 import { useNavigate, useSearchParams } from "@/lib/spa-router";
 import { Heading } from "@astryxdesign/core/Heading";
 import { Icon } from "@astryxdesign/core/Icon";
+import { List, ListItem } from "@astryxdesign/core/List";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
 import { Text } from "@astryxdesign/core/Text";
 import { SectorHeatChart } from "@/components/charts/sector-heat-chart";
+import { PageHeader, PageShell } from "@/components/layout/page-shell";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button, Input, LoadError, Skeleton } from "@/components/ui";
 import { useSectorDetail, useSectors, useSuperB1, useSystemStatus } from "@/lib/hooks";
@@ -159,35 +162,32 @@ function RankingRow({
   onMove: (delta: -1 | 1) => void;
 }) {
   return (
-    <div
-      className={`group grid min-h-[62px] w-full grid-cols-[28px_minmax(96px,1fr)_48px_58px_42px] items-center gap-2 border-b border-border/60 px-3 text-left transition-colors last:border-b-0 hover:bg-surface-hover sm:grid-cols-[28px_minmax(118px,1fr)_48px_60px_58px_42px] ${selected ? "bg-accent-dim ring-1 ring-inset ring-accent/60" : ""}`}
-    >
-      <span className={`num text-xs font-semibold ${item.rank <= 3 ? "text-accent" : "text-ink-muted"}`}>{item.rank}</span>
-      <Button
-        id={`sector-row-${item.rank}`}
-        label={`查看 ${item.name}`}
-        variant="ghost"
-        width="100%"
-        aria-pressed={selected}
-        onClick={onSelect}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
-            onMove(event.key === "ArrowDown" ? 1 : -1);
-          }
-        }}
-        className="min-w-0 justify-start self-stretch px-1 text-left group-hover:bg-transparent"
-      >
-        <span className="min-w-0">
-          <span className="block truncate text-sm font-semibold text-ink">{item.name}</span>
-          <span className="mt-1 block truncate text-[10px] text-ink-muted">{kind} · {item.stage}</span>
+    <ListItem
+      id={`sector-row-${item.rank}`}
+      isSelected={selected}
+      onClick={onSelect}
+      onKeyDown={(event: KeyboardEvent) => {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          onMove(event.key === "ArrowDown" ? 1 : -1);
+        }
+      }}
+      startContent={
+        <span className={`num w-6 text-xs font-semibold ${item.rank <= 3 ? "text-accent" : "text-ink-muted"}`}>
+          {item.rank}
         </span>
-      </Button>
-      <span className="num text-right text-sm font-semibold text-ink">{Math.round(item.score)}</span>
-      <span className={`num text-right text-xs ${trendClass(item.delta3)}`}>{signed(item.delta3, 1)}</span>
-      <span className="num hidden text-right text-xs text-ink-secondary sm:block">{item.breadth_ma10 == null ? "—" : `${Math.round(item.breadth_ma10)}%`}</span>
-      <span className={`num text-right text-xs ${b1Count ? "text-bull" : "text-ink-muted"}`}>{b1Count}</span>
-    </div>
+      }
+      label={<span className="block truncate text-sm font-semibold text-ink">{item.name}</span>}
+      description={<span className="block truncate text-[10px] text-ink-muted">{kind} · {item.stage}</span>}
+      endContent={
+        <span className="grid grid-cols-[44px_54px_36px] items-center gap-1 sm:grid-cols-[44px_54px_54px_36px]">
+          <span className="num text-right text-sm font-semibold text-ink">{Math.round(item.score)}</span>
+          <span className={`num text-right text-xs ${trendClass(item.delta3)}`}>{signed(item.delta3, 1)}</span>
+          <span className="num hidden text-right text-xs text-ink-secondary sm:block">{item.breadth_ma10 == null ? "—" : `${Math.round(item.breadth_ma10)}%`}</span>
+          <span className={`num text-right text-xs ${b1Count ? "text-bull" : "text-ink-muted"}`}>{b1Count}</span>
+        </span>
+      }
+    />
   );
 }
 
@@ -288,11 +288,13 @@ export function Component() {
     const next = filtered[index + delta];
     if (!next) return;
     selectSector(next.name);
-    requestAnimationFrame(() => document.getElementById(`sector-row-${next.rank}`)?.focus());
+    requestAnimationFrame(() =>
+      document.getElementById(`sector-row-${next.rank}`)?.querySelector("button")?.focus(),
+    );
   };
 
   if (sectors.isLoading) {
-    return <div className="mx-auto max-w-[1480px] px-4 py-6"><Skeleton className="h-[720px] w-full rounded-xl" /></div>;
+    return <PageShell><Skeleton className="h-[720px] w-full rounded-xl" /></PageShell>;
   }
   if (sectors.error) return <LoadError label="板块加载失败" onRetry={() => sectors.mutate()} />;
 
@@ -314,14 +316,12 @@ export function Component() {
 
   return (
     <PageTransition>
-      <div className="mx-auto max-w-[1480px] px-3 py-5 sm:px-5 sm:py-7">
-        <header className="mb-4 flex flex-wrap items-end justify-between gap-3 px-1">
-          <div className="flex items-baseline gap-3">
-          <Heading level={1}>板块工作台</Heading>
-            <Text type="supporting" className="hidden sm:block">当前仅展示研究候选，不构成交易动作</Text>
-          </div>
-          <Text type="supporting" className="num">数据截至 {data?.trade_date ?? systemData?.market_data?.local_date ?? "待更新"} 收盘</Text>
-        </header>
+      <PageShell>
+        <PageHeader
+          title="板块工作台"
+          description="当前仅展示研究候选，不构成交易动作"
+          endContent={<Text type="supporting" className="num">数据截至 {data?.trade_date ?? systemData?.market_data?.local_date ?? "待更新"} 收盘</Text>}
+        />
 
         <SystemStrip data={systemData} />
 
@@ -335,29 +335,33 @@ export function Component() {
                   <Icon icon="search" size="xsm" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" color="secondary" />
                 </div>
               </div>
-              <div className="mt-3 flex gap-1" role="group" aria-label="板块状态筛选">
-                {([[
-                  "all", "全部",
-                ], ["leader", "主线"], ["warming", "升温/接力"]] as const).map(([key, label]) => (
-                  <Button key={key} label={label} variant={filter === key ? "primary" : "ghost"} size="sm" aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</Button>
-                ))}
+              <div className="mt-3">
+                <SegmentedControl value={filter} onChange={(value) => setFilter(value as Filter)} label="板块状态筛选" size="sm">
+                  <SegmentedControlItem value="all" label="全部" />
+                  <SegmentedControlItem value="leader" label="主线" />
+                  <SegmentedControlItem value="warming" label="升温/接力" />
+                </SegmentedControl>
               </div>
             </div>
-            <div className="grid grid-cols-[28px_minmax(96px,1fr)_48px_58px_42px] gap-2 border-b border-border bg-inset px-3 py-2 text-[10px] text-ink-muted sm:grid-cols-[28px_minmax(118px,1fr)_48px_60px_58px_42px]">
+            <div className="grid grid-cols-[28px_minmax(96px,1fr)_44px_54px_36px] gap-2 border-b border-border bg-inset px-3 py-2 text-[10px] text-ink-muted sm:grid-cols-[28px_minmax(118px,1fr)_44px_54px_54px_36px]">
               <span>#</span><span>板块 / 阶段</span><span className="text-right">强度</span><span className="text-right">3日变化</span><span className="hidden text-right sm:block">站上MA10</span><span className="text-right">B1</span>
             </div>
             <div className="max-h-[660px] overflow-y-auto lg:h-[660px]">
-              {filtered.length ? filtered.map((item) => (
-                <RankingRow
-                  key={item.name}
-                  item={item}
-                  selected={item.name === effectiveSelectedName}
-                  b1Count={b1Counts[item.name] ?? 0}
-                  kind={stageKind(item, relayNames)}
-                  onSelect={() => selectSector(item.name)}
-                  onMove={(delta) => moveSelection(item, delta)}
-                />
-              )) : <Text type="supporting" className="block px-4 py-10 text-center">没有符合条件的板块</Text>}
+              {filtered.length ? (
+                <List density="compact" hasDividers aria-label="板块排名列表">
+                  {filtered.map((item) => (
+                    <RankingRow
+                      key={item.name}
+                      item={item}
+                      selected={item.name === effectiveSelectedName}
+                      b1Count={b1Counts[item.name] ?? 0}
+                      kind={stageKind(item, relayNames)}
+                      onSelect={() => selectSector(item.name)}
+                      onMove={(delta) => moveSelection(item, delta)}
+                    />
+                  ))}
+                </List>
+              ) : <Text type="supporting" className="block px-4 py-10 text-center">没有符合条件的板块</Text>}
             </div>
           </section>
 
@@ -481,7 +485,7 @@ export function Component() {
         </section>
 
         <Text type="supporting" className="mt-3 flex items-center gap-2 px-1"><Icon icon="info" size="xsm" />板块热度是研究特征，尚未被证明能单独预测个股收益；页面不构成投资建议。</Text>
-      </div>
+      </PageShell>
     </PageTransition>
   );
 }

@@ -3,6 +3,7 @@ import { useNavigate } from "@/lib/spa-router";
 import { Button } from "@astryxdesign/core/Button";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { Icon } from "@astryxdesign/core/Icon";
+import { List, ListItem } from "@astryxdesign/core/List";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
 import { Skeleton, CopyButton, LoadError } from "@/components/ui";
 import { EmptyState } from "@/components/onboarding";
@@ -73,10 +74,23 @@ function CategoryTag({ category }: { category: string }) {
   );
 }
 
+/** 序号徽标：前三名着色，用作行首 startContent */
+function RankMark({ rank }: { rank: number }) {
+  return (
+    <span
+      className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold tabular-nums ${
+        rank <= 3 ? "bg-accent-dim text-accent" : "bg-inset text-ink-muted"
+      }`}
+      aria-hidden="true"
+    >
+      {rank}
+    </span>
+  );
+}
+
 /**
- * 候选行：两行式，一套布局双端通用。
- * 第一行：序号 + 名称 + 代码 + B1分 + 箭头
- * 第二行：价格 · J · 市值 · 行业（truncate） + 分类
+ * 候选行：ListItem 两行式，一套布局双端通用。
+ * label：名称 + 代码；description：价格 · J · 市值 · 行业（truncate） + 分类
  */
 function CandidateRow({
   stock,
@@ -90,57 +104,52 @@ function CandidateRow({
   const score = stock.similarity_score;
 
   return (
-    <Button
-      label={`查看 ${stock.name || stock.code}`}
-      variant="ghost"
-      width="100%"
-      onClick={onClick}
-      className="w-full px-3 sm:px-4 py-3 rounded-xl hover:bg-elevated active:bg-inset transition-colors duration-100 text-left group"
-    >
-      <div className="flex items-center gap-2">
-        <span
-          className={`text-sm font-bold tabular-nums w-6 text-center shrink-0 ${
-            rank <= 3 ? "text-accent" : "text-ink-muted"
-          }`}
-        >
-          {rank}
+    <ListItem
+      label={
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="truncate text-[15px] font-medium text-ink">
+            {stock.name || stock.code}
+          </span>
+          <span className="shrink-0 font-mono text-xs text-ink-muted">
+            {stock.code}
+          </span>
         </span>
-        <span className="text-[15px] font-medium text-ink truncate">
-          {stock.name || stock.code}
+      }
+      description={
+        <span className="mt-1 flex min-w-0 items-center gap-3 whitespace-nowrap text-xs tabular-nums">
+          <span className="shrink-0 font-medium text-ink-secondary">
+            {stock.close != null ? stock.close.toFixed(2) : "—"}
+          </span>
+          <span className="shrink-0 text-ink-muted">
+            J {stock.J != null ? stock.J.toFixed(1) : "—"}
+          </span>
+          {formatMarketCap(stock.market_cap) && (
+            <span className="shrink-0 text-ink-muted">
+              {formatMarketCap(stock.market_cap)}
+            </span>
+          )}
+          {stock.industry && (
+            <span className="min-w-0 truncate text-ink-muted/70">
+              {stock.industry}
+            </span>
+          )}
+          <span className="ml-auto shrink-0">
+            <CategoryTag category={stock.category} />
+          </span>
         </span>
-        <span className="font-mono text-xs text-ink-muted shrink-0">
-          {stock.code}
-        </span>
-        <span className="hidden sm:inline-flex shrink-0">
-          <CopyButton text={stock.code} />
-        </span>
-        <span className="ml-auto shrink-0 flex items-center gap-2">
+      }
+      startContent={<RankMark rank={rank} />}
+      endContent={
+        <span className="flex items-center gap-2">
+          <span className="hidden sm:inline-flex">
+            <CopyButton text={stock.code} />
+          </span>
           {score != null && <B1Badge score={score} />}
           <Icon icon="chevronRight" size="xsm" color="secondary" />
         </span>
-      </div>
-      <div className="flex items-center gap-3 mt-1 pl-8 text-xs whitespace-nowrap min-w-0">
-        <span className="text-ink-secondary tabular-nums font-medium shrink-0">
-          {stock.close != null ? stock.close.toFixed(2) : "—"}
-        </span>
-        <span className="text-ink-muted tabular-nums shrink-0">
-          J {stock.J != null ? stock.J.toFixed(1) : "—"}
-        </span>
-        {formatMarketCap(stock.market_cap) && (
-          <span className="text-ink-muted shrink-0">
-            {formatMarketCap(stock.market_cap)}
-          </span>
-        )}
-        {stock.industry && (
-          <span className="text-ink-muted/70 truncate min-w-0">
-            {stock.industry}
-          </span>
-        )}
-        <span className="ml-auto shrink-0">
-          <CategoryTag category={stock.category} />
-        </span>
-      </div>
-    </Button>
+      }
+      onClick={onClick}
+    />
   );
 }
 
@@ -172,15 +181,17 @@ function IndustryGroup({
         isOpen={expanded}
         onOpenChange={onToggle}
       >
-            <div className="divide-y divide-border/30 ml-6 mr-2 mb-3 border-l border-border/40 pl-1">
-              {stocks.map((stock, i) => (
-                <CandidateRow
-                  key={stock.code}
-                  stock={stock}
-                  rank={i + 1}
-                  onClick={() => onStockClick(stock, i)}
-                />
-              ))}
+            <div className="ml-6 mr-2 mb-3 border-l border-border/40 pl-1">
+              <List density="compact" hasDividers aria-label={`${industry}候选`}>
+                {stocks.map((stock, i) => (
+                  <CandidateRow
+                    key={stock.code}
+                    stock={stock}
+                    rank={i + 1}
+                    onClick={() => onStockClick(stock, i)}
+                  />
+                ))}
+              </List>
             </div>
       </Collapsible>
     </div>
@@ -291,16 +302,17 @@ export function CandidateList() {
       ) : (
         <div className="card-modern px-1 py-1">
         {viewMode === "ranking" ? (
-            <div key={`ranking-${filter}`} className="view-enter divide-y divide-border/40">
-              {filtered.map((stock, i) => (
-                <div key={stock.code}>
+            <div key={`ranking-${filter}`} className="view-enter">
+              <List density="compact" hasDividers aria-label="今日候选排名列表">
+                {filtered.map((stock, i) => (
                   <CandidateRow
+                    key={stock.code}
                     stock={stock}
                     rank={i + 1}
                     onClick={() => handleClick(filtered, stock, i)}
                   />
-                </div>
-              ))}
+                ))}
+              </List>
             </div>
           ) : (
             <div key={`industry-${filter}`} className="view-enter space-y-0.5">

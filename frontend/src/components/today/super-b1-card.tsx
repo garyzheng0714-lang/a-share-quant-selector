@@ -1,11 +1,56 @@
 import { useState } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import { Icon } from "@astryxdesign/core/Icon";
+import { List, ListItem } from "@astryxdesign/core/List";
+import { Token } from "@astryxdesign/core/Token";
 import { useNavigate } from "@/lib/spa-router";
 import { Skeleton, LoadError } from "@/components/ui";
 import { useSuperB1 } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
 import type { SignalStock, SuperB1Hit } from "@/lib/api";
+
+/** 命中行：名称+代码 / 价格·J·RSI·市值·行业，信号标签落在行尾 */
+function SuperB1Row({ hit, onClick }: { hit: SuperB1Hit; onClick: () => void }) {
+  return (
+    <ListItem
+      label={
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="truncate text-sm font-medium text-ink">
+            {hit.name || hit.code}
+          </span>
+          <span className="shrink-0 font-mono text-xs text-ink-muted">
+            {hit.code}
+          </span>
+        </span>
+      }
+      description={
+        <span className="mt-0.5 flex min-w-0 items-center gap-3 whitespace-nowrap text-xs tabular-nums text-ink-muted">
+          <span className="shrink-0 font-medium text-ink-secondary">
+            {hit.close.toFixed(2)}
+          </span>
+          <span className="shrink-0">J {hit.J.toFixed(1)}</span>
+          <span className="shrink-0">RSI {hit.RSI.toFixed(1)}</span>
+          {hit.market_cap_yi > 0 && (
+            <span className="shrink-0">{hit.market_cap_yi.toFixed(0)}亿</span>
+          )}
+          {hit.industry && (
+            <span className="min-w-0 truncate text-ink-muted/70">{hit.industry}</span>
+          )}
+        </span>
+      }
+      endContent={
+        hit.signal_labels.length ? (
+          <span className="flex items-center gap-1">
+            {hit.signal_labels.map((label) => (
+              <Token key={label} label={label} size="sm" />
+            ))}
+          </span>
+        ) : undefined
+      }
+      onClick={onClick}
+    />
+  );
+}
 
 /**
  * 超级B1（知行公式）原始信号列表，也是分层决策的主候选入口。
@@ -66,57 +111,20 @@ export function SuperB1Card({ initialLimit }: { initialLimit?: number } = {}) {
         </p>
       ) : (
         <div className="card-modern px-1 py-1">
-          <div className="reveal-list divide-y divide-border/40">
+          <List density="compact" hasDividers aria-label="超级B1命中列表">
             {visibleHits.map((h) => (
-              <Button
-                key={h.code}
-                label={`查看 ${h.name || h.code}`}
-                variant="ghost"
-                width="100%"
-                onClick={() => openStock(hits, h.code)}
-                className="w-full px-3 sm:px-4 py-2.5 hover:bg-elevated active:bg-inset rounded-xl transition-colors duration-100 text-left"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-sm font-medium text-ink truncate">
-                    {h.name || h.code}
-                  </span>
-                  <span className="font-mono text-xs text-ink-muted shrink-0">
-                    {h.code}
-                  </span>
-                  <span className="ml-auto flex items-center gap-1 shrink-0">
-                    {h.signal_labels.map((label) => (
-                      <span
-                        key={label}
-                        className="px-1.5 py-0.5 text-[10px] rounded bg-accent/10 text-accent whitespace-nowrap"
-                      >
-                        {label}
-                      </span>
-                    ))}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3 mt-1 text-xs text-ink-muted tabular-nums whitespace-nowrap min-w-0">
-                  <span className="text-ink-secondary font-medium shrink-0">
-                    {h.close.toFixed(2)}
-                  </span>
-                  <span className="shrink-0">J {h.J.toFixed(1)}</span>
-                  <span className="shrink-0">RSI {h.RSI.toFixed(1)}</span>
-                  {h.market_cap_yi > 0 && (
-                    <span className="shrink-0">{h.market_cap_yi.toFixed(0)}亿</span>
-                  )}
-                  {h.industry && (
-                    <span className="text-ink-muted/70 truncate min-w-0">
-                      {h.industry}
-                    </span>
-                  )}
-                </div>
-              </Button>
+              <SuperB1Row key={h.code} hit={h} onClick={() => openStock(hits, h.code)} />
             ))}
-          </div>
+          </List>
           {initialLimit && hits.length > initialLimit && (
-            <Button label={showAll ? "收起" : `查看全部 ${hits.length} 只`} variant="ghost" width="100%" onClick={() => setShowAll((value) => !value)} className="border-t border-border">
-              {showAll ? "收起" : `查看全部 ${hits.length} 只`}
-              <Icon icon="chevronDown" size="xsm" />
-            </Button>
+            <Button
+              label={showAll ? "收起" : `查看全部 ${hits.length} 只`}
+              variant="ghost"
+              width="100%"
+              onClick={() => setShowAll((value) => !value)}
+              className="border-t border-border"
+              endContent={!showAll ? <Icon icon="chevronDown" size="xsm" /> : undefined}
+            />
           )}
         </div>
       )}
