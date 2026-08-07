@@ -198,3 +198,36 @@ def api_factor_scan():
     except Exception as e:
         logger.error("因子扫描查询失败: %s", e, exc_info=True)
         return jsonify({"available": False, "reason": "因子选股暂不可用"}), 500
+
+
+def _price_manager() -> CSVManager:
+    """复盘读价：优先 worker 快照；本地无快照时回退直读 data/ 日线。"""
+    manager = CSVManager("data", writable=False)
+    if manager.snapshot_id is None:
+        return CSVManager("data", writable=False, resolve_snapshot=False)
+    return manager
+
+
+@factor_bp.route("/api/review/cloud-stair", methods=["GET"])
+def api_cloud_stair_review():
+    """云阶票级复盘：历史每日命中 + 隔日涨跌 + 持有窗口 / 持有至今。
+
+    Query:
+        limit: 最多返回条数（默认 200，上限 500）
+    """
+    try:
+        from utils.cloud_stair_review import build_cloud_stair_review
+
+        raw_limit = request.args.get("limit", "200").strip()
+        try:
+            limit = int(raw_limit)
+        except ValueError:
+            return jsonify({"available": False, "reason": "limit 必须是整数"}), 400
+
+        manager = _price_manager()
+        payload = build_cloud_stair_review(manager, limit=limit)
+        payload["source"] = "worker_snapshot" if manager.snapshot_id else "local_csv"
+        return jsonify(payload)
+    except Exception as e:
+        logger.error("云阶复盘查询失败: %s", e, exc_info=True)
+        return jsonify({"available": False, "reason": "云阶复盘暂不可用"}), 500

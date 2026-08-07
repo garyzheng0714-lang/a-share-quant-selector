@@ -765,6 +765,60 @@ export interface RecommendResponse {
   honest_note?: string;
 }
 
+/** 云阶复盘：单窗口汇总 */
+export interface CloudStairWindowAgg {
+  count: number;
+  win_rate: number | null;
+  avg: number | null;
+}
+
+export interface CloudStairPick {
+  pick_date: string;
+  code: string;
+  name: string;
+  industry?: string;
+  entry_date: string | null;
+  entry_price: number | null;
+  next_day_chg: number | null;
+  ret_to_date: number | null;
+  holding_sessions_to_date: number | null;
+  ret_1: number | null;
+  ret_5: number | null;
+  ret_10: number | null;
+  ret_20: number | null;
+  status: string;
+  as_of?: string;
+  [key: string]: unknown;
+}
+
+export interface CloudStairReviewResponse {
+  available: boolean;
+  reason?: string;
+  strategy?: string;
+  strategy_name?: string;
+  picks: CloudStairPick[];
+  summary: {
+    pick_count: number;
+    next_day: CloudStairWindowAgg;
+    to_date: CloudStairWindowAgg;
+    windows: Record<string, CloudStairWindowAgg>;
+    recommended_hold: {
+      hold_sessions: number;
+      label: string;
+      avg: number;
+      win_rate: number | null;
+      count: number;
+    } | null;
+    avg_holding_sessions_observed: number | null;
+    execution_note: string;
+  };
+  date_span?: { from: string; to: string } | null;
+  cache_dates?: number;
+  truncated?: boolean;
+  total_cached_picks?: number;
+  source?: string;
+}
+
 export const api = {
   getStats: () => request<ApiResponse<StatsData>>("/api/stats"),
   getStocks: (page: number = 1, perPage: number = 50) => {
@@ -807,4 +861,6 @@ export const api = {
     request<{ total: number; records: PerformanceRecord[] }>(`/api/performance/records?limit=${limit}`),
   refreshPerformance: () =>
     request<{ success: boolean; synced: number; updated: number }>("/api/performance/refresh", { method: "POST" }),
+  getCloudStairReview: (limit = 200) =>
+    request<CloudStairReviewResponse>(`/api/review/cloud-stair?limit=${limit}`),
 };

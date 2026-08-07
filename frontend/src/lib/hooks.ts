@@ -101,6 +101,13 @@ export function usePerformanceRecords(limit = 200) {
   return useSWR(`performance-records-${limit}`, () => api.getPerformanceRecords(limit));
 }
 
+export function useCloudStairReview(limit = 200) {
+  return useSWR(`cloud-stair-review-${limit}`, () => api.getCloudStairReview(limit), {
+    refreshInterval: 600_000,
+    revalidateOnFocus: false,
+  });
+}
+
 export function useRecommend() {
   return useSWR("recommend", () => api.getRecommend(), { refreshInterval: 600_000 });
 }
