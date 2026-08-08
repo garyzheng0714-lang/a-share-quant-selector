@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Heading } from "@astryxdesign/core/Heading";
 import { List, ListItem } from "@astryxdesign/core/List";
@@ -8,7 +8,7 @@ import { KlineChart } from "@/components/charts/kline-chart";
 import { HoldPathChart } from "@/components/review/review-charts";
 import { Skeleton } from "@/components/ui";
 import { useKline } from "@/lib/hooks";
-import type { KlineSignal, StrategyReviewPick } from "@/lib/api";
+import type { StrategyReviewPick } from "@/lib/api";
 
 function pctClass(value: number | null | undefined) {
   if (value == null || value === 0) return "text-ink-muted";
@@ -67,13 +67,14 @@ export function PickDetailDialog({
     period,
   );
 
-  const signalMarks = useMemo<KlineSignal[]>(() => {
-    if (!pick?.pick_date) return [];
-    return [{ date: pick.pick_date, category: pick.strategy_name || pick.strategy || "选出" }];
-  }, [pick?.pick_date, pick?.strategy, pick?.strategy_name]);
-
   if (!pick) return null;
 
+  const signalMarks = [
+    {
+      date: pick.pick_date,
+      category: pick.strategy_name || pick.strategy || "选出",
+    },
+  ];
   const title = `${pick.name} · ${pick.code}`;
   const subtitle = `${pick.strategy_name ?? pick.strategy ?? ""} · 选出 ${pick.pick_date}`;
 

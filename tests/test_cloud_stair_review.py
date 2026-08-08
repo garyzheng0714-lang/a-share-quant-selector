@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from utils.cloud_stair_review import build_cloud_stair_review, record_cloud_stair_hits
