@@ -264,7 +264,11 @@ jobs:
             if ! test -s "$path"; then
               openssl rand -hex 32 > "$path"
             fi
-            chmod 600 "$path"
+            # Compose mounts file-backed secrets without remapping their host
+            # ownership. The release image runs as uid/gid 10001, so the file
+            # itself must be world-readable inside the container. The parent
+            # secrets directory remains 0700 on the host.
+            chmod 644 "$path"
           }
           ensure_runtime_token secrets/admin-token
           ensure_runtime_token secrets/publisher-token
@@ -272,7 +276,7 @@ jobs:
           if ! test -e secrets/ark-api-key; then
             : > secrets/ark-api-key
           fi
-          chmod 600 secrets/ark-api-key
+          chmod 644 secrets/ark-api-key
           BOOTSTRAP_ENV=.bootstrap.env
           BOOTSTRAP_NAME=a-share-quant-snapshot-bootstrap
           cleanup_env() {
@@ -385,7 +389,9 @@ jobs:
             if ! test -s "$path"; then
               openssl rand -hex 32 > "$path"
             fi
-            chmod 600 "$path"
+            # See the bootstrap step above: file-backed Compose secrets retain
+            # host ownership while the container runs as uid/gid 10001.
+            chmod 644 "$path"
           }
           ensure_runtime_token secrets/admin-token
           ensure_runtime_token secrets/publisher-token
@@ -393,7 +399,7 @@ jobs:
           if ! test -e secrets/ark-api-key; then
             : > secrets/ark-api-key
           fi
-          chmod 600 secrets/ark-api-key
+          chmod 644 secrets/ark-api-key
           # 上一次若在镜像预热阶段被外部取消，恢复它尚未切换的发布文件。
           if test -f .release.env.next && test -f .rollback-compose.yml; then
             cp -f .rollback-compose.yml docker-compose.yml
