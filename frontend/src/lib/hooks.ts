@@ -101,11 +101,26 @@ export function usePerformanceRecords(limit = 200) {
   return useSWR(`performance-records-${limit}`, () => api.getPerformanceRecords(limit));
 }
 
-export function useCloudStairReview(limit = 200) {
+export function useCloudStairReview(limit = 300) {
   return useSWR(`cloud-stair-review-${limit}`, () => api.getCloudStairReview(limit), {
     refreshInterval: 600_000,
     revalidateOnFocus: false,
   });
+}
+
+export function useReviewCatalog() {
+  return useSWR("review-catalog", () => api.getReviewCatalog(), {
+    refreshInterval: 600_000,
+    revalidateOnFocus: false,
+  });
+}
+
+export function useStrategyReview(strategy: string | null, limit = 300) {
+  return useSWR(
+    strategy ? `strategy-review-${strategy}-${limit}` : null,
+    () => api.getStrategyReview(strategy!, limit),
+    { refreshInterval: 0, revalidateOnFocus: false },
+  );
 }
 
 export function useRecommend() {

@@ -765,59 +765,143 @@ export interface RecommendResponse {
   honest_note?: string;
 }
 
-/** 云阶复盘：单窗口汇总 */
-export interface CloudStairWindowAgg {
+/** 策略复盘：单窗口汇总 */
+export interface StrategyWindowAgg {
   count: number;
   win_rate: number | null;
   avg: number | null;
+  median?: number | null;
+  best?: number | null;
+  worst?: number | null;
 }
 
-export interface CloudStairPick {
+export interface StrategyHoldPathPoint {
+  session: number;
+  date: string;
+  open_ret: number | null;
+  high_ret: number | null;
+  low_ret: number | null;
+  close_ret: number | null;
+  close: number | null;
+}
+
+export interface StrategyReviewPick {
   pick_date: string;
   code: string;
   name: string;
   industry?: string;
+  strategy?: string;
+  strategy_name?: string;
   entry_date: string | null;
   entry_price: number | null;
+  entry_gap_pct?: number | null;
   next_day_chg: number | null;
+  next_open_chg?: number | null;
   ret_to_date: number | null;
+  mfe_to_date?: number | null;
+  mae_to_date?: number | null;
   holding_sessions_to_date: number | null;
+  latest_close?: number | null;
   ret_1: number | null;
   ret_5: number | null;
   ret_10: number | null;
   ret_20: number | null;
+  max_gain_1?: number | null;
+  max_gain_5?: number | null;
+  max_gain_10?: number | null;
+  max_gain_20?: number | null;
+  max_dd_1?: number | null;
+  max_dd_5?: number | null;
+  max_dd_10?: number | null;
+  max_dd_20?: number | null;
+  exit_date_1?: string | null;
+  exit_date_5?: string | null;
+  exit_date_10?: string | null;
+  exit_date_20?: string | null;
   status: string;
-  as_of?: string;
+  as_of?: string | null;
+  signal_close?: number | null;
+  signal?: Record<string, unknown>;
+  path?: StrategyHoldPathPoint[];
+  windows?: Record<string, unknown>;
+  id?: string;
   [key: string]: unknown;
 }
 
-export interface CloudStairReviewResponse {
+export interface StrategyReviewSummary {
+  pick_count: number;
+  next_day: StrategyWindowAgg;
+  to_date: StrategyWindowAgg;
+  windows: Record<string, StrategyWindowAgg>;
+  mfe?: StrategyWindowAgg;
+  mae?: StrategyWindowAgg;
+  recommended_hold: {
+    hold_sessions: number;
+    label: string;
+    avg: number;
+    win_rate: number | null;
+    median?: number | null;
+    count: number;
+  } | null;
+  avg_holding_sessions_observed: number | null;
+  by_date?: Array<{
+    pick_date: string;
+    count: number;
+    next_day: StrategyWindowAgg;
+    to_date: StrategyWindowAgg;
+    ret_5: StrategyWindowAgg;
+  }>;
+  top_picks?: Array<{
+    code: string;
+    name: string;
+    pick_date: string;
+    ret_to_date: number | null;
+    next_day_chg: number | null;
+  }>;
+  bottom_picks?: Array<{
+    code: string;
+    name: string;
+    pick_date: string;
+    ret_to_date: number | null;
+    next_day_chg: number | null;
+  }>;
+  execution_note: string;
+}
+
+export interface StrategyReviewResponse {
   available: boolean;
   reason?: string;
   strategy?: string;
   strategy_name?: string;
-  picks: CloudStairPick[];
-  summary: {
-    pick_count: number;
-    next_day: CloudStairWindowAgg;
-    to_date: CloudStairWindowAgg;
-    windows: Record<string, CloudStairWindowAgg>;
-    recommended_hold: {
-      hold_sessions: number;
-      label: string;
-      avg: number;
-      win_rate: number | null;
-      count: number;
-    } | null;
-    avg_holding_sessions_observed: number | null;
-    execution_note: string;
-  };
+  group?: string;
+  picks: StrategyReviewPick[];
+  summary: StrategyReviewSummary;
   date_span?: { from: string; to: string } | null;
   cache_dates?: number;
   truncated?: boolean;
   total_cached_picks?: number;
   source?: string;
 }
+
+export interface StrategyReviewCatalogItem {
+  key: string;
+  name: string;
+  group: string;
+  pick_count: number;
+  date_span?: { from: string; to: string } | null;
+  has_data: boolean;
+}
+
+export interface StrategyReviewCatalogResponse {
+  available: boolean;
+  catalog: StrategyReviewCatalogItem[];
+  default_strategy: string;
+}
+
+/** @deprecated 使用 StrategyReviewResponse */
+export type CloudStairReviewResponse = StrategyReviewResponse;
+export type CloudStairPick = StrategyReviewPick;
+export type CloudStairWindowAgg = StrategyWindowAgg;
 
 export const api = {
   getStats: () => request<ApiResponse<StatsData>>("/api/stats"),
@@ -861,6 +945,11 @@ export const api = {
     request<{ total: number; records: PerformanceRecord[] }>(`/api/performance/records?limit=${limit}`),
   refreshPerformance: () =>
     request<{ success: boolean; synced: number; updated: number }>("/api/performance/refresh", { method: "POST" }),
-  getCloudStairReview: (limit = 200) =>
-    request<CloudStairReviewResponse>(`/api/review/cloud-stair?limit=${limit}`),
+  getCloudStairReview: (limit = 300) =>
+    request<StrategyReviewResponse>(`/api/review/cloud-stair?limit=${limit}`),
+  getReviewCatalog: () => request<StrategyReviewCatalogResponse>("/api/review/catalog"),
+  getStrategyReview: (strategy: string, limit = 300) =>
+    request<StrategyReviewResponse>(
+      `/api/review/strategy?strategy=${encodeURIComponent(strategy)}&limit=${limit}`,
+    ),
 };
