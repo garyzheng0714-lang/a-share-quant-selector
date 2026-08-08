@@ -9,7 +9,7 @@ import { useSystemStatus } from "@/lib/hooks";
 const navItems = [
   { to: "/sectors", label: "市场环境", matches: ["/sectors"] },
   { to: "/stocks", label: "策略工作台", matches: ["/stocks", "/stock/"] },
-  { to: "/review", label: "研究复盘", matches: ["/review"] },
+  { to: "/review", label: "复盘", matches: ["/review"] },
 ];
 
 export function NavBar() {

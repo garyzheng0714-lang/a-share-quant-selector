@@ -191,14 +191,13 @@ def _save_cache(trade_date: str, data: dict, csv_manager) -> bool:
                 logger.warning("因子临时缓存清理失败: %s", tmp)
         return False
 
-    # 云阶复盘账本：在滚动清理前落盘，避免 12 日缓存窗口抹掉历史命中
-    if isinstance(data.get("cloud_stair"), dict):
-        try:
-            from utils.cloud_stair_review import record_cloud_stair_hits
+    # 全策略复盘账本：滚动清理前落盘，避免 12 日缓存窗口抹掉历史命中
+    try:
+        from utils.strategy_review import record_strategy_scan_results
 
-            record_cloud_stair_hits(trade_date, data["cloud_stair"])
-        except Exception as exc:
-            logger.warning("云阶复盘账本写入失败: %s", exc)
+        record_strategy_scan_results(trade_date, data)
+    except Exception as exc:
+        logger.warning("策略复盘账本写入失败: %s", exc)
 
     # 滚动清理旧缓存
     files = sorted(CACHE_DIR.glob("*.json"))

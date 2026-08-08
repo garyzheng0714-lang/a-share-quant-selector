@@ -1,7 +1,7 @@
 import { NavLink, useLocation } from "@/lib/spa-router";
 import { Icon } from "@astryxdesign/core/Icon";
 
-/** 手机与桌面共用三段主任务：市场环境 → 策略工作台 → 研究复盘。 */
+/** 手机与桌面共用三段主任务：市场环境 → 策略工作台 → 复盘。 */
 const navItems = [
   { to: "/sectors", label: "市场", end: false, matches: ["/sectors"], icon: "viewColumns" as const },
   { to: "/stocks", label: "策略", end: false, matches: ["/stocks", "/stock/"], icon: "funnel" as const },

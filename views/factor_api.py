@@ -5,6 +5,8 @@ Blueprint 自持 CSVManager 与 json 缓存。主板过滤与行业/市值附加
 扫描缓存保持"全量原始"，以后放开板块权限不用重扫。
 """
 
+from __future__ import annotations
+
 import logging
 import re
 import time
@@ -208,26 +210,101 @@ def _price_manager() -> CSVManager:
     return manager
 
 
+def _parse_limit(
+    default: int = 300, upper: int = 1000
+) -> tuple[int | None, tuple | None]:
+    raw = request.args.get("limit", str(default)).strip()
+    try:
+        return max(1, min(int(raw), upper)), None
+    except ValueError:
+        return None, (jsonify({"available": False, "reason": "limit 必须是整数"}), 400)
+
+
 @factor_bp.route("/api/review/cloud-stair", methods=["GET"])
 def api_cloud_stair_review():
-    """云阶票级复盘：历史每日命中 + 隔日涨跌 + 持有窗口 / 持有至今。
-
-    Query:
-        limit: 最多返回条数（默认 200，上限 500）
-    """
+    """兼容旧入口：等价于 /api/review/strategy?strategy=cloud_stair。"""
     try:
-        from utils.cloud_stair_review import build_cloud_stair_review
+        from utils.strategy_review import build_strategy_review
 
-        raw_limit = request.args.get("limit", "200").strip()
-        try:
-            limit = int(raw_limit)
-        except ValueError:
-            return jsonify({"available": False, "reason": "limit 必须是整数"}), 400
-
+        limit, err = _parse_limit()
+        if err:
+            return err
         manager = _price_manager()
-        payload = build_cloud_stair_review(manager, limit=limit)
+        payload = build_strategy_review(manager, "cloud_stair", limit=limit)
         payload["source"] = "worker_snapshot" if manager.snapshot_id else "local_csv"
         return jsonify(payload)
     except Exception as e:
         logger.error("云阶复盘查询失败: %s", e, exc_info=True)
         return jsonify({"available": False, "reason": "云阶复盘暂不可用"}), 500
+
+
+@factor_bp.route("/api/review/catalog", methods=["GET"])
+def api_review_catalog():
+    """复盘策略目录：哪些策略有历史命中、各多少票。"""
+    try:
+        from utils.strategy_review import list_strategy_catalog
+
+        catalog = list_strategy_catalog()
+        return jsonify(
+            {
+                "available": True,
+                "catalog": catalog,
+                "default_strategy": next(
+                    (
+                        c["key"]
+                        for c in catalog
+                        if c["key"] == "cloud_stair" and c["has_data"]
+                    ),
+                    next((c["key"] for c in catalog if c["has_data"]), "cloud_stair"),
+                ),
+            }
+        )
+    except Exception as e:
+        logger.error("复盘目录查询失败: %s", e, exc_info=True)
+        return jsonify({"available": False, "reason": "复盘目录暂不可用"}), 500
+
+
+@factor_bp.route("/api/review/strategy", methods=["GET"])
+def api_review_strategy():
+    """单策略票级复盘（含持有路径、窗口极值）。
+
+    Query:
+        strategy: 因子 key（必填）
+        limit: 最多条数（默认 300，上限 1000）
+    """
+    try:
+        from utils.strategy_review import build_strategy_review
+
+        strategy = request.args.get("strategy", "").strip()
+        if not strategy:
+            return jsonify({"available": False, "reason": "缺少 strategy 参数"}), 400
+        if not re.match(r"^[a-zA-Z0-9_\-]+$", strategy):
+            return jsonify({"available": False, "reason": "strategy 不合法"}), 400
+        limit, err = _parse_limit()
+        if err:
+            return err
+        manager = _price_manager()
+        payload = build_strategy_review(manager, strategy, limit=limit)
+        payload["source"] = "worker_snapshot" if manager.snapshot_id else "local_csv"
+        return jsonify(payload)
+    except Exception as e:
+        logger.error("策略复盘查询失败: %s", e, exc_info=True)
+        return jsonify({"available": False, "reason": "策略复盘暂不可用"}), 500
+
+
+@factor_bp.route("/api/review/bundle", methods=["GET"])
+def api_review_bundle():
+    """复盘整包：目录 + 全部有数据策略明细，供浏览器 IndexedDB 秒切。"""
+    try:
+        from utils.strategy_review import build_review_bundle
+
+        limit, err = _parse_limit(default=300, upper=1000)
+        if err:
+            return err
+        manager = _price_manager()
+        payload = build_review_bundle(manager, limit=limit)
+        payload["source"] = "worker_snapshot" if manager.snapshot_id else "local_csv"
+        return jsonify(payload)
+    except Exception as e:
+        logger.error("复盘整包查询失败: %s", e, exc_info=True)
+        return jsonify({"available": False, "reason": "复盘整包暂不可用"}), 500
