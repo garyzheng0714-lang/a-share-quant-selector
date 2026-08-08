@@ -40,7 +40,7 @@ def test_release_quiesces_writers_and_validates_canary_before_switch() -> None:
         "--no-deps migrate </dev/null",
         "--no-deps web python tools/predeploy_check.py",
         '--name "$CANARY_NAME" --no-deps canary',
-        "mv .release.env.next .release.env",
+        'mv "$NEXT_ENV" .release.env',
     )
     positions = [script.index(fragment) for fragment in expected_order]
     assert positions == sorted(positions)

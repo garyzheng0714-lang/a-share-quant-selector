@@ -380,7 +380,8 @@ jobs:
           test "${#RUNTIME_IMAGE_ID}" -eq 71
           test -f docker-compose.yml.next
           DEPLOY_RECEIPT=".deploy-success-${RELEASE_SHA}"
-          rm -f "$DEPLOY_RECEIPT" "${DEPLOY_RECEIPT}.next"
+          NEXT_ENV=".release.env.${RELEASE_SHA}.next"
+          rm -f "$DEPLOY_RECEIPT" "${DEPLOY_RECEIPT}.next" "$NEXT_ENV"
           test "$(docker image inspect --format '{{.Id}}' "$RUNTIME_IMAGE")" = \
             "$RUNTIME_IMAGE_ID"
           install -m 700 -d secrets
@@ -437,7 +438,7 @@ jobs:
             else
               rm -f .release.env
             fi
-            rm -f .release.env.next
+            rm -f "$NEXT_ENV"
           }
           cleanup_canary() {
             docker rm -f "$CANARY_NAME" >/dev/null 2>&1 || true
@@ -480,27 +481,28 @@ jobs:
             echo "QUANT_PUBLISHER_TOKEN_FILE=/opt/a-share-quant/secrets/publisher-token"
             echo "QUANT_VIEWER_TOKEN_FILE=/opt/a-share-quant/secrets/viewer-token"
             echo "ARK_API_KEY_FILE=/opt/a-share-quant/secrets/ark-api-key"
-          } > .release.env.next
+          } > "$NEXT_ENV"
+          chmod 600 "$NEXT_ENV"
           if test "$PREVIOUS_COMPOSE" -eq 1 && test "$PREVIOUS_ENV" -eq 1; then
             PREVIOUS_STOPPED=1
             docker compose --env-file .rollback.env -f .rollback-compose.yml \
               stop worker web
           fi
-          docker compose --env-file .release.env.next run --rm \
+          docker compose --env-file "$NEXT_ENV" run --rm \
             --interactive=false --no-deps web python tools/backup_databases.py \
             </dev/null
-          docker compose --profile canary --env-file .release.env.next run --rm \
+          docker compose --profile canary --env-file "$NEXT_ENV" run --rm \
             --interactive=false --no-deps canary python tools/migration_dry_run.py \
             </dev/null
-          docker compose --env-file .release.env.next run --rm \
+          docker compose --env-file "$NEXT_ENV" run --rm \
             --interactive=false --no-deps migrate </dev/null
-          docker compose --env-file .release.env.next run --rm \
+          docker compose --env-file "$NEXT_ENV" run --rm \
             --interactive=false --no-deps web python tools/predeploy_check.py \
             </dev/null
           EXPECTED_IMAGE="${RUNTIME_IMAGE}"
           EXPECTED_IMAGE_ID="${RUNTIME_IMAGE_ID}"
           cleanup_canary
-          docker compose --profile canary --env-file .release.env.next run -d \
+          docker compose --profile canary --env-file "$NEXT_ENV" run -d \
             --interactive=false --name "$CANARY_NAME" --no-deps canary \
             </dev/null
           test "$(docker inspect -f '{{.Config.Image}}' "$CANARY_NAME")" = "$EXPECTED_IMAGE"
@@ -544,7 +546,8 @@ jobs:
           done
           test "$CANARY_READY" -eq 1
           cleanup_canary
-          mv .release.env.next .release.env
+          test -s "$NEXT_ENV"
+          mv "$NEXT_ENV" .release.env
           trap - ERR HUP INT TERM
           trap interrupt_after_switch HUP INT TERM
           if ! docker compose --env-file .release.env up -d --remove-orphans; then
