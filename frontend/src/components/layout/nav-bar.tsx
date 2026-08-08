@@ -6,11 +6,7 @@ import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Text } from "@astryxdesign/core/Text";
 import { useSystemStatus } from "@/lib/hooks";
 
-const navItems = [
-  { to: "/sectors", label: "市场环境", matches: ["/sectors"] },
-  { to: "/stocks", label: "策略工作台", matches: ["/stocks", "/stock/"] },
-  { to: "/review", label: "复盘", matches: ["/review"] },
-];
+const navItems = [{ to: "/stocks", label: "云阶决策", matches: ["/stocks", "/stock/"] }];
 
 export function NavBar() {
   const location = useLocation();
@@ -32,8 +28,8 @@ export function NavBar() {
       label="主导航"
       heading={
         <TopNavHeading
-          heading="QSelect 研究台"
-          headingHref="/sectors"
+          heading="QSelect · 云阶"
+          headingHref="/stocks"
           logo={<Icon icon="viewColumns" size="sm" />}
         />
       }

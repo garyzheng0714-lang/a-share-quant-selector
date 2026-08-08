@@ -79,7 +79,7 @@ class DecisionApiTest(unittest.TestCase):
         return_value={
             "status": "not_called",
             "decision_run_id": "run-1",
-            "reason_codes": ["no_approved_candidates"],
+            "reason_codes": ["no_cloud_stair_signals"],
         },
     )
     @patch(

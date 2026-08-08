@@ -96,6 +96,44 @@
     background: var(--color-background-body);
   }
 
+  .cloud-decision-page {
+    max-width: 1240px;
+    padding-top: 32px;
+    padding-bottom: 40px;
+  }
+
+  .cloud-decision-hero {
+    display: flex;
+    min-height: 176px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 32px;
+    border: 1px solid var(--color-border);
+    border-left: 3px solid #2563eb;
+    border-radius: 10px;
+    background: var(--color-background-surface);
+    padding: 28px 32px;
+    box-shadow: var(--shadow-card);
+  }
+
+  .cloud-decision-count {
+    display: grid;
+    min-width: 112px;
+    place-items: center;
+    gap: 4px;
+    border-left: 1px solid var(--color-border);
+    padding: 16px 0 16px 32px;
+  }
+
+  .cloud-decision-proof {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 28px;
+    border-block: 1px solid var(--color-border);
+    padding: 20px 4px;
+  }
+
   .strategy-toolbar {
     display: flex;
     min-height: 48px;
@@ -406,6 +444,31 @@
 }
 
 @media (max-width: 639px) {
+  .cloud-decision-page {
+    padding-top: 16px;
+    padding-bottom: 24px;
+  }
+
+  .cloud-decision-hero {
+    min-height: auto;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 20px 18px;
+  }
+
+  .cloud-decision-count {
+    min-width: 64px;
+    border-left: 0;
+    padding: 0;
+  }
+
+  .cloud-decision-proof {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 16px;
+    padding: 18px 2px;
+  }
+
   .strategy-toolbar {
     position: sticky;
     top: 0;

@@ -57,13 +57,18 @@ class AiDecisionTest(unittest.TestCase):
         self.assertFalse(result["available"])
         self.assertEqual(result["reason"], "llm_output_incomplete")
 
+    @patch(
+        "utils.cloud_stair_decision.load_cloud_stair_decision",
+        return_value={"available": True, "candidates": []},
+    )
     @patch("utils.ai_decision.save_ai_decision_run", return_value="ai-1")
-    def test_no_approved_pool_is_visible_without_calling_llm(self, save):
+    def test_no_cloud_stair_signal_is_visible_without_calling_llm(self, save, _load):
         decision = {
             "run_id": "run-1",
             "trade_date": "2026-07-14",
             "strategy_version": "s1",
             "model_version": "baseline-only",
+            "market": {"snapshot_id": "a" * 64},
             "candidates": [
                 {
                     "code": "600000",
@@ -72,13 +77,52 @@ class AiDecisionTest(unittest.TestCase):
                 }
             ],
         }
+        manager = MagicMock(snapshot_id="a" * 64)
 
-        result = run_ai_decision(decision)
+        result = run_ai_decision(decision, csv_manager=manager)
 
         self.assertFalse(result["available"])
         self.assertEqual(result["status"], "not_called")
-        self.assertEqual(result["reason_codes"], ["no_approved_candidates"])
+        self.assertEqual(result["reason_codes"], ["no_cloud_stair_signals"])
         save.assert_called_once()
+
+    @patch(
+        "utils.cloud_stair_decision.load_cloud_stair_decision",
+        return_value={
+            "available": True,
+            "candidates": [
+                {
+                    "code": "600000",
+                    "name": "云阶票",
+                    "industry": "机械设备",
+                    "action": "buy",
+                }
+            ],
+        },
+    )
+    @patch("utils.daily_pick.get_api_key", return_value="secret")
+    @patch(
+        "utils.daily_pick.generate_quant_comment",
+        return_value={"available": True, "model": "ark-model", "by_code": {}},
+    )
+    @patch("utils.ai_decision.save_ai_decision_run", return_value="ai-3")
+    def test_cloud_stair_signal_calls_ai_even_when_broad_decision_observes(
+        self, _save, comment, _key, _load
+    ):
+        decision = {
+            "run_id": "run-3",
+            "trade_date": "2026-07-14",
+            "strategy_version": "s1",
+            "market": {"snapshot_id": "a" * 64},
+            "candidates": [{"code": "600000", "action": "observe"}],
+        }
+        manager = MagicMock(snapshot_id="a" * 64)
+
+        result = run_ai_decision(decision, csv_manager=manager)
+
+        self.assertTrue(result["available"])
+        self.assertEqual(result["status"], "explained")
+        self.assertEqual(comment.call_args.args[1][0]["code"], "600000")
 
     @patch("utils.ai_decision.save_ai_decision_run", return_value="ai-2")
     @patch("utils.daily_pick.generate_quant_comment")

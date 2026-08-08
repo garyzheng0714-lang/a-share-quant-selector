@@ -7,6 +7,7 @@
 - Python 3.11.15、Node.js 22.17.1，或使用仓库中已按 digest 固定的 Docker 镜像。
 - `data/` 所在磁盘有足够空间，且只有一个生产 worker 写入。
 - viewer、publisher、admin 三个 token 长度至少 32 字符且彼此不同。生产使用 root 只读 secret file，文件权限建议 `0600`；不要在文档、日志、工单或命令行中写真值。
+- 若要生成真实 AI 云阶解释，需配置 `ARK_API_KEY` GitHub Actions secret；未配置时 worker 会记录 `llm_unconfigured`，不得伪装成已调用。
 - 数据已从可信源重建。
 
 ## 本地安装和启动
@@ -147,7 +148,7 @@ python tools/predeploy_check.py
 
 ## Docker Compose
 
-生产 `.release.env` 由发布 workflow 生成，必须同时记录唯一本地镜像标识、内容寻址镜像 ID、经签名扫描的源 digest、40 位 SHA 和三个 secret file 绝对路径。Compose 禁止自行拉取镜像；镜像必须先由 workflow 传入并验证 ID，然后执行：
+生产 `.release.env` 由发布 workflow 生成，必须同时记录唯一本地镜像标识、内容寻址镜像 ID、经签名扫描的源 digest、40 位 SHA，以及三个管理凭证和一个 Ark API Key 的 secret file 绝对路径。Compose 禁止自行拉取镜像；镜像必须先由 workflow 传入并验证 ID，然后执行：
 
 ```bash
 docker image inspect "$(sed -n 's/^QUANT_IMAGE=//p' .release.env)"

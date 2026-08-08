@@ -870,7 +870,7 @@ export interface FactorScanResponse {
   errors?: number;
 }
 
-/** 今日推荐：云阶命中票（板块热度排序，信息呈现） */
+/** 云阶当日候选：规则决定入选，行业热度只决定展示顺序。 */
 export interface RecommendStock {
   code: string;
   name: string;
@@ -886,20 +886,60 @@ export interface RecommendStock {
   rank_total?: number;
   /** 推荐理由：云阶结构 + 板块热度/排名/趋势 */
   reason?: string;
+  evidence?: string[];
+  action: "buy";
+  action_label: string;
+  action_detail: string;
+  industry_available?: boolean;
+  peak_date?: string;
+  peak_high?: number;
+  breakout_price?: number;
+  wave_gain_pct?: number;
+  ai_analysis?: { comment: string; risk: string } | null;
 }
 
 export interface RecommendResponse {
   available: boolean;
   reason?: string;
   trade_date?: string;
+  snapshot_id?: string;
+  signal_count?: number;
+  has_signal?: boolean;
+  summary?: string;
   core_factor?: {
     key: string;
     name: string;
     plain: string;
-    why: string;
+    why?: string;
+    decision_rule?: string;
+    track?: {
+      name: string;
+      hold_days: number;
+      in_win: number;
+      in_excess: number;
+      oos_win: number;
+      oos_excess: number;
+    };
   };
+  candidates?: RecommendStock[];
   today_buy?: RecommendStock[];
   honest_note?: string;
+  ranking_note?: string;
+  decision_run_id?: string | null;
+  freshness?: {
+    fresh?: boolean;
+    local_date?: string | null;
+    expected_date?: string | null;
+    coverage_ratio?: number;
+  };
+  ai?: {
+    available: boolean;
+    status: "not_called" | "abstained" | "explained" | "shadow_ranked" | "failed";
+    reason_codes: string[];
+    model?: string | null;
+    created_at?: string | null;
+    market_note?: string | null;
+  };
 }
 
 /** 策略复盘：单窗口汇总 */

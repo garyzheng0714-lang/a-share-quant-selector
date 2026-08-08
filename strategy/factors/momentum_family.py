@@ -511,6 +511,8 @@ def compute_cloud_stair(ctx, params=None):
             ctx,
             extra={
                 "peak_date": str(ctx.df["date"].iloc[peak]),
+                "peak_high": round(float(peak_h), 2),
+                "breakout_price": round(float(target), 2),
                 "wave_gain_pct": round((peak_h / stage_low - 1) * 100, 1),
             },
         )

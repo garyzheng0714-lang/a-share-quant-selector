@@ -10,13 +10,13 @@
   <img src="https://img.shields.io/badge/%E7%9C%9F%E5%AE%9E%E4%BA%A4%E6%98%93-%E4%B8%8D%E6%8E%A5%E5%85%A5-dc2626?style=flat-square" alt="不接入真实交易">
 </p>
 
-# A 股量化研究与分层决策系统
+# QSelect 云阶决策台
 
-基于 Python、AkShare、Flask、SQLite 和 React 的 A 股研究工具。负责构建不可变行情快照、生成 Super B1 候选、执行分层决策、记录模拟盘和样本外证据。
+基于 Python、AkShare、Flask、SQLite 和 React 的 A 股云阶研究工具。首屏只回答四件事：今日云阶是否选出股票、选出哪只、所属行业的排名/热度，以及云阶买点是否确认。底层仍保留不可变行情快照、决策账本、模拟盘与样本外证据。
 
 数据这一关卡得很死：全市场数据先写 staging，freshness、OHLC、交易日历、覆盖率、来源和哈希全部校验通过，才原子切换成当前快照。**外部数据失败时直接失败，不生成随机或模拟行情。**
 
-> **本项目只用于研究和自动化分析，不构成投资建议，不承诺收益，不允许接入真实交易。** LLM 只解释已确定的动作，不能选股、改排名或改写 buy / observe / avoid。
+> **本项目只用于研究和自动化分析，不构成投资建议，不承诺收益，不允许接入真实交易。** LLM 只解释云阶公式已选出的股票，不能增删、改排名或改写规则结论。
 
 ## 当前状态
 
@@ -40,7 +40,7 @@
 - 持久任务队列有硬容量上限；管理员只能取消尚未开始的任务，运行中的任务不会被虚假标记为已取消。
 - 写接口使用 Bearer Token 的 viewer/publisher/admin 角色、短时 HMAC 验签和 nonce 防重放，并持久限流、请求 ID、变更原因和审计记录。
 - 未经独立校准、样本外证据、前向观察和双人审批的完整 policy 不能激活；shadow 不能进入生产。
-- LLM 只解释已确定的动作，不能选股、改排名或改写 buy/observe/avoid。
+- LLM 只解释云阶公式已选出的股票，不能增删、改排名或改写规则结论。
 
 ## 进程和数据流
 
@@ -88,6 +88,8 @@ npm run dev
 ```
 
 管理凭证必须至少 32 个字符、三个角色互不相同。本地可以使用 `QUANT_VIEWER_TOKEN`、`QUANT_PUBLISHER_TOKEN` 和 `QUANT_ADMIN_TOKEN`；生产必须使用只读 secret file 及对应的 `*_FILE` 变量，不要写进仓库或命令行历史。
+
+AI 解释使用火山方舟。本地通过 `ARK_API_KEY` 或 `ARK_API_KEY_FILE` 注入密钥；生产发布从 GitHub Actions 的 `ARK_API_KEY` secret 写入服务器只读 secret file。未配置时，云阶规则结论正常生成，界面必须明确显示“AI 尚未配置”。
 
 ## 生产 CLI
 
