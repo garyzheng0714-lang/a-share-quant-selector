@@ -27,7 +27,7 @@
 1. 从可信数据源全量重建行情与参考快照，不复用真实性存疑的旧数据。
 2. 在目标生产环境完成备份恢复、上游故障、磁盘满、SQLite 锁和告警回滚演练。
 
-详细操作见 [运维手册](docs/operator-runbook.md)。
+数据从哪里来、什么时候更新、K 线如何生成、存在哪里和当前保留多久，见 [数据管线说明](docs/data-pipeline.md)。详细操作见 [运维手册](docs/operator-runbook.md)。
 
 ## 可信边界
 
@@ -67,15 +67,16 @@ SQLite 只适用于当前单机、单行情/决策 writer、低并发边界。op
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --require-hashes -r requirements.lock
+mkdir -p .runtime/market-data .runtime/state
 
 # 首次运行和每次升级后都先执行
-python main.py migrate
+python main.py --data-dir .runtime/market-data --state-dir .runtime/state migrate
 
 # 终端 1：只读 Web/API
-python main.py web --host 127.0.0.1 --port 5000
+python main.py --data-dir .runtime/market-data --state-dir .runtime/state web --host 127.0.0.1 --port 5000
 
 # 终端 2：唯一 worker 和调度 leader
-python main.py worker
+python main.py --data-dir .runtime/market-data --state-dir .runtime/state worker
 ```
 
 前端开发：
@@ -101,6 +102,7 @@ npm run dev
 | `python main.py legacy-location` | 只显示已隔离的旧研究 CLI 位置 |
 
 所有长任务都写入持久任务队列，不在 Web 请求里执行。
+`--data-dir` 和 `--state-dir` 是全局参数，必须写在子命令前；生产也可通过 `QUANT_DATA_DIR` / `QUANT_STATE_DIR` 固定目录。
 
 ## 验证
 

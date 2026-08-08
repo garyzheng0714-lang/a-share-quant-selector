@@ -12,6 +12,7 @@ from utils.akshare_fetcher import AKShareFetcher
 from utils.data_freshness import expected_completed_trade_date, refresh_trade_calendar
 from utils.market_snapshot import (
     find_resumable_rebuild_snapshot,
+    load_current_market_snapshot,
     prepare_empty_staging_snapshot,
     prepare_staging_snapshot,
     promote_staging_snapshot,
@@ -19,6 +20,7 @@ from utils.market_snapshot import (
 )
 from utils.decision_versions import git_commit_sha
 from utils.stock_info import refresh_reference_metadata
+from utils.runtime_paths import market_data_dir
 
 
 def _code_sha() -> str:
@@ -27,7 +29,7 @@ def _code_sha() -> str:
 
 def _acquire_ingestion_lock(data_dir: str | Path) -> IO[str] | None:
     """单机共享 volume 上的跨进程 writer 锁；进程退出时内核自动释放。"""
-    root = Path(data_dir)
+    root = market_data_dir(data_dir)
     root.mkdir(parents=True, exist_ok=True)
     handle = (root / ".market-ingestion.lock").open("a+", encoding="utf-8")
     try:
@@ -47,6 +49,26 @@ def _release_ingestion_lock(handle: IO[str]) -> None:
 
 def _run_daily_ingestion(data_dir: str | Path = "data") -> dict:
     """在独立 staging 中更新；任何一只更新失败都不 promote。"""
+    data_dir = market_data_dir(data_dir)
+    completed_trade_date = expected_completed_trade_date(data_dir=data_dir)
+    current = load_current_market_snapshot(data_dir, verify_files=False)
+    current_trade_date = str(
+        current.get("trade_date")
+        or (current.get("manifest") or {}).get("trade_date")
+        or ""
+    )
+    if (
+        completed_trade_date
+        and current.get("available") is True
+        and current_trade_date == completed_trade_date
+    ):
+        return {
+            "success": True,
+            "reused": True,
+            "reason": "current_snapshot_already_complete",
+            "trade_date": completed_trade_date,
+            "snapshot_id": current.get("snapshot_id"),
+        }
     try:
         staging = prepare_staging_snapshot(data_dir)
     except RuntimeError as exc:
@@ -158,6 +180,7 @@ def _run_full_rebuild(
     max_stocks: int | None = None,
 ) -> dict:
     """从可信外部源全量重建，绝不继承无 provenance 的旧 CSV。"""
+    data_dir = market_data_dir(data_dir)
     resume_age_hours = max(
         0.0, float(os.environ.get("QUANT_REBUILD_RESUME_MAX_AGE_HOURS", "24"))
     )
@@ -319,6 +342,7 @@ def _run_full_rebuild(
 
 
 def run_daily_ingestion(data_dir: str | Path = "data") -> dict:
+    data_dir = market_data_dir(data_dir)
     lock = _acquire_ingestion_lock(data_dir)
     if lock is None:
         return {"success": False, "reason": "ingestion_already_running"}
@@ -334,6 +358,7 @@ def run_full_rebuild(
     years: int = 6,
     max_stocks: int | None = None,
 ) -> dict:
+    data_dir = market_data_dir(data_dir)
     lock = _acquire_ingestion_lock(data_dir)
     if lock is None:
         return {"success": False, "reason": "ingestion_already_running"}

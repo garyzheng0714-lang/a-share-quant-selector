@@ -1,6 +1,6 @@
 # 运维手册
 
-更新时间：2026-07-23。
+更新时间：2026-08-08。
 
 ## 运行前提
 
@@ -15,16 +15,17 @@
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --require-hashes -r requirements.lock
+mkdir -p .runtime/market-data .runtime/state
 
-python main.py migrate
-python main.py web --host 127.0.0.1 --port 5000
+python main.py --data-dir .runtime/market-data --state-dir .runtime/state migrate
+python main.py --data-dir .runtime/market-data --state-dir .runtime/state web --host 127.0.0.1 --port 5000
 ```
 
 另开一个终端：
 
 ```bash
 source .venv/bin/activate
-python main.py worker
+python main.py --data-dir .runtime/market-data --state-dir .runtime/state worker
 ```
 
 数据库未迁移、schema 版本过旧、表/列缺失、完整性失败或默认模拟账户不完整时，Web 和 worker 都会拒绝启动。不要绕过这个检查。
@@ -68,10 +69,12 @@ CI 使用带 hash 的 Python 锁文件，生产与开发/CI 两份 lock 都执�
 - `GET /api/version`：核对完整 Git SHA、strategy version 和 snapshot ID。
 - `GET /api/stats`：常数级返回快照、决策和 scheduler 摘要。
 - `GET /api/decision/system-status`：查看 freshness、当前 policy、模拟盘、AI 和演进状态。
+- `GET /api/data-pipeline/status`：查看采集来源、最近任务路径、正式快照、本地目录和保留状态。
 - `GET /api/scheduler/status` 和 `GET /api/tasks/<task_id>`：需要 viewer token。
 - `GET /api/alerts`：需要 viewer token，返回最近的不可变运行告警事件和 24 小时 warning/critical 汇总；可用 `limit=1..200`、`severity=warning|critical` 过滤。
 
 `healthz` 成功不代表数据可用；对外展示决策前必须要求 `readyz.ready=true`。
+来源、时序、K 线、本地目录和保留逻辑详见 [数据管线说明](data-pipeline.md)。
 `readyz` 同时带出最近 24 小时告警计数，但历史告警本身不自动改变 readiness；生产监控必须按 `alert_id` 去重消费 `/api/alerts`，critical 立即通知值班人员，并保留通知送达与处置工单。认证 GET 不写限流、nonce 或审计表，因此监控轮询不会改变运行状态。
 
 ## 任务操作
@@ -79,9 +82,9 @@ CI 使用带 hash 的 Python 锁文件，生产与开发/CI 两份 lock 都执�
 本地 CLI 只会入队，不会在当前进程扫描全市场：
 
 ```bash
-python main.py enqueue-ingestion --trade-date YYYY-MM-DD
-python main.py enqueue-close --trade-date YYYY-MM-DD
-python main.py enqueue-rebuild --years 6
+python main.py --data-dir .runtime/market-data --state-dir .runtime/state enqueue-ingestion --trade-date YYYY-MM-DD
+python main.py --data-dir .runtime/market-data --state-dir .runtime/state enqueue-close --trade-date YYYY-MM-DD
+python main.py --data-dir .runtime/market-data --state-dir .runtime/state enqueue-rebuild --years 6
 ```
 
 通过 API 提交时，必须使用适当角色的 Bearer Token、唯一 `Idempotency-Key`、可追溯 `X-Change-Reason` 和 5 分钟内有效的 HMAC 请求签名。不得通过重复换 key 的方式绕过任务幂等。请使用仓库内客户端，避免把 token 真值写进 shell 历史：
@@ -116,6 +119,8 @@ python tools/signed_request.py \
 running/succeeded/failed/cancelled 任务会返回 409，不会假装已中止。确需停止正在运行的长任务时，应先隔离写入口并停止专用 worker，保留 staging、任务、租约和日志证据；确认副作用边界后，再按事故流程处置，不能直接改任务状态。
 
 `enqueue-ingestion` 只允许从已验证的可信快照继续；如果没有可信基础，必须使用 `enqueue-rebuild`。全量重建从空 staging 开始，不会复制旧 CSV。两种流程都要求同日完整证券状态，快照 payload 出现任何 manifest 外文件都不会发布。
+
+正式快照和失败 staging 的已配置策略是长期保留（`retention_policy=indefinite`），系统不运行自动清理。任何人工删除或改为按天保留都属于独立维护变更：必须先确定业务回溯期和异地备份，记录明确目标并验证恢复流程，不得在无备份时删除不可变快照。
 
 ## 备份、迁移和恢复
 

@@ -12,6 +12,7 @@ import pandas as pd
 
 from utils.csv_manager import CSVManager
 from utils.market_snapshot import load_current_market_snapshot, load_market_snapshot
+from utils.runtime_paths import market_data_dir
 
 TZ = ZoneInfo("Asia/Shanghai")
 ANCHOR_CODES = ("000001", "600030", "600036", "600519")
@@ -24,7 +25,7 @@ def _trade_calendar(
     allow_unpublished_calendar: bool = False,
 ) -> list[str]:
     """只读已发布快照/本地缓存；请求链路绝不临时访问外部数据源。"""
-    root = Path(data_dir)
+    root = market_data_dir(data_dir)
     snapshot = (
         load_market_snapshot(root, snapshot_id, verify_files=False)
         if snapshot_id
@@ -114,7 +115,7 @@ def next_trade_date(
 def local_data_status(
     csv_manager: CSVManager | None = None, as_of: datetime | None = None
 ) -> dict:
-    data_root = csv_manager.data_dir if csv_manager is not None else Path("data")
+    data_root = csv_manager.data_dir if csv_manager is not None else market_data_dir()
     # CSVManager 可能已指向 snapshot payload，此时用它的 base_data_dir。
     data_root = (
         getattr(csv_manager, "base_data_dir", data_root) if csv_manager else data_root

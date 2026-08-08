@@ -57,7 +57,7 @@ def api_sectors():
                     }
                 )
             result = {**result, "ranking": ranking}
-        return jsonify(result)
+        return jsonify({**result, "snapshot_id": manager.snapshot_id})
     except Exception as e:
         logger.error("板块轮动获取失败: %s", e)
         return jsonify({"available": False, "reason": "板块数据暂不可用"}), 500

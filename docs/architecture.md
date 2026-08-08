@@ -1,12 +1,12 @@
 # 系统架构
 
-更新时间：2026-07-23。本文只说明仓库当前实现，不代表这一版已部署到线上。
+更新时间：2026-08-08。本文只说明仓库当前实现，不代表这一版已部署到线上。
 
 ## 总体数据流
 
 ```mermaid
 flowchart TD
-    E["AkShare 与公开参考数据"] --> S["staging 目录"]
+    E["腾讯 / 东方财富 / 新浪 / 申万公开数据"] --> S["staging 目录"]
     S --> V["日期 / OHLC / 交易日历 / universe / 证券状态 / 来源 / hash 校验"]
     V -->|"全部通过"| P["原子发布不可变 snapshot"]
     V -->|"任一失败"| X["拒绝发布"]
@@ -64,13 +64,14 @@ Web 不运行 APScheduler，不抓行情，不扫描全市场，不在 GET 中�
 
 ### 市场快照
 
-`data/market_snapshots/<snapshot_id>/` 是不可变市场快照。manifest 记录 trade date、universe、证券状态、每个文件的哈希、来源、参考数据 provenance 和 schema。发布和读取都校验“manifest 期望文件集 = payload 实际文件集”；多出或缺少任何文件均拒绝。
+`<data-dir>/market_snapshots/<snapshot_id>/` 是不可变市场快照。manifest 记录 trade date、universe、证券状态、每个文件的哈希、来源、参考数据 provenance 和 schema。发布和读取都校验“manifest 期望文件集 = payload 实际文件集”；多出或缺少任何文件均拒绝。
 
-日更必须从已验证的可信快照复制 staging；全量重建从空 staging 开始，不继承旧行情。`data/.ingestion_state/` 仅保存 bootstrap/重试等操作状态，它不在快照 payload 中。当前指针只在整批验证成功后原子切换。
+日更必须从已验证的可信快照复制 staging；全量重建从空 staging 开始，不继承旧行情。`<data-dir>/.ingestion_state/` 仅保存 bootstrap/重试等操作状态，它不在快照 payload 中。当前指针只在整批验证成功后原子切换。如当前快照已是最近完成交易日，收盘 DAG 复用它并继续下游，不做全市场重复请求。
 
 ### SQLite
 
 - 本地默认的 `data/views.db` / `data/operations.db`：分别保存决策、模型、模拟盘账本，以及任务、job 幂等记录、调度租约、限流、nonce、安全审计和不可变运行告警。
+- 本地可用 `--data-dir` / `--state-dir`（或 `QUANT_DATA_DIR` / `QUANT_STATE_DIR`）把市场快照与运行账本明确分盘；Web、worker、派生缓存和回放共用同一解析入口。
 - 生产 Compose 把两个 SQLite 放在独立 `/app/state` volume；Web 只读挂载 `/app/data` 市场快照，仅对 state volume 拥有账本/任务写权。
 - 决策侧 runtime schema 当前为 v4，操作侧为 v6。决策结果按候选股保留只追加的观测序列，内容 SHA-256 同时用于幂等和读取校验；每条观测、模拟成交和 NAV 都显式记录 `snapshot_id` 与成交规则版本。API 和统计只使用最新且来源可验证的观测。决策、候选、结果、演进、事件证据、AI 解释、模型/policy 注册与发布证据、量化点评和模拟盘各账本均由数据库 trigger 阻止改写/删除；安全审计和运行告警事件同样不可变。
 

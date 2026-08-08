@@ -23,6 +23,7 @@ from uuid import uuid4
 import pandas as pd
 
 from utils.market_filter import is_main_board, main_board_only
+from utils.runtime_paths import market_data_dir
 
 
 SCHEMA_VERSION = "market-eod-v2"
@@ -41,7 +42,7 @@ REQUIRED_COLUMNS = {
     "amount",
     "turnover",
 }
-TRUSTED_SOURCES = frozenset({"tencent", "akshare"})
+TRUSTED_SOURCES = frozenset({"tencent", "akshare", "sina"})
 TRUSTED_SECURITY_STATUS_SOURCES = frozenset(
     {
         "akshare:stock_tfp_em",
@@ -291,7 +292,7 @@ def _link_or_copy(source: Path, target: Path) -> None:
 
 def prepare_staging_snapshot(data_dir: str | Path = "data") -> StagingSnapshot:
     """只从当前已完整验证快照构建 copy-on-write staging。"""
-    data_root = Path(data_dir)
+    data_root = market_data_dir(data_dir)
     current = load_current_market_snapshot(data_root, verify_files=True)
     if not current.get("available"):
         raise RuntimeError(
@@ -320,7 +321,7 @@ def prepare_staging_snapshot(data_dir: str | Path = "data") -> StagingSnapshot:
 
 def prepare_empty_staging_snapshot(data_dir: str | Path = "data") -> StagingSnapshot:
     """为可信全量重建创建空快照，不继承任何 legacy 行情或 provenance。"""
-    data_root = Path(data_dir)
+    data_root = market_data_dir(data_dir)
     staging_parent = data_root / STAGING_DIR
     staging_parent.mkdir(parents=True, exist_ok=True)
     root = Path(
@@ -390,7 +391,7 @@ def find_resumable_rebuild_snapshot(
     """
     if max_age_hours <= 0:
         return None
-    staging_parent = Path(data_dir) / STAGING_DIR
+    staging_parent = market_data_dir(data_dir) / STAGING_DIR
     if not staging_parent.is_dir():
         return None
     cutoff = time.time() - max_age_hours * 3600
@@ -683,7 +684,7 @@ def promote_staging_snapshot(
     required_source_count: int = 2,
 ) -> dict:
     """校验并原子 promote；校验失败时绝不修改 CURRENT_SNAPSHOT。"""
-    data_root = Path(data_dir)
+    data_root = market_data_dir(data_dir)
     quality = validate_snapshot_payload(
         staging.payload_dir,
         trade_date,
@@ -767,7 +768,7 @@ def load_market_snapshot(
     verify_files: bool = False,
 ) -> dict:
     """按内容 ID 加载快照；replay 只能通过这个入口读取历史快照。"""
-    data_root = Path(data_dir)
+    data_root = market_data_dir(data_dir)
     if not re.fullmatch(r"[0-9a-f]{64}", snapshot_id):
         return {"available": False, "reason": "snapshot_pointer_invalid"}
     root = data_root / SNAPSHOT_DIR / snapshot_id
@@ -819,7 +820,7 @@ def load_current_market_snapshot(
     *,
     verify_files: bool = False,
 ) -> dict:
-    data_root = Path(data_dir)
+    data_root = market_data_dir(data_dir)
     pointer = data_root / CURRENT_POINTER
     try:
         snapshot_id = pointer.read_text(encoding="utf-8").strip()

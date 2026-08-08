@@ -17,13 +17,58 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from utils.runtime_paths import market_data_dir
+
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR = market_data_dir()
 INDUSTRY_CACHE = DATA_DIR / "stock_industry.json"
 PROFILES_CACHE = DATA_DIR / "stock_profiles.json"
 MARKET_CAP_CACHE = DATA_DIR / "stock_market_cap.json"
 CACHE_TTL = 86400
+
+# 申万历史行业文件同时包含旧版与 2021 版编码。项目首屏只需要
+# 稳定的一级行业粒度，因此把历史前缀统一到当前页面使用的中文分类。
+SW_LEVEL_ONE_BY_PREFIX = {
+    "11": "农林牧渔",
+    "21": "采掘",
+    "22": "基础化工",
+    "23": "钢铁",
+    "24": "有色金属",
+    "25": "建筑建材",
+    "26": "机械设备",
+    "27": "电子",
+    "28": "汽车",
+    "31": "汽车",
+    "32": "计算机",
+    "33": "家用电器",
+    "34": "食品饮料",
+    "35": "纺织服饰",
+    "36": "轻工制造",
+    "37": "医药生物",
+    "41": "公用事业",
+    "42": "交通运输",
+    "43": "房地产",
+    "44": "金融服务",
+    "45": "商贸零售",
+    "46": "社会服务",
+    "47": "信息服务",
+    "48": "银行",
+    "49": "非银金融",
+    "51": "综合",
+    "61": "建筑材料",
+    "62": "建筑装饰",
+    "63": "电力设备",
+    "64": "机械设备",
+    "65": "国防军工",
+    "71": "计算机",
+    "72": "传媒",
+    "73": "通信",
+    "74": "煤炭",
+    "75": "石油石化",
+    "76": "环保",
+    "77": "美容护理",
+}
 
 
 def _get_board_by_code(code: str) -> str:
@@ -56,6 +101,29 @@ def _is_cache_valid(cache_path: Path) -> bool:
         return elapsed < CACHE_TTL
     except Exception:
         return False
+
+
+def _save_industry_mapping(
+    mapping: dict[str, str], cache_path: Path, *, source_id: str
+) -> None:
+    cache_data = {
+        **mapping,
+        "_updated_at": datetime.now().isoformat(),
+        "_source_id": source_id,
+    }
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cache_path.with_suffix(f".{os.getpid()}.tmp")
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(cache_data, handle, ensure_ascii=False, indent=2)
+    tmp.replace(cache_path)
+
+
+def _industry_cache_source(cache_path: Path) -> str:
+    try:
+        value = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "unknown"
+    return str(value.get("_source_id") or "unknown")
 
 
 def fetch_industry_mapping(
@@ -121,12 +189,11 @@ def fetch_industry_mapping(
                     continue
 
             if mapping:
-                cache_data = {**mapping, "_updated_at": datetime.now().isoformat()}
-                data_root.mkdir(parents=True, exist_ok=True)
-                tmp = industry_cache.with_suffix(f".{os.getpid()}.tmp")
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(cache_data, f, ensure_ascii=False, indent=2)
-                tmp.replace(industry_cache)
+                _save_industry_mapping(
+                    mapping,
+                    industry_cache,
+                    source_id="akshare-eastmoney-industry-components",
+                )
                 logger.info("行业分类缓存已保存: %d 只股票", len(mapping))
                 return mapping
 
@@ -139,18 +206,32 @@ def fetch_industry_mapping(
     # stock_sector_spot 本身只返回各板块领涨股，覆盖率远不够，必须再拉 detail。
     sina_mapping = _fetch_industry_mapping_sina()
     if len(sina_mapping) >= 3000:
-        cache_data = {**sina_mapping, "_updated_at": datetime.now().isoformat()}
-        data_root.mkdir(parents=True, exist_ok=True)
-        tmp = industry_cache.with_suffix(f".{os.getpid()}.tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(cache_data, f, ensure_ascii=False, indent=2)
-        tmp.replace(industry_cache)
+        _save_industry_mapping(
+            sina_mapping,
+            industry_cache,
+            source_id="akshare-sina-sector-detail",
+        )
         logger.info("行业分类兜底（新浪成分）: %d 只股票", len(sina_mapping))
         return sina_mapping
     if sina_mapping:
         logger.warning(
             "新浪行业成分映射仅 %d 只，低于可用门槛，不覆盖本地缓存",
             len(sina_mapping),
+        )
+
+    sw_mapping = _fetch_industry_mapping_sw_history()
+    if len(sw_mapping) >= 3000:
+        _save_industry_mapping(
+            sw_mapping,
+            industry_cache,
+            source_id="akshare-swsresearch-industry-history",
+        )
+        logger.info("行业分类兜底（申万历史）: %d 只股票", len(sw_mapping))
+        return sw_mapping
+    if sw_mapping:
+        logger.warning(
+            "申万历史行业映射仅 %d 只，低于可用门槛，不覆盖本地缓存",
+            len(sw_mapping),
         )
 
     if mapping:
@@ -203,6 +284,56 @@ def _fetch_industry_mapping_sina() -> dict[str, str]:
     return mapping
 
 
+def _fetch_industry_mapping_sw_history() -> dict[str, str]:
+    """通过申万官方历史分类文件构建最新一级行业映射。
+
+    该源是全量文件，比逐板块、逐个股请求更适合做全市场快照；
+    网络端偶发 502/SSL 错误，所以只在这个边界做有限次数重试。
+    """
+    try:
+        import akshare as ak
+    except ImportError:
+        return {}
+
+    history = None
+    for attempt in range(1, 5):
+        try:
+            history = ak.stock_industry_clf_hist_sw()
+            if history is not None and not history.empty:
+                break
+        except Exception as exc:
+            logger.warning("申万历史行业第 %d/4 次获取失败: %s", attempt, exc)
+        if attempt < 4:
+            time.sleep(float(attempt * 2))
+
+    required = {"symbol", "start_date", "industry_code"}
+    if history is None or history.empty or not required.issubset(history.columns):
+        return {}
+
+    ordered = history.copy()
+    ordered["_symbol"] = (
+        ordered["symbol"].astype(str).str.extract(r"(\d{6})", expand=False)
+    )
+    ordered["_start_date"] = ordered["start_date"].astype(str)
+    if "update_time" in ordered.columns:
+        ordered["_update_time"] = ordered["update_time"].astype(str)
+    else:
+        ordered["_update_time"] = ""
+    ordered = ordered.dropna(subset=["_symbol"]).sort_values(
+        ["_symbol", "_start_date", "_update_time"]
+    )
+    latest = ordered.drop_duplicates(subset=["_symbol"], keep="last")
+
+    mapping: dict[str, str] = {}
+    for _, row in latest.iterrows():
+        code = str(row["_symbol"])
+        raw_industry_code = str(row["industry_code"]).strip()
+        industry = SW_LEVEL_ONE_BY_PREFIX.get(raw_industry_code[:2])
+        if len(code) == 6 and code.isdigit() and industry:
+            mapping[code] = industry
+    return mapping
+
+
 def _load_cached_industry(cache_path: Path = INDUSTRY_CACHE) -> dict[str, str]:
     """降级：从缓存加载行业映射（即使过期）."""
     if cache_path.exists():
@@ -238,14 +369,29 @@ def _parse_market_cap(value) -> float:
 
 
 def _save_market_caps(
-    caps: dict[str, dict], cache_path: Path = MARKET_CAP_CACHE
+    caps: dict[str, dict],
+    cache_path: Path = MARKET_CAP_CACHE,
+    *,
+    source_id: str = "unknown",
 ) -> None:
-    cache_data = {**caps, "_updated_at": datetime.now().isoformat()}
+    cache_data = {
+        **caps,
+        "_updated_at": datetime.now().isoformat(),
+        "_source_id": source_id,
+    }
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = cache_path.with_suffix(f".{os.getpid()}.tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cache_data, f, ensure_ascii=False)
     tmp.replace(cache_path)
+
+
+def _market_cap_cache_source(cache_path: Path) -> str:
+    try:
+        value = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "unknown"
+    return str(value.get("_source_id") or "unknown")
 
 
 def _fetch_market_caps_tencent(stock_codes: list[str]) -> dict[str, dict]:
@@ -327,7 +473,17 @@ def fetch_market_caps(
                 ]
                 if missing:
                     caps.update(_fetch_market_caps_tencent(missing))
-                    _save_market_caps(caps, market_cap_cache)
+                    previous_source = _market_cap_cache_source(market_cap_cache)
+                    source_id = (
+                        "tencent:qt.gtimg.cn"
+                        if previous_source == "unknown"
+                        else f"{previous_source}+tencent:qt.gtimg.cn"
+                    )
+                    _save_market_caps(
+                        caps,
+                        market_cap_cache,
+                        source_id=source_id,
+                    )
                 logger.info("从缓存加载市值数据: %d 只股票", len(caps))
                 return caps
         except Exception:
@@ -357,9 +513,15 @@ def fetch_market_caps(
                     for code in requested_codes
                     if not caps.get(code, {}).get("total_mv")
                 ]
+                source_id = "akshare-eastmoney"
                 if missing:
                     caps.update(_fetch_market_caps_tencent(missing))
-                _save_market_caps(caps, market_cap_cache)
+                    source_id = "akshare-eastmoney+tencent:qt.gtimg.cn"
+                _save_market_caps(
+                    caps,
+                    market_cap_cache,
+                    source_id=source_id,
+                )
                 logger.info("市值数据缓存已保存: %d 只股票", len(caps))
 
     except ImportError:
@@ -370,7 +532,11 @@ def fetch_market_caps(
     if not caps and requested_codes:
         caps = _fetch_market_caps_tencent(requested_codes)
         if caps:
-            _save_market_caps(caps, market_cap_cache)
+            _save_market_caps(
+                caps,
+                market_cap_cache,
+                source_id="tencent:qt.gtimg.cn",
+            )
 
     if caps:
         return caps
@@ -430,8 +596,8 @@ def refresh_reference_metadata(
         data_dir=root,
         allow_stale_cache=False,
     )
-    industry_source = "akshare-eastmoney|sina-sector-detail"
-    cap_source = "akshare-eastmoney+tencent"
+    industry_source = _industry_cache_source(root / "stock_industry.json")
+    cap_source = _market_cap_cache_source(root / "stock_market_cap.json")
     industry_count, industry_ratio = _coverage_count(codes, industries, kind="industry")
     cap_count, cap_ratio = _coverage_count(codes, caps, kind="market_cap")
     total = len(codes)
@@ -462,17 +628,18 @@ def refresh_reference_metadata(
             valid = total >= 3000
             # 把继承结果写回，避免后续读取到 force 刷新留下的残缺文件。
             if industries:
-                cache_data = {
-                    **industries,
-                    "_updated_at": datetime.now().isoformat(),
-                }
                 industry_path = root / "stock_industry.json"
-                tmp = industry_path.with_suffix(f".{os.getpid()}.tmp")
-                with open(tmp, "w", encoding="utf-8") as handle:
-                    json.dump(cache_data, handle, ensure_ascii=False, indent=2)
-                tmp.replace(industry_path)
+                _save_industry_mapping(
+                    industries,
+                    industry_path,
+                    source_id="inherited-staging-snapshot",
+                )
             if caps:
-                _save_market_caps(caps, root / "stock_market_cap.json")
+                _save_market_caps(
+                    caps,
+                    root / "stock_market_cap.json",
+                    source_id="inherited-staging-snapshot",
+                )
             logger.warning(
                 "实时参考数据不足，继承 staging 已有映射 (industry=%.3f cap=%.3f)",
                 industry_ratio,

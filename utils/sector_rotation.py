@@ -18,7 +18,6 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -27,10 +26,11 @@ from utils.artifact_integrity import artifact_is_valid, seal_artifact
 from utils.decision_versions import cache_identity
 from utils.market_filter import is_main_board
 from utils.market_snapshot import read_snapshot_metadata
+from utils.runtime_paths import market_data_dir
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path("data")
+DATA_DIR = market_data_dir()
 CACHE_FILE = DATA_DIR / "sector_rotation_cache.json"
 
 NROWS = 50  # 输出6日热度序列 + 最长回看21日 + 指标窗口20日 ≈ 47 行

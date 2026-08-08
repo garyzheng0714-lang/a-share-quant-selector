@@ -125,6 +125,12 @@ export interface KlineResponse {
   code: string;
   name: string;
   period: string;
+  snapshot_id?: string | null;
+  source_id?: string | null;
+  history_source_id?: string | null;
+  adjustment?: "qfq" | string | null;
+  stored_from?: string | null;
+  stored_rows?: number | null;
   as_of: string;
   week_end?: string | null;
   current_week_partial?: boolean;
@@ -192,6 +198,7 @@ export interface SectorRelay {
 export interface SectorsData {
   available: boolean;
   reason?: string;
+  snapshot_id?: string | null;
   trade_date?: string;
   computed_at?: string;
   series_dates?: string[];
@@ -679,6 +686,136 @@ export interface SystemStatusResponse {
   };
 }
 
+export type PipelineState = "healthy" | "updating" | "attention" | "unavailable";
+export type PipelineStageStatus = "running" | "complete" | "attention" | "failed";
+
+export interface PipelineAttention {
+  code: string;
+  level: "warning" | "critical";
+  message: string;
+}
+
+export interface PipelineStage {
+  key: string;
+  label: string;
+  status: PipelineStageStatus;
+  started_at?: string;
+  finished_at?: string;
+  detail?: {
+    reason?: string | null;
+    trade_date?: string | null;
+    snapshot_id?: string | null;
+    coverage_ratio?: number | null;
+    updated?: number;
+    processed?: number;
+    total?: number;
+    pending?: number;
+    run_id?: string | null;
+    stage?: string | null;
+  };
+}
+
+export interface PipelineStatusResponse {
+  available: boolean;
+  state: PipelineState;
+  as_of?: string;
+  reason?: string;
+  market: {
+    fresh: boolean;
+    reason?: string | null;
+    reason_codes?: string[];
+    local_date: string | null;
+    expected_date: string | null;
+    snapshot_id: string | null;
+    coverage_ratio: number;
+    source_set?: Array<string | { source_id?: string }>;
+    stock_count: number;
+    captured_at?: string | null;
+  };
+  scheduler: {
+    running: boolean;
+    heartbeat_at?: string | null;
+    next_close_at?: string | null;
+    close_schedule: string;
+    preopen_schedule: string;
+  };
+  run: {
+    task_id: string;
+    task_type: "full_market_rebuild" | "daily_market_ingestion" | "daily_close_pipeline" | string;
+    task_label: string;
+    status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+    trade_date?: string | null;
+    current_stage?: string | null;
+    attempt_count: number;
+    max_attempts: number;
+    created_at?: string | null;
+    started_at?: string | null;
+    finished_at?: string | null;
+    next_attempt_at?: string | null;
+    error_code?: string | null;
+    progress?: {
+      status?: string | null;
+      processed: number;
+      total: number;
+      remaining: number;
+      current?: string | null;
+      updated_at?: string | null;
+    } | null;
+    stages: PipelineStage[];
+  } | null;
+  decision: {
+    available: boolean;
+    run_id?: string | null;
+    trade_date?: string | null;
+    final_action?: DecisionAction | null;
+    candidate_counts: Record<"buy" | "observe" | "avoid", number>;
+  };
+  sources: {
+    kline: {
+      primary: string;
+      fallback: string;
+      validation_fallback?: string;
+      adjustment: string;
+    };
+    universe: {
+      source_id?: string | null;
+      discovery_source_id?: string | null;
+      verification_source_id?: string | null;
+      count: number;
+    };
+    industry: { source_id?: string | null; count?: number; coverage_ratio?: number };
+    market_cap: { source_id?: string | null; count?: number; coverage_ratio?: number };
+    security_status: { source_id?: string | null; count: number; suspended_count: number };
+  };
+  attention: PipelineAttention[];
+  alerts: {
+    summary: {
+      window_hours: number;
+      warning: number;
+      critical: number;
+      total: number;
+      latest_at?: string | null;
+    };
+    latest: Array<{
+      alert_id: string;
+      occurred_at: string;
+      severity: "warning" | "critical";
+      message: string;
+    }>;
+  };
+  storage: {
+    data_root: string;
+    state_root: string;
+    snapshot_directory: string;
+    snapshot_count: number;
+    staging_count: number;
+    retention_state: "configured" | "not_configured";
+    retention_policy: "indefinite";
+    retention_days: number | null;
+    retention_summary: string;
+  };
+}
+
 export interface FactorMeta {
   key: string;
   name: string;
@@ -936,6 +1073,7 @@ export const api = {
   getLatestDecision: () => request<DecisionResponse>("/api/decision/latest"),
   getEvolutionStatus: () => request<EvolutionResponse>("/api/decision/evolution"),
   getSystemStatus: () => request<SystemStatusResponse>("/api/decision/system-status"),
+  getPipelineStatus: () => request<PipelineStatusResponse>("/api/data-pipeline/status"),
   getFactorScan: (strategy: string, date?: string) =>
     request<FactorScanResponse>(
       `/api/factor-scan?strategy=${encodeURIComponent(strategy)}${date ? `&date=${date}` : ""}`,

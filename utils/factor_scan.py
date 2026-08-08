@@ -27,6 +27,7 @@ from pathlib import Path
 
 from utils.artifact_integrity import artifact_is_valid, seal_artifact
 from utils.decision_versions import cache_identity
+from utils.runtime_paths import market_data_dir
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 # 不校验会被 "../stock_names" 之类的输入注入成任意路径写（review 确认的真实漏洞）
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR = market_data_dir()
 CACHE_DIR = DATA_DIR / "factor_cache"
 MAX_CACHE_FILES = 12  # 只保留最近若干个交易日的缓存文件
 CACHE_SCHEMA_VERSION = 3

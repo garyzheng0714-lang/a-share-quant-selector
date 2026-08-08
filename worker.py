@@ -22,9 +22,12 @@ from utils.operations_store import (
     enqueue_task,
     finish_job_run,
     finish_task,
+    get_task,
     heartbeat_task,
     release_scheduler_lease,
+    update_task_progress,
 )
+from utils.runtime_paths import market_data_dir
 
 
 logger = logging.getLogger(__name__)
@@ -34,18 +37,85 @@ STOP = threading.Event()
 PREOPEN_RECONCILE_START = wall_time(8, 45)
 PREOPEN_RECONCILE_END = wall_time(9, 25)
 CLOSE_RECONCILE_START = wall_time(16, 0)
+DATA_DIR = market_data_dir()
+PIPELINE_STAGE_LABELS = {
+    "market_ingestion": "采集并发布行情",
+    "snapshot_validation": "确认正式快照",
+    "outcome_refresh": "回填历史决策结果",
+    "paper_pricing": "模拟盘估值",
+    "decision_materialization": "计算指标并生成收盘决策",
+}
+
+
+def _new_pipeline(requested_trade_date: str) -> dict:
+    now = _shanghai_time().isoformat(timespec="seconds")
+    return {
+        "state": "running",
+        "current_stage": "market_ingestion",
+        "requested_trade_date": requested_trade_date or None,
+        "started_at": now,
+        "updated_at": now,
+        "stages": [],
+    }
+
+
+def _mark_pipeline_stage(
+    pipeline: dict,
+    task_id: str,
+    key: str,
+    status: str,
+    *,
+    detail: dict | None = None,
+) -> None:
+    now = _shanghai_time().isoformat(timespec="seconds")
+    stages = pipeline.setdefault("stages", [])
+    stage = next((item for item in stages if item.get("key") == key), None)
+    if stage is None:
+        stage = {
+            "key": key,
+            "label": PIPELINE_STAGE_LABELS[key],
+            "status": status,
+            "started_at": now,
+        }
+        stages.append(stage)
+    else:
+        stage["status"] = status
+    if detail:
+        stage["detail"] = detail
+    if status in {"complete", "attention", "failed"}:
+        stage["finished_at"] = now
+    if status == "running":
+        pipeline["current_stage"] = key
+    elif status == "failed":
+        pipeline["state"] = "failed"
+        pipeline["current_stage"] = key
+    pipeline["updated_at"] = now
+    update_task_progress(task_id, OWNER_ID, {"pipeline": pipeline})
+
+
+def _finish_pipeline(pipeline: dict, task_id: str, *, succeeded: bool) -> None:
+    now = _shanghai_time().isoformat(timespec="seconds")
+    pipeline["state"] = "complete" if succeeded else "failed"
+    pipeline["current_stage"] = (
+        "complete" if succeeded else pipeline.get("current_stage")
+    )
+    pipeline["finished_at"] = now
+    pipeline["updated_at"] = now
+    update_task_progress(task_id, OWNER_ID, {"pipeline": pipeline})
 
 
 def _daily_ingestion(_payload: dict) -> dict:
     from utils.market_ingestion import run_daily_ingestion
 
-    return run_daily_ingestion("data")
+    return run_daily_ingestion(DATA_DIR)
 
 
 def _full_rebuild(payload: dict) -> dict:
     from utils.market_ingestion import run_full_rebuild
 
-    return run_full_rebuild("data", years=min(max(int(payload.get("years", 6)), 1), 10))
+    return run_full_rebuild(
+        DATA_DIR, years=min(max(int(payload.get("years", 6)), 1), 10)
+    )
 
 
 def _close_decision(_payload: dict) -> dict:
@@ -90,7 +160,7 @@ def _outcome_refresh(_payload: dict) -> dict:
     from utils.csv_manager import CSVManager
     from utils.self_evolution import update_decision_outcomes
 
-    result = update_decision_outcomes(CSVManager("data", writable=False))
+    result = update_decision_outcomes(CSVManager(DATA_DIR, writable=False))
     return {"available": True, **result}
 
 
@@ -144,15 +214,87 @@ def _run_decision_materialization(manager, freshness: dict) -> dict:
     }
 
 
-def _run_daily_close_downstream(manager, freshness: dict) -> dict:
+def _run_daily_close_downstream(
+    manager,
+    freshness: dict,
+    *,
+    task_id: str,
+    pipeline: dict,
+) -> dict:
     """只消费已绑定快照；调用前业务幂等键已被占用。"""
+    _mark_pipeline_stage(pipeline, task_id, "outcome_refresh", "running")
+    try:
+        outcomes = _outcome_refresh({})
+    except Exception as exc:
+        _mark_pipeline_stage(
+            pipeline,
+            task_id,
+            "outcome_refresh",
+            "failed",
+            detail={"reason": type(exc).__name__},
+        )
+        raise
+    outcome_status = "complete" if outcomes.get("available") else "attention"
+    _mark_pipeline_stage(
+        pipeline,
+        task_id,
+        "outcome_refresh",
+        outcome_status,
+        detail={
+            "updated": int(outcomes.get("updated") or 0),
+            "pending": int(outcomes.get("pending") or 0),
+            "reason": outcomes.get("reason"),
+        },
+    )
+
+    _mark_pipeline_stage(pipeline, task_id, "paper_pricing", "running")
     from utils.paper_trading import run_daily_paper_cycle
 
     paper = run_daily_paper_cycle(freshness["local_date"], manager)
     if not paper.get("available"):
-        return {"success": False, "stage": "paper_pricing", "result": paper}
+        _mark_pipeline_stage(
+            pipeline,
+            task_id,
+            "paper_pricing",
+            "failed",
+            detail={"reason": paper.get("reason")},
+        )
+        _finish_pipeline(pipeline, task_id, succeeded=False)
+        return {
+            "success": False,
+            "stage": "paper_pricing",
+            "result": paper,
+            "outcome_refresh": outcomes,
+            "pipeline": pipeline,
+        }
+    _mark_pipeline_stage(
+        pipeline,
+        task_id,
+        "paper_pricing",
+        "complete",
+        detail={"trade_date": freshness["local_date"]},
+    )
+
+    _mark_pipeline_stage(pipeline, task_id, "decision_materialization", "running")
     result = _run_decision_materialization(manager, freshness)
-    return {**result, "paper": paper}
+    decision_succeeded = result.get("success") is True
+    _mark_pipeline_stage(
+        pipeline,
+        task_id,
+        "decision_materialization",
+        "complete" if decision_succeeded else "failed",
+        detail={
+            "stage": result.get("stage"),
+            "run_id": (result.get("decision") or {}).get("run_id"),
+        },
+    )
+    _finish_pipeline(pipeline, task_id, succeeded=decision_succeeded)
+    return {
+        **result,
+        "paper": paper,
+        "outcome_refresh": outcomes,
+        "pipeline": pipeline,
+    }
 
 
 def _decision_matches_snapshot(
@@ -180,7 +322,7 @@ def _materialize_snapshot_decision(payload: dict) -> dict:
     from utils.decision_ledger import get_latest_decision
     from utils.decision_versions import strategy_version
 
-    manager = CSVManager("data", writable=False)
+    manager = CSVManager(DATA_DIR, writable=False)
     freshness = local_data_status(manager)
     if not freshness.get("fresh"):
         return {"success": False, "stage": "freshness", "freshness": freshness}
@@ -258,40 +400,107 @@ def _materialize_snapshot_decision(payload: dict) -> dict:
 def _daily_close_pipeline(_payload: dict) -> dict:
     """同一快照上的收盘 DAG；上游失败立即停止。"""
     requested_trade_date = str(_payload.get("trade_date") or "").strip()
+    task_id = str(_payload.get("task_id") or "").strip()
+    if not task_id:
+        return {"success": False, "stage": "business_task_identity_missing"}
+    pipeline = _new_pipeline(requested_trade_date)
+    _mark_pipeline_stage(pipeline, task_id, "market_ingestion", "running")
     if requested_trade_date:
         from utils.data_freshness import expected_completed_trade_date
 
-        currently_expected = expected_completed_trade_date(data_dir="data")
+        currently_expected = expected_completed_trade_date(data_dir=DATA_DIR)
         if currently_expected and currently_expected != requested_trade_date:
+            _mark_pipeline_stage(
+                pipeline,
+                task_id,
+                "market_ingestion",
+                "failed",
+                detail={"reason": "scheduled_trade_date_mismatch"},
+            )
+            _finish_pipeline(pipeline, task_id, succeeded=False)
             return {
                 "success": False,
                 "stage": "scheduled_trade_date_mismatch",
                 "requested_trade_date": requested_trade_date,
                 "expected_trade_date": currently_expected,
+                "pipeline": pipeline,
             }
     ingestion = _daily_ingestion({})
     if not ingestion.get("success"):
-        return {"success": False, "stage": "ingestion", "ingestion": ingestion}
+        _mark_pipeline_stage(
+            pipeline,
+            task_id,
+            "market_ingestion",
+            "failed",
+            detail={"reason": ingestion.get("reason")},
+        )
+        _finish_pipeline(pipeline, task_id, succeeded=False)
+        return {
+            "success": False,
+            "stage": "ingestion",
+            "ingestion": ingestion,
+            "pipeline": pipeline,
+        }
+    _mark_pipeline_stage(
+        pipeline,
+        task_id,
+        "market_ingestion",
+        "complete",
+        detail={
+            "trade_date": ingestion.get("trade_date"),
+            "snapshot_id": ingestion.get("snapshot_id"),
+        },
+    )
 
     from utils.csv_manager import CSVManager
     from utils.data_freshness import local_data_status
     from utils.decision_versions import strategy_version
 
-    manager = CSVManager("data", writable=False)
+    _mark_pipeline_stage(pipeline, task_id, "snapshot_validation", "running")
+    manager = CSVManager(DATA_DIR, writable=False)
     freshness = local_data_status(manager)
     if not freshness.get("fresh"):
-        return {"success": False, "stage": "freshness", "freshness": freshness}
+        _mark_pipeline_stage(
+            pipeline,
+            task_id,
+            "snapshot_validation",
+            "failed",
+            detail={"reason": freshness.get("reason")},
+        )
+        _finish_pipeline(pipeline, task_id, succeeded=False)
+        return {
+            "success": False,
+            "stage": "freshness",
+            "freshness": freshness,
+            "pipeline": pipeline,
+        }
     if requested_trade_date and requested_trade_date != freshness.get("local_date"):
+        _mark_pipeline_stage(
+            pipeline,
+            task_id,
+            "snapshot_validation",
+            "failed",
+            detail={"reason": "scheduled_trade_date_mismatch"},
+        )
+        _finish_pipeline(pipeline, task_id, succeeded=False)
         return {
             "success": False,
             "stage": "scheduled_trade_date_mismatch",
             "requested_trade_date": requested_trade_date,
             "snapshot_trade_date": freshness.get("local_date"),
+            "pipeline": pipeline,
         }
-
-    task_id = str(_payload.get("task_id") or "").strip()
-    if not task_id:
-        return {"success": False, "stage": "business_task_identity_missing"}
+    _mark_pipeline_stage(
+        pipeline,
+        task_id,
+        "snapshot_validation",
+        "complete",
+        detail={
+            "trade_date": freshness.get("local_date"),
+            "snapshot_id": freshness.get("snapshot_id"),
+            "coverage_ratio": freshness.get("coverage_ratio"),
+        },
+    )
     job_name = "daily_close_pipeline"
     trade_date = freshness["local_date"]
     snapshot_id = freshness["snapshot_id"]
@@ -305,6 +514,7 @@ def _daily_close_pipeline(_payload: dict) -> dict:
     )
     if not claim["claimed"]:
         if claim["status"] == "succeeded":
+            _finish_pipeline(pipeline, task_id, succeeded=True)
             return {
                 "success": True,
                 "stage": "idempotent_replay",
@@ -312,16 +522,24 @@ def _daily_close_pipeline(_payload: dict) -> dict:
                 "snapshot_id": snapshot_id,
                 "policy_version": policy_version,
                 "original_task_id": claim.get("task_id"),
+                "pipeline": pipeline,
             }
+        _finish_pipeline(pipeline, task_id, succeeded=False)
         return {
             "success": False,
             "stage": "business_run_in_progress",
             "original_task_id": claim.get("task_id"),
+            "pipeline": pipeline,
         }
 
     succeeded = False
     try:
-        result = _run_daily_close_downstream(manager, freshness)
+        result = _run_daily_close_downstream(
+            manager,
+            freshness,
+            task_id=task_id,
+            pipeline=pipeline,
+        )
         succeeded = result.get("success") is True
         return result
     finally:
@@ -385,10 +603,14 @@ def _process_one() -> bool:
         finish_task(task["task_id"], OWNER_ID, result=result, error_code=error)
     except Exception as exc:
         logger.exception("任务执行失败 %s: %s", task["task_id"], exc)
+        current = get_task(task["task_id"]) or {}
         finish_task(
             task["task_id"],
             OWNER_ID,
-            result={"error_type": type(exc).__name__},
+            result={
+                **(current.get("result") or {}),
+                "error_type": type(exc).__name__,
+            },
             error_code="unhandled_exception",
         )
     finally:
@@ -417,7 +639,7 @@ def _enqueue_completed_close(current: datetime) -> dict:
     from utils.data_freshness import expected_completed_trade_date
 
     today = current.date().isoformat()
-    completed = expected_completed_trade_date(as_of=current, data_dir="data")
+    completed = expected_completed_trade_date(as_of=current, data_dir=DATA_DIR)
     due = bool(
         completed and (completed < today or current.time() >= CLOSE_RECONCILE_START)
     )
@@ -494,11 +716,11 @@ def _enqueue_current_preopen(current: datetime) -> dict:
 
     today = current.date().isoformat()
     within_window = PREOPEN_RECONCILE_START <= current.time() < PREOPEN_RECONCILE_END
-    previous = expected_completed_trade_date(as_of=current, data_dir="data")
+    previous = expected_completed_trade_date(as_of=current, data_dir=DATA_DIR)
     eligible = bool(
         within_window
         and previous
-        and next_trade_date(previous, data_dir="data") == today
+        and next_trade_date(previous, data_dir=DATA_DIR) == today
     )
     if not eligible:
         return {"eligible": False, "trade_date": today, "created": False}

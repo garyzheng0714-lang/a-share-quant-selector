@@ -54,6 +54,16 @@ def _enqueue(task_type: str, key: str, payload: dict | None = None) -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="A-Share Quant Selector 生产运维入口")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        help="市场快照持久目录；也可使用 QUANT_DATA_DIR",
+    )
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        help="任务和决策账本持久目录；也可使用 QUANT_STATE_DIR",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     web = commands.add_parser("web", help="启动只读 Web/API 进程")
@@ -77,9 +87,21 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _configure_runtime_paths(data_dir: Path | None, state_dir: Path | None) -> None:
+    """在导入 Web/Worker 模块前锁定本次进程的持久目录。"""
+    if data_dir is not None:
+        os.environ["QUANT_DATA_DIR"] = str(data_dir.expanduser().resolve())
+    if state_dir is not None:
+        resolved = state_dir.expanduser().resolve()
+        os.environ["QUANT_STATE_DIR"] = str(resolved)
+        os.environ["QUANT_VIEWS_DB"] = str(resolved / "views.db")
+        os.environ["QUANT_OPERATIONS_DB"] = str(resolved / "operations.db")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
+    _configure_runtime_paths(args.data_dir, args.state_dir)
     os.chdir(PROJECT_ROOT)
 
     if args.command == "web":

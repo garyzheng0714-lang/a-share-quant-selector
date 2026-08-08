@@ -11,17 +11,17 @@ import json
 import logging
 import os
 from datetime import datetime
-from pathlib import Path
 from statistics import fmean
 from typing import Any
 
 from utils.artifact_integrity import artifact_is_valid, seal_artifact
 from utils.decision_versions import cache_identity
 from utils.execution_model import DEFAULT_EXECUTION_POLICY
+from utils.runtime_paths import market_data_dir
 
 
 logger = logging.getLogger(__name__)
-DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR = market_data_dir()
 CACHE_FILE = DATA_DIR / "market_thermometer_cache.json"
 CACHE_SCHEMA_VERSION = 3
 

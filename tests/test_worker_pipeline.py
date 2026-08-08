@@ -31,7 +31,7 @@ def test_close_pipeline_claims_business_key_before_downstream_side_effects():
         events.append("claim")
         return {"claimed": True, "status": "running"}
 
-    def downstream(*_args):
+    def downstream(*_args, **_kwargs):
         events.append("downstream")
         return {"success": True, "stage": "complete"}
 
@@ -44,6 +44,7 @@ def test_close_pipeline_claims_business_key_before_downstream_side_effects():
         patch("utils.csv_manager.CSVManager", return_value=manager),
         patch("utils.data_freshness.local_data_status", return_value=freshness),
         patch("utils.decision_versions.strategy_version", return_value="policy-1"),
+        patch.object(worker, "update_task_progress", return_value=True),
         patch.object(worker, "claim_job_run", side_effect=claim),
         patch.object(worker, "_run_daily_close_downstream", side_effect=downstream),
         patch.object(worker, "finish_job_run", side_effect=finish),
@@ -66,6 +67,7 @@ def test_close_pipeline_replays_completed_business_key_without_side_effects():
         patch("utils.csv_manager.CSVManager", return_value=manager),
         patch("utils.data_freshness.local_data_status", return_value=freshness),
         patch("utils.decision_versions.strategy_version", return_value="policy-1"),
+        patch.object(worker, "update_task_progress", return_value=True),
         patch.object(
             worker,
             "claim_job_run",
@@ -190,6 +192,7 @@ def test_scheduled_close_never_runs_against_a_different_trade_date():
         ) as ingestion,
         patch("utils.csv_manager.CSVManager", return_value=manager),
         patch("utils.data_freshness.local_data_status", return_value=freshness),
+        patch.object(worker, "update_task_progress", return_value=True),
         patch.object(worker, "claim_job_run") as claim,
         patch.object(worker, "_run_daily_close_downstream") as downstream,
     ):

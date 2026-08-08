@@ -6,18 +6,13 @@
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from contextlib import contextmanager
-from pathlib import Path
+
+from utils.runtime_paths import views_db_path
 
 
-DB_PATH = Path(
-    os.environ.get(
-        "QUANT_VIEWS_DB",
-        Path(__file__).parent.parent / "data" / "views.db",
-    )
-)
+DB_PATH = views_db_path()
 
 
 def _configure_connection(connection: sqlite3.Connection) -> None:

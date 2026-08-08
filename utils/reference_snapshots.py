@@ -15,6 +15,7 @@ from utils.market_snapshot import (
     load_current_market_snapshot,
     load_market_snapshot,
 )
+from utils.runtime_paths import market_data_dir
 
 SCHEMA_VERSION = 4
 
@@ -172,7 +173,7 @@ def capture_reference_snapshot(
 
 def load_reference_snapshots(data_dir: str | Path = "data") -> dict[str, dict]:
     """从不可变行情快照重建 PIT 目录；损坏或不完整的快照不会进入训练。"""
-    root = Path(data_dir)
+    root = market_data_dir(data_dir)
     snapshots: dict[str, dict] = {}
     snapshot_root = root / SNAPSHOT_DIR
     if not snapshot_root.exists():
