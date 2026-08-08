@@ -294,6 +294,22 @@ def _call_anthropic_comment(
     return json.loads(text), model
 
 
+def _llm_error_code(exc: Exception) -> str:
+    """把供应商异常压缩成不含响应正文和密钥的可观测错误码。"""
+    if isinstance(exc, requests.Timeout):
+        return "llm_timeout"
+    if isinstance(exc, requests.HTTPError):
+        status = exc.response.status_code if exc.response is not None else None
+        if status in {400, 401, 403, 404, 409, 422, 429}:
+            return f"llm_http_{status}"
+        if status is not None and status >= 500:
+            return "llm_http_5xx"
+        return "llm_http_error"
+    if isinstance(exc, (json.JSONDecodeError, KeyError, TypeError, ValueError)):
+        return "llm_response_invalid"
+    return "llm_call_failed"
+
+
 def get_quant_comment(trade_date: str) -> dict | None:
     """只读取当前不可变点评表，不混入旧荐股档案。"""
     with _get_read_conn() as connection:
@@ -383,8 +399,11 @@ def generate_quant_comment(
         else:
             result, model = _call_ark_comment(api_key, llm_cfg, prompt)
     except Exception as exc:
-        logger.error("AI 点评失败: %s", exc)
-        return {"available": False, "reason": "llm_call_failed"}
+        error_code = _llm_error_code(exc)
+        logger.error(
+            "AI 点评失败: error_code=%s type=%s", error_code, type(exc).__name__
+        )
+        return {"available": False, "reason": error_code}
 
     valid_codes = {str(stock.get("code") or "") for stock in stocks}
     by_code: dict[str, dict[str, str]] = {}

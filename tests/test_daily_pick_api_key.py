@@ -1,3 +1,5 @@
+import requests
+
 from utils import daily_pick
 
 
@@ -76,3 +78,17 @@ def test_provider_secret_file_is_supported(monkeypatch, tmp_path):
     monkeypatch.setenv("ARK_API_KEY_FILE", str(secret))
 
     assert daily_pick.get_api_key({"provider": "ark"}) == "file-test-key"
+
+
+def test_llm_http_error_is_reduced_to_safe_status_code():
+    response = requests.Response()
+    response.status_code = 401
+
+    assert (
+        daily_pick._llm_error_code(requests.HTTPError(response=response))
+        == "llm_http_401"
+    )
+
+
+def test_llm_timeout_has_stable_error_code():
+    assert daily_pick._llm_error_code(requests.Timeout()) == "llm_timeout"

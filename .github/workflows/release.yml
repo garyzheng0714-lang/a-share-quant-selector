@@ -603,8 +603,20 @@ jobs:
           assert len(candidates) == int(recommend.get("signal_count") or 0)
           assert all(row.get("industry_available") is True for row in candidates)
           if candidates:
-              assert (recommend.get("ai") or {}).get("available") is True
-              assert (recommend.get("ai") or {}).get("status") == "explained"
+              ai = recommend.get("ai") or {}
+              if ai.get("available") is not True and (
+                  ai.get("status") == "failed"
+                  or "llm_unconfigured" in (ai.get("reason_codes") or [])
+              ):
+                  diagnostic = {
+                      "status": ai.get("status"),
+                      "reason_codes": ai.get("reason_codes") or [],
+                      "model": ai.get("model"),
+                  }
+                  print("terminal_ai_failure=" + json.dumps(diagnostic, ensure_ascii=False))
+                  raise SystemExit(42)
+              assert ai.get("available") is True
+              assert ai.get("status") == "explained"
               assert all(row.get("ai_analysis") for row in candidates)
           PY
             then
@@ -614,6 +626,13 @@ jobs:
               mv "${DEPLOY_RECEIPT}.next" "$DEPLOY_RECEIPT"
               trap - HUP INT TERM
               exit 0
+            else
+              readiness_status=$?
+              if test "$readiness_status" -eq 42; then
+                docker compose --env-file .release.env logs --tail 80 worker || true
+                rollback_failed_release
+                exit 1
+              fi
             fi
             sleep 5
           done
