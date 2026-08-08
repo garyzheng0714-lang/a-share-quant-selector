@@ -67,7 +67,7 @@ function aiState(data: RecommendResponse) {
       tone: "neutral" as const,
     };
   }
-  if (reasons.includes("llm_call_failed")) {
+  if (reasons.some((reason) => reason.startsWith("llm_"))) {
     return {
       title: "AI 分析失败",
       description: "云阶选股结论不受影响，但本次 AI 解释没有成功落账。",

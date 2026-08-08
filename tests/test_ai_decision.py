@@ -124,6 +124,34 @@ class AiDecisionTest(unittest.TestCase):
         self.assertEqual(result["status"], "explained")
         self.assertEqual(comment.call_args.args[1][0]["code"], "600000")
 
+    @patch(
+        "utils.cloud_stair_decision.load_cloud_stair_decision",
+        return_value={
+            "available": True,
+            "candidates": [{"code": "600000", "action": "buy"}],
+        },
+    )
+    @patch("utils.daily_pick.get_api_key", return_value="secret")
+    @patch(
+        "utils.daily_pick.generate_quant_comment",
+        return_value={"available": False, "reason": "llm_http_401"},
+    )
+    @patch("utils.ai_decision.save_ai_decision_run", return_value="ai-4")
+    def test_ai_failure_preserves_safe_provider_reason(
+        self, _save, _comment, _key, _load
+    ):
+        decision = {
+            "run_id": "run-4",
+            "trade_date": "2026-07-14",
+            "market": {"snapshot_id": "a" * 64},
+        }
+        manager = MagicMock(snapshot_id="a" * 64)
+
+        result = run_ai_decision(decision, csv_manager=manager)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["reason_codes"], ["llm_http_401"])
+
     @patch("utils.ai_decision.save_ai_decision_run", return_value="ai-2")
     @patch("utils.daily_pick.generate_quant_comment")
     def test_approved_pool_requires_same_pinned_snapshot(self, comment, _save):

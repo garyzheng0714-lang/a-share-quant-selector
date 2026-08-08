@@ -123,11 +123,12 @@ def run_ai_decision(decision: dict | None, *, csv_manager=None) -> dict:
                     "payload": result,
                 }
             else:
+                failure_reason = str(result.get("reason") or "llm_call_failed")
                 run = {
                     **base,
                     "status": "failed",
                     "payload": result,
-                    "reason_codes": ["llm_call_failed"],
+                    "reason_codes": [failure_reason],
                 }
     run["ai_run_id"] = save_ai_decision_run(run)
     return {"available": run["status"] in {"explained", "shadow_ranked"}, **run}
