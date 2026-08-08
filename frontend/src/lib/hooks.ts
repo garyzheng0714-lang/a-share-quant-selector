@@ -79,6 +79,13 @@ export function useSystemStatus() {
   });
 }
 
+export function usePipelineStatus() {
+  return useSWR("data-pipeline-status", () => api.getPipelineStatus(), {
+    refreshInterval: (data) => data?.state === "updating" ? 5_000 : 60_000,
+    revalidateOnFocus: true,
+  });
+}
+
 export function useFactors() {
   // today_hits 随 16:00 预热更新，页面常开也能拿到新数字
   return useSWR("factors", () => api.getFactors(), { refreshInterval: 600_000 });

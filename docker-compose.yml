@@ -7,6 +7,7 @@ x-quant-common: &quant-common
     PYTHONUNBUFFERED: "1"
     PYTHONDONTWRITEBYTECODE: "1"
     GIT_COMMIT_SHA: ${GIT_COMMIT_SHA:?GIT_COMMIT_SHA is required}
+    QUANT_DATA_DIR: /app/data
     QUANT_STATE_DIR: /app/state
     QUANT_VIEWS_DB: /app/state/views.db
     QUANT_OPERATIONS_DB: /app/state/operations.db

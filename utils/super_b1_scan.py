@@ -17,15 +17,15 @@ import logging
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 from utils.artifact_integrity import artifact_is_valid, seal_artifact
 from utils.decision_versions import cache_identity
 from utils.market_snapshot import read_snapshot_metadata
+from utils.runtime_paths import market_data_dir
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR = market_data_dir()
 CACHE_FILE = DATA_DIR / "super_b1_cache.json"
 CACHE_SCHEMA_VERSION = 5
 _lock = threading.Lock()

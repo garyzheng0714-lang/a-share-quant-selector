@@ -6,13 +6,12 @@ import { List, ListItem } from "@astryxdesign/core/List";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
 import { Text } from "@astryxdesign/core/Text";
 import { SectorHeatChart } from "@/components/charts/sector-heat-chart";
+import { DataBrief } from "@/components/dashboard/data-brief";
 import { PageHeader, PageShell } from "@/components/layout/page-shell";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button, Input, LoadError, Skeleton } from "@/components/ui";
-import { useSectorDetail, useSectors, useSuperB1, useSystemStatus } from "@/lib/hooks";
-import type {
-  SectorDetailStock, SectorsData, SystemStatusResponse,
-} from "@/lib/api";
+import { usePipelineStatus, useSectorDetail, useSectors, useSuperB1 } from "@/lib/hooks";
+import type { SectorDetailStock, SectorsData } from "@/lib/api";
 
 type RankingItem = NonNullable<SectorsData["ranking"]>[number];
 type Filter = "all" | "leader" | "warming";
@@ -26,32 +25,6 @@ const reasonText: Record<string, string> = {
   market_gate: "市场门禁未通过",
   unresolved_tie_over_3: "候选过多且没有可靠精排模型",
 };
-
-const systemReasonText: Record<string, string> = {
-  ai_run_not_recorded: "尚无 AI 运行记录",
-  decision_not_ready: "量化决策尚未生成",
-  no_approved_candidates: "当前没有合格候选",
-  llm_unconfigured: "大模型尚未配置",
-  llm_call_failed: "大模型调用失败",
-  evolution_run_not_recorded: "尚无进化运行记录",
-  universe_coverage_insufficient: "行情覆盖不足",
-  reference_history_insufficient: "时点历史不足",
-  signal_history_insufficient: "真实信号历史不足",
-  release_review_required: "等待独立发布审核",
-  market_walk_forward_failed: "市场层样本外未通过",
-  sector_walk_forward_failed: "板块层样本外未通过",
-  risk_walk_forward_failed: "风险层样本外未通过",
-  quality_walk_forward_failed: "质量层样本外未通过",
-  evolution_exception: "进化任务异常",
-};
-
-const aiStatusText = {
-  not_called: "未调用",
-  abstained: "主动放弃",
-  explained: "已解释",
-  shadow_ranked: "影子排序",
-  failed: "调用失败",
-} as const;
 
 function signed(value: number | null | undefined, digits = 1, suffix = "") {
   if (value == null) return "—";
@@ -68,87 +41,6 @@ function stageKind(item: RankingItem, relayNames: Set<string>) {
   if (relayNames.has(item.name)) return "接力";
   if (item.delta3 >= 8) return "升温";
   return "观察";
-}
-
-function SystemStrip({ data }: { data?: SystemStatusResponse }) {
-  const decision = data?.decision;
-  const paper = data?.paper;
-  const ai = data?.ai;
-  const evolution = data?.evolution;
-  const items = [
-    {
-      icon: "wrench" as const,
-      label: "量化策略",
-      value: decision?.model_version ?? "等待决策",
-      tone: "text-ink-secondary",
-    },
-    {
-      icon: "viewColumns" as const,
-      label: "分层模型",
-      value: data?.policy?.state === "active" ? "完整策略已发布" : "未启用",
-      tone: data?.policy?.state === "active" ? "text-bear" : "text-ink-muted",
-    },
-    {
-      icon: "success" as const,
-      label: "合格候选",
-      value: decision ? String(decision.candidate_counts.buy) : "—",
-      tone: decision?.candidate_counts.buy ? "text-bull" : "text-ink-secondary",
-    },
-    {
-      icon: "eyeSlash" as const,
-      label: "观察候选",
-      value: decision ? String(decision.candidate_counts.observe) : "—",
-      tone: "text-accent",
-    },
-    {
-      icon: "viewColumns" as const,
-      label: "模拟盘",
-      value: !paper?.established
-        ? "未建立"
-        : paper.nav_days
-          ? `已运行 ${paper.nav_days} 日`
-          : "已建账·待首日",
-      tone: paper?.nav_days ? "text-ink-secondary" : "text-ink-muted",
-    },
-    {
-      icon: "wrench" as const,
-      label: "AI",
-      value: ai?.status === "explained"
-        ? "已解释"
-        : ai?.status === "shadow_ranked"
-          ? "影子排序"
-          : ai?.status === "abstained"
-            ? "主动放弃"
-            : ai?.status === "failed"
-              ? "调用失败"
-              : "未调用",
-      tone: ai?.status === "failed" ? "text-bull" : "text-ink-secondary",
-    },
-    {
-      icon: "warning" as const,
-      label: "进化任务",
-      value: evolution?.status === "failed"
-        ? "失败"
-        : evolution?.promotion_status === "shadow_registered"
-          ? "影子已登记"
-          : evolution?.status === "complete"
-            ? "已运行"
-            : "未运行",
-      tone: evolution?.status === "failed" ? "text-bull" : "text-ink-secondary",
-    },
-  ];
-
-  return (
-    <section className="scrollbar-none flex overflow-x-auto rounded-xl border border-border bg-surface" aria-label="系统运行状态">
-      {items.map(({ icon, label, value, tone }) => (
-        <div key={label} className="flex min-w-max flex-1 items-center gap-2 border-r border-border/70 px-4 py-3 last:border-r-0">
-          <Icon icon={icon} size="xsm" color="accent" />
-          <Text type="supporting">{label}</Text>
-          <Text type="label" className={tone}>{value}</Text>
-        </div>
-      ))}
-    </section>
-  );
 }
 
 function RankingRow({
@@ -244,12 +136,11 @@ export function Component() {
   const [searchParams, setSearchParams] = useSearchParams();
   const sectors = useSectors();
   const b1 = useSuperB1();
-  const system = useSystemStatus();
+  const pipeline = usePipelineStatus();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [selectedName, setSelectedName] = useState(searchParams.get("sector") ?? "");
   const [selectedStockCode, setSelectedStockCode] = useState("");
-  const [showSystem, setShowSystem] = useState(false);
 
   const data = sectors.data;
   const ranking = useMemo(() => data?.ranking ?? [], [data?.ranking]);
@@ -294,9 +185,33 @@ export function Component() {
   };
 
   if (sectors.isLoading) {
-    return <PageShell><Skeleton className="h-[720px] w-full rounded-xl" /></PageShell>;
+    return (
+      <PageShell>
+        <PageHeader
+          title="板块工作台"
+          description="当前仅展示研究候选，不构成交易动作"
+          endContent={<Text type="supporting">正在读取板块数据</Text>}
+        />
+        <DataBrief data={pipeline.data} failed={Boolean(pipeline.error)} />
+        <Skeleton className="h-[560px] w-full rounded-xl" />
+      </PageShell>
+    );
   }
-  if (sectors.error) return <LoadError label="板块加载失败" onRetry={() => sectors.mutate()} />;
+  if (sectors.error) {
+    return (
+      <PageTransition>
+        <PageShell>
+          <PageHeader
+            title="板块工作台"
+            description="行情不可用时不展示旧板块结论"
+            endContent={<Text type="supporting">等待正式快照</Text>}
+          />
+          <DataBrief data={pipeline.data} failed={Boolean(pipeline.error)} />
+          <LoadError label="板块数据尚未就绪" onRetry={() => sectors.mutate()} />
+        </PageShell>
+      </PageTransition>
+    );
+  }
 
   const selectedKind = selected ? stageKind(selected, relayNames) : "观察";
   const conclusion = !selected
@@ -308,22 +223,20 @@ export function Component() {
         : selected.delta3 >= 8
           ? "热度正在上升，等待规则候选与风险门禁确认"
           : "尚未形成明确主线，继续观察";
-  const systemData = system.data;
-  const aiReasonCode = systemData?.ai?.reason_codes?.[0];
-  const evolutionReasonCode = systemData?.evolution?.reason_codes?.[0];
-  const aiReason = aiReasonCode ? systemReasonText[aiReasonCode] ?? aiReasonCode : undefined;
-  const evolutionReason = evolutionReasonCode ? systemReasonText[evolutionReasonCode] ?? evolutionReasonCode : undefined;
-
   return (
     <PageTransition>
       <PageShell>
         <PageHeader
           title="板块工作台"
           description="当前仅展示研究候选，不构成交易动作"
-          endContent={<Text type="supporting" className="num">数据截至 {data?.trade_date ?? systemData?.market_data?.local_date ?? "待更新"} 收盘</Text>}
+          endContent={<Text type="supporting" className="num">数据截至 {pipeline.data?.market.local_date ?? data?.trade_date ?? "待更新"} 收盘</Text>}
         />
 
-        <SystemStrip data={systemData} />
+        <DataBrief
+          data={pipeline.data}
+          failed={Boolean(pipeline.error)}
+          contentSnapshotId={data?.snapshot_id}
+        />
 
         <div className="mt-3 grid gap-3 lg:grid-cols-[420px_minmax(0,1fr)]">
           <section className="overflow-hidden rounded-xl border border-border bg-surface" aria-label="板块排名">
@@ -461,28 +374,6 @@ export function Component() {
             )}
           </div>
         </div>
-
-        <section className={`mt-3 rounded-xl border px-4 py-3 ${systemData?.evolution?.status === "failed" ? "border-bull/40 bg-bull-dim" : "border-accent/35 bg-accent-dim"}`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs text-ink-secondary">
-              模拟盘：{!systemData?.paper?.established ? "未建立" : systemData.paper.nav_days ? `已运行 ${systemData.paper.nav_days} 日` : "等待首个交易日"}
-              <span className="mx-2 text-ink-muted">|</span>
-              AI：{systemData?.ai?.status ? aiStatusText[systemData.ai.status] : "未记录"}{aiReason ? `（${aiReason}）` : ""}
-              <span className="mx-2 text-ink-muted">|</span>
-              进化：{systemData?.evolution?.status === "complete" ? "已运行" : systemData?.evolution?.status === "failed" ? "失败" : "未记录"}{evolutionReason ? `（${evolutionReason}）` : ""}
-            </p>
-            <Button variant="secondary" size="sm" aria-expanded={showSystem} onClick={() => setShowSystem((value) => !value)}>{showSystem ? "收起系统状态" : "查看系统状态"}</Button>
-          </div>
-          {showSystem && (
-            <dl className="mt-3 grid gap-3 border-t border-current/10 pt-3 text-xs sm:grid-cols-5">
-              <div><dt className="text-ink-muted">当前完整策略</dt><dd className="mt-1 break-all text-ink-secondary">{systemData?.policy?.active_policy_version ?? "未记录"}</dd></div>
-              <div><dt className="text-ink-muted">决策 run</dt><dd className="mt-1 break-all text-ink-secondary">{systemData?.decision?.run_id ?? "未生成"}</dd></div>
-              <div><dt className="text-ink-muted">模拟账户</dt><dd className="mt-1 text-ink-secondary">{systemData?.paper?.established ? `${systemData.paper.nav_days ?? 0} 个交易日 · 权益 ¥${Math.round(systemData.paper.total_equity ?? 0).toLocaleString("zh-CN")}` : "未建立"}</dd></div>
-              <div><dt className="text-ink-muted">业绩基准</dt><dd className="mt-1 text-ink-secondary">{!systemData?.paper?.established ? "账户未建立" : systemData.paper.benchmark_state === "not_configured" ? "未配置，暂不计算超额" : systemData.paper.benchmark_state ? "已配置" : "未记录"}</dd></div>
-              <div><dt className="text-ink-muted">每日自动晋级</dt><dd className="mt-1 text-ink-secondary">{systemData?.policy?.daily_auto_promotion === false ? "已禁用" : "未知"}</dd></div>
-            </dl>
-          )}
-        </section>
 
         <Text type="supporting" className="mt-3 flex items-center gap-2 px-1"><Icon icon="info" size="xsm" />板块热度是研究特征，尚未被证明能单独预测个股收益；页面不构成投资建议。</Text>
       </PageShell>

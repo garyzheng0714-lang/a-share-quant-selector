@@ -18,6 +18,7 @@ import re
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.csv_manager import CSVManager
 from utils.data_contracts import FetchResult, MarketDataUnavailable
+from utils.runtime_paths import market_data_dir
 
 
 MIN_UNIVERSE_SIZE = 3000
@@ -46,6 +47,7 @@ class AKShareFetcher:
     """AKShare 数据抓取器"""
 
     def __init__(self, data_dir="data", *, state_dir: str | Path | None = None):
+        data_dir = market_data_dir(data_dir)
         self.csv_manager = CSVManager(data_dir)
         self.full_data_dir = Path(data_dir)
         self.state_dir = (
@@ -515,6 +517,16 @@ class AKShareFetcher:
             if full_history
             else previous.get("history_source_id") or fetch.source
         )
+        history_requested_start = (
+            fetch.requested_start
+            if full_history
+            else previous.get("history_requested_start") or fetch.requested_start
+        )
+        history_complete = (
+            bool(fetch.details.get("history_complete", True))
+            if full_history
+            else bool(previous.get("history_complete"))
+        )
         payload["stocks"][stock_code] = {
             "source_id": fetch.source,
             "fetched_at": fetch.fetched_at,
@@ -529,6 +541,8 @@ class AKShareFetcher:
             "synthetic": False,
             "history_coverage_start": history_start,
             "history_source_id": history_source,
+            "history_requested_start": history_requested_start,
+            "history_complete": history_complete,
         }
         payload["updated_at"] = (
             datetime.now().astimezone().isoformat(timespec="seconds")
@@ -549,18 +563,23 @@ class AKShareFetcher:
         years: int = 6,
         candidates: tuple[str, ...] = ("600519", "600036", "600030", "000001"),
     ) -> dict:
-        """确保快照中至少有一只活跃股的全历史来自 AkShare。"""
+        """确保快照中至少有一只活跃股的全历史来自独立来源。
+
+        腾讯是批量采集主源；东方财富（由 AkShare 适配）和新浪仅用于建立
+        独立的历史锚点。单一校验端点临时不可用时，不降低双源发布门槛。
+        """
         provenance = self._load_provenance().get("stocks") or {}
         universe = set(self._main_board_universe())
+        secondary_sources = {"akshare", "sina"}
         source_set = {
             item.get(source_key)
             for code, item in provenance.items()
             if code in universe
             if isinstance(item, dict)
             for source_key in ("source_id", "history_source_id")
-            if item.get(source_key) in {"tencent", "akshare"}
+            if item.get(source_key) in {"tencent", *secondary_sources}
         }
-        if {"tencent", "akshare"}.issubset(source_set):
+        if "tencent" in source_set and source_set.intersection(secondary_sources):
             return {"success": True, "updated": False, "source_set": sorted(source_set)}
 
         failures = []
@@ -568,40 +587,50 @@ class AKShareFetcher:
             for code in candidates:
                 if code not in universe or not self.csv_manager.stock_exists(code):
                     continue
-                fetch = self._fetch_stock_history_akshare(code, years=years)
-                frame = fetch.data.copy() if fetch.success else pd.DataFrame()
-                if not frame.empty:
-                    frame = frame[
-                        pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d")
-                        <= completed_cutoff
-                    ].copy()
-                latest = (
-                    pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d").max()
-                    if not frame.empty and "date" in frame
-                    else None
-                )
-                if fetch.success and latest == completed_cutoff:
-                    self.csv_manager.write_stock(code, frame)
-                    self._record_fetch_provenance(code, fetch, frame, full_history=True)
-                    updated_source_set = source_set | {"akshare"}
-                    return {
-                        "success": {"tencent", "akshare"}.issubset(updated_source_set),
-                        "updated": True,
-                        "code": code,
-                        "source_set": sorted(updated_source_set),
-                    }
-                failures.append(
-                    {
-                        "code": code,
-                        "reason": fetch.reason,
-                        "returned_latest_date": latest,
-                    }
-                )
+                for fetch_method in (
+                    self._fetch_stock_history_akshare,
+                    self._fetch_stock_history_sina,
+                ):
+                    fetch = fetch_method(code, years=years)
+                    frame = fetch.data.copy() if fetch.success else pd.DataFrame()
+                    if not frame.empty:
+                        frame = frame[
+                            pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d")
+                            <= completed_cutoff
+                        ].copy()
+                    latest = (
+                        pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d").max()
+                        if not frame.empty and "date" in frame
+                        else None
+                    )
+                    if fetch.success and latest == completed_cutoff:
+                        self.csv_manager.write_stock(code, frame)
+                        self._record_fetch_provenance(
+                            code, fetch, frame, full_history=True
+                        )
+                        updated_source_set = source_set | {fetch.source}
+                        return {
+                            "success": "tencent" in updated_source_set
+                            and bool(
+                                updated_source_set.intersection(secondary_sources)
+                            ),
+                            "updated": True,
+                            "code": code,
+                            "source_set": sorted(updated_source_set),
+                        }
+                    failures.append(
+                        {
+                            "code": code,
+                            "source": fetch.source,
+                            "reason": fetch.reason,
+                            "returned_latest_date": latest,
+                        }
+                    )
             if attempt == 0:
                 time.sleep(2)
         return {
             "success": False,
-            "reason": "akshare_history_anchor_unavailable",
+            "reason": "independent_history_anchor_unavailable",
             "attempts": failures,
             "source_set": sorted(source_set),
         }
@@ -899,93 +928,131 @@ class AKShareFetcher:
             "all_universe_sources_failed_and_no_valid_last_known_good"
         )
 
-    def _fetch_stock_history_http(self, stock_code, years=6):
-        """使用腾讯接口获取股票历史数据"""
+    def _fetch_stock_history_http(self, stock_code, years=6) -> FetchResult:
+        """分页获取腾讯前复权历史，返回完整的请求时间窗。"""
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=365 * years)
+        requested_start = start_date.strftime("%Y-%m-%d")
+        requested_end = end_date.strftime("%Y-%m-%d")
         try:
-            import requests
-
             # 判断市场前缀
             if stock_code.startswith("6") or stock_code.startswith("88"):
                 market_code = "sh" + stock_code
             else:
                 market_code = "sz" + stock_code
 
-            # 腾讯财经接口 - 获取日K线数据
-            # 腾讯接口最多返回约1000条数据，所以分批获取或限制年限
-            max_days = min(years * 365, 1000)  # 最多1000天
-            url = f"https://ifzq.gtimg.cn/appstock/app/fqkline/get?param={market_code},day,,,{max_days},qfq"
+            def parse_klines(data: object) -> list:
+                if not isinstance(data, dict):
+                    return []
+                data_level = data.get("data", {})
+                if isinstance(data_level, dict):
+                    stock_data = data_level.get(market_code, {})
+                    if isinstance(stock_data, dict):
+                        return stock_data.get("qfqday", []) or stock_data.get("day", [])
+                    return []
+                if isinstance(data_level, list):
+                    for item in data_level:
+                        if (
+                            isinstance(item, list)
+                            and len(item) >= 2
+                            and item[0] == market_code
+                            and isinstance(item[1], list)
+                        ):
+                            return item[1]
+                return []
 
-            resp = requests.get(
-                url,
-                timeout=15,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Referer": "https://stock.finance.qq.com/",
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            if not isinstance(data, (dict, list)):
-                return None
+            page_size = 640
+            # 252 个交易日/年；多留一页处理不同年份的交易日差异。
+            max_pages = max(1, (years * 252 + page_size - 1) // page_size + 1)
+            cursor_end = ""
+            records: list[dict] = []
+            previous_earliest = None
+            history_complete = False
 
-            # 解析腾讯返回的数据（处理不同返回格式）
-            data_level = data.get("data", {})
+            for page_number in range(1, max_pages + 1):
+                url = (
+                    "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
+                    f"?param={market_code},day,,{cursor_end},{page_size},qfq"
+                )
+                resp = requests.get(
+                    url,
+                    timeout=15,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Referer": "https://stock.finance.qq.com/",
+                    },
+                )
+                resp.raise_for_status()
+                klines = parse_klines(resp.json())
+                if not klines:
+                    history_complete = bool(records)
+                    break
 
-            # data_level 可能是 dict 或 list（大数据量时）
-            if isinstance(data_level, dict):
-                stock_data = data_level.get(market_code, {})
-                if isinstance(stock_data, dict):
-                    klines = stock_data.get("qfqday", []) or stock_data.get("day", [])
-                else:
-                    klines = []
-            elif isinstance(data_level, list) and len(data_level) > 0:
-                # 大数据量时返回列表，第一项是代码，第二项是数据
-                # 找到对应股票代码的数据
-                klines = []
-                for item in data_level:
-                    if (
-                        isinstance(item, list)
-                        and len(item) >= 2
-                        and item[0] == market_code
-                    ):
-                        # item[1] 是K线数据
-                        if isinstance(item[1], list):
-                            klines = item[1]
-                        break
-            else:
-                klines = []
-
-            if klines:
-                records = []
+                page_records = []
                 for item in klines:
-                    # 腾讯格式: [日期, 开盘, 收盘, 最高, 最低, 成交量, ...]
-                    # 注意: item[6] 可能是分红信息(dict)而不是成交额
                     if len(item) >= 6 and isinstance(item, list):
-                        # 跳过分红信息，只取前6个字段
-                        # 注意：腾讯接口返回的是 [日期, 开盘, 收盘, 最高, 最低, 成交量]
-                        records.append(
+                        page_records.append(
                             {
                                 "date": str(item[0]),
                                 "open": float(item[1]),
                                 "close": float(item[2]),
-                                "high": float(item[3]),  # 最高
-                                "low": float(item[4]),  # 最低
+                                "high": float(item[3]),
+                                "low": float(item[4]),
                                 "volume": int(float(item[5])),
-                                "amount": 0,  # 腾讯接口不直接提供成交额
-                                "turnover": 0,  # 腾讯接口没有换手率
+                                "amount": 0,
+                                "turnover": 0,
                             }
                         )
+                if not page_records:
+                    break
+                records.extend(page_records)
+                earliest = min(item["date"] for item in page_records)
+                if earliest <= requested_start:
+                    history_complete = True
+                    break
+                if len(page_records) < page_size:
+                    # 已到上市首日，比请求起点晚是正常的次新股历史。
+                    history_complete = True
+                    break
+                if earliest == previous_earliest:
+                    break
+                previous_earliest = earliest
+                cursor_end = (
+                    datetime.strptime(earliest, "%Y-%m-%d") - timedelta(days=1)
+                ).strftime("%Y-%m-%d")
 
-                if records:
-                    df = pd.DataFrame(records)
-                    df["date"] = pd.to_datetime(df["date"])
-                    df = df.sort_values("date", ascending=False)
-                    return df
-
-            return None
+            if records and history_complete:
+                df = pd.DataFrame(records).drop_duplicates(subset=["date"], keep="last")
+                df["date"] = pd.to_datetime(df["date"])
+                df = df[df["date"] >= pd.Timestamp(start_date.date())].copy()
+                df = df.sort_values("date", ascending=False)
+                return FetchResult.ok(
+                    df,
+                    source="tencent",
+                    requested_start=requested_start,
+                    requested_end=requested_end,
+                    details={
+                        "history_complete": True,
+                        "page_count": page_number,
+                        "page_size": page_size,
+                    },
+                )
+            return FetchResult.failure(
+                source="tencent",
+                reason="history_window_incomplete",
+                requested_start=requested_start,
+                requested_end=requested_end,
+                details={"history_complete": False},
+            )
         except Exception as e:
             print(f"  HTTP获取历史数据失败: {e}")
-            return None
+            return FetchResult.failure(
+                source="tencent",
+                reason="source_failed",
+                requested_start=requested_start,
+                requested_end=requested_end,
+                details={"failures": [f"tencent:{type(e).__name__}"]},
+            )
 
     def _fetch_stock_history_akshare(self, stock_code, years=6) -> FetchResult:
         """直接从 AkShare 获取历史数据，可作为日期过期时的备用源。"""
@@ -1035,6 +1102,7 @@ class AKShareFetcher:
                     source="akshare",
                     requested_start=start_date.strftime("%Y-%m-%d"),
                     requested_end=end_date.strftime("%Y-%m-%d"),
+                    details={"history_complete": True},
                 )
             failure = "akshare:empty"
         except Exception as exc:
@@ -1049,6 +1117,58 @@ class AKShareFetcher:
             details={"failures": [failure]},
         )
 
+    def _fetch_stock_history_sina(self, stock_code, years=6) -> FetchResult:
+        """从新浪获取前复权日线，作为东方财富不可用时的独立锚点。"""
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=365 * years)
+        requested_start = start_date.strftime("%Y-%m-%d")
+        requested_end = end_date.strftime("%Y-%m-%d")
+        market_prefix = "sh" if stock_code.startswith("6") else "sz"
+        try:
+            df = ak.stock_zh_a_daily(
+                symbol=f"{market_prefix}{stock_code}",
+                start_date=start_date.strftime("%Y%m%d"),
+                end_date=end_date.strftime("%Y%m%d"),
+                adjust="qfq",
+            )
+            required = [
+                "date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "amount",
+                "turnover",
+            ]
+            if df is not None and not df.empty and set(required).issubset(df.columns):
+                frame = df[required].copy()
+                # 新浪 volume 是股、turnover 是比率；项目内部统一为手和百分比。
+                frame["volume"] = pd.to_numeric(frame["volume"], errors="coerce") / 100
+                frame["turnover"] = (
+                    pd.to_numeric(frame["turnover"], errors="coerce") * 100
+                )
+                frame["date"] = pd.to_datetime(frame["date"])
+                frame = frame.sort_values("date", ascending=False)
+                return FetchResult.ok(
+                    frame,
+                    source="sina",
+                    requested_start=requested_start,
+                    requested_end=requested_end,
+                    details={"history_complete": True},
+                )
+            failure = "sina:empty_or_schema_invalid"
+        except Exception as exc:
+            print("  新浪历史行情获取失败")
+            failure = f"sina:{type(exc).__name__}"
+        return FetchResult.failure(
+            source="sina",
+            reason="source_failed",
+            requested_start=requested_start,
+            requested_end=requested_end,
+            details={"failures": [failure]},
+        )
+
     def fetch_stock_history(self, stock_code, years=6) -> FetchResult:
         """
         抓取单只股票历史数据
@@ -1056,23 +1176,18 @@ class AKShareFetcher:
         """
         end_date = datetime.now()
         start_date = end_date - timedelta(days=365 * years)
-        start_str = start_date.strftime("%Y-%m-%d")
-        end_str = end_date.strftime("%Y-%m-%d")
         failures = []
 
         # 方法1: 直接HTTP请求
         try:
-            df = self._fetch_stock_history_http(stock_code, years)
-            if df is not None and not df.empty:
-                print(f"✓ (HTTP获取 {len(df)}条)")
-                return FetchResult.ok(
-                    df,
-                    source="tencent",
-                    requested_start=start_str,
-                    requested_end=end_str,
-                )
+            primary = self._fetch_stock_history_http(stock_code, years)
+            if primary.success:
+                print(f"✓ (HTTP获取 {primary.rows}条)")
+                return primary
             print("  HTTP返回空数据，尝试akshare...")
-            failures.append("tencent:empty")
+            failures.extend(
+                primary.details.get("failures") or [f"tencent:{primary.reason}"]
+            )
         except Exception as exc:
             print(f"  HTTP异常: {exc}，尝试akshare...")
             failures.append(f"tencent:{type(exc).__name__}")
@@ -1334,6 +1449,124 @@ class AKShareFetcher:
             if not main_board_only() or is_main_board(code)
         }
 
+    def _refresh_stock_universe_akshare_fallback(
+        self,
+        previous: dict,
+        trade_date: str | None,
+        primary_failure: str,
+    ) -> dict:
+        """东财现货主表不可用时，用 AKShare 代码表与腾讯现货交叉确认。"""
+        if not trade_date:
+            raise ValueError("trade_date_required_for_universe_fallback")
+        discovery = ak.stock_info_a_code_name()
+        if not {"code", "name"}.issubset(discovery.columns):
+            raise ValueError("stock_info_a_code_name_schema_invalid")
+        discovery = discovery[["code", "name"]].copy()
+        discovery["code"] = discovery["code"].astype(str).str.zfill(6)
+
+        code_pattern = r"^(00|30|60|68|88)\d{4}$"
+        discovery = discovery[discovery["code"].str.match(code_pattern)]
+        excluded_words = (
+            "债",
+            "基",
+            "ETF",
+            "LOF",
+            "基金",
+            "B股",
+            "指数",
+            "转债",
+            "回购",
+        )
+        equity_mask = ~discovery["name"].astype(str).apply(
+            lambda name: any(word in name for word in excluded_words)
+        )
+        special_codes = set(
+            discovery.loc[
+                equity_mask & discovery["name"].astype(str).str.contains("转换"),
+                "code",
+            ]
+        )
+        discovered = dict(
+            zip(
+                discovery.loc[equity_mask, "code"],
+                discovery.loc[equity_mask, "name"].astype(str),
+            )
+        )
+        confirmation = self._confirm_cached_universe_tencent(discovered, 0.98)
+        if confirmation["coverage_ratio"] < 0.98:
+            raise ValueError("tencent_universe_confirmation_below_threshold")
+        live_codes = set(confirmation.get("confirmed_codes") or [])
+        pending_codes = set(discovered) - live_codes
+        delisted_codes, delisted_catalog = self._exchange_delisted_codes()
+        excluded_codes = delisted_codes | pending_codes | special_codes
+        fresh = dict(
+            zip(
+                discovery.loc[
+                    equity_mask & discovery["code"].isin(live_codes - excluded_codes),
+                    "code",
+                ],
+                discovery.loc[
+                    equity_mask & discovery["code"].isin(live_codes - excluded_codes),
+                    "name",
+                ].astype(str),
+            )
+        )
+        if not self._universe_size_is_safe(fresh, previous):
+            raise ValueError("fallback_universe_shrink_exceeded")
+
+        suspension_frame = ak.stock_tfp_em(date=trade_date.replace("-", ""))
+        self._save_security_status(fresh, suspension_frame, trade_date)
+        exclusions = {
+            "schema_version": "universe-exclusions-v1",
+            "count": len(excluded_codes),
+            "content_hash": _codes_hash(excluded_codes),
+            "categories": {
+                "exchange_delisted": {
+                    "count": len(delisted_codes),
+                    "content_hash": _codes_hash(delisted_codes),
+                    "catalog": delisted_catalog,
+                },
+                "not_in_current_quote_table": {
+                    "count": len(pending_codes),
+                    "content_hash": _codes_hash(pending_codes),
+                    "source_id": "tencent:qt.gtimg.cn",
+                },
+                "non_equity_special": {
+                    "count": len(special_codes),
+                    "content_hash": _codes_hash(special_codes),
+                    "rule": "name_contains:转换",
+                },
+            },
+        }
+        verification = {
+            "schema_version": "universe-verification-v1",
+            "discovery_source_id": "akshare:stock_info_a_code_name",
+            "quote_source_id": "tencent:qt.gtimg.cn",
+            "security_status_source": "akshare:stock_tfp_em",
+            "primary_failure": primary_failure,
+            "discovered_count": int(len(discovery)),
+            "live_quote_count": confirmation["confirmed_count"],
+            "live_quote_coverage_ratio": confirmation["coverage_ratio"],
+            "failed_quote_batches": confirmation["failed_batches"],
+            "verified_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+        self._save_stock_names(
+            fresh,
+            source="tencent",
+            exclusions=exclusions,
+            verification=verification,
+        )
+        self.universe_refresh_status = {
+            "fresh": True,
+            "source": "akshare-code-name+tencent-confirmation",
+            "coverage_ratio": confirmation["coverage_ratio"],
+            "count": len(fresh),
+            "excluded_count": len(excluded_codes),
+            "primary_failure": primary_failure,
+            "security_status_source": "akshare:stock_tfp_em",
+        }
+        return fresh
+
     def refresh_stock_universe(self, trade_date: str | None = None) -> dict:
         """刷新当前A股名单；失败时保留本地名单，绝不把完整缓存降级成内置小表。"""
         previous = self._load_local_stock_names()
@@ -1427,6 +1660,19 @@ class AKShareFetcher:
         except Exception as exc:
             print(f"  刷新股票名单失败: {exc}，继续使用本地完整名单")
             failure_reason = f"live_universe_source_failed:{type(exc).__name__}"
+        if trade_date:
+            try:
+                return self._refresh_stock_universe_akshare_fallback(
+                    previous,
+                    trade_date,
+                    failure_reason,
+                )
+            except Exception as exc:
+                print(f"  备用股票名单失败: {exc}，尝试确认本地完整名单")
+                failure_reason = (
+                    f"{failure_reason};fallback_universe_source_failed:"
+                    f"{type(exc).__name__}"
+                )
         restored = self._restore_verified_cached_universe(
             previous,
             trade_date,
@@ -1531,6 +1777,10 @@ class AKShareFetcher:
                 if code not in universe:
                     mapping.pop(code, None)
         existing = set(self.csv_manager.list_all_stocks())
+        provenance = self._load_provenance().get("stocks") or {}
+        requested_history_start = (
+            datetime.now() - timedelta(days=365 * years)
+        ).strftime("%Y-%m-%d")
         queue = []
         for code in sorted(universe):
             if code not in existing:
@@ -1555,6 +1805,13 @@ class AKShareFetcher:
                 continue
             rows = len(self.csv_manager.read_stock(code, nrows=220))
             if rows < 220 and code not in short_history:
+                queue.append(code)
+                continue
+            history = provenance.get(code) or {}
+            history_request = str(history.get("history_requested_start") or "")
+            if not bool(history.get("history_complete")) or (
+                history_request and history_request > requested_history_start
+            ):
                 queue.append(code)
         if max_stocks is not None:
             queue = queue[: max(0, max_stocks)]

@@ -207,7 +207,9 @@ def run_daily_evolution(csv_manager: CSVManager | None = None) -> dict:
 
     from utils.reference_snapshots import capture_reference_snapshot
 
-    data_root = getattr(csv_manager, "base_data_dir", Path("data"))
+    from utils.runtime_paths import market_data_dir
+
+    data_root = getattr(csv_manager, "base_data_dir", market_data_dir())
     pinned_snapshot_id = csv_manager.snapshot_id
     if not pinned_snapshot_id:
         return {

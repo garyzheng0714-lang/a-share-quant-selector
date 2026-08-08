@@ -8,6 +8,8 @@ import threading
 import pandas as pd
 from pathlib import Path
 
+from utils.runtime_paths import market_data_dir
+
 
 class MarketDataReadError(RuntimeError):
     """已存在的行情文件无法解析；不得降级成“无信号”。"""
@@ -17,7 +19,7 @@ class CSVManager:
     """CSV 文件管理器；每个实例在创建时绑定单个快照。"""
 
     def __init__(self, data_dir, *, resolve_snapshot=True, writable=None):
-        self.base_data_dir = Path(data_dir)
+        self.base_data_dir = market_data_dir(data_dir)
         if writable is not False:
             self.base_data_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir = self.base_data_dir

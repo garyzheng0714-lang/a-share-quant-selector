@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from utils.runtime_paths import operations_db_path
+
 
 SCHEMA_VERSION = 6
 ALERT_SEVERITIES = {"warning", "critical"}
@@ -23,7 +25,7 @@ class TaskQueueCapacityExceeded(RuntimeError):
 
 
 def _db_path() -> Path:
-    return Path(os.environ.get("QUANT_OPERATIONS_DB", "data/operations.db"))
+    return operations_db_path()
 
 
 def _now() -> str:
@@ -426,6 +428,53 @@ def get_task(task_id: str) -> dict | None:
     task = _task_dict(row)
     task["attempts"] = [_attempt_dict(attempt) for attempt in attempts]
     return task
+
+
+def get_latest_task(task_type: str) -> dict | None:
+    """读取某类任务最近一次运行，供只读运行状态聚合使用。"""
+    if not str(task_type).strip():
+        raise ValueError("task_type_required")
+    try:
+        with _read_connection() as conn:
+            row = conn.execute(
+                """SELECT * FROM tasks WHERE task_type=?
+                   ORDER BY created_at DESC, task_id DESC LIMIT 1""",
+                (str(task_type),),
+            ).fetchone()
+            attempts = (
+                conn.execute(
+                    """SELECT * FROM task_attempts WHERE task_id=?
+                       ORDER BY attempt_no""",
+                    (row["task_id"],),
+                ).fetchall()
+                if row is not None
+                else []
+            )
+    except FileNotFoundError:
+        return None
+    if row is None:
+        return None
+    task = _task_dict(row)
+    task["attempts"] = [_attempt_dict(attempt) for attempt in attempts]
+    return task
+
+
+def update_task_progress(task_id: str, owner_id: str, progress: dict) -> bool:
+    """运行中更新可读进度；不改变任务终态、租约或重试语义。"""
+    result_json = json.dumps(
+        progress,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    with _connection(immediate=True) as conn:
+        cursor = conn.execute(
+            """UPDATE tasks SET result_json=?, heartbeat_at=?
+               WHERE task_id=? AND status='running' AND lease_owner=?""",
+            (result_json, _now(), task_id, owner_id),
+        )
+    return cursor.rowcount == 1
 
 
 def cancel_task(

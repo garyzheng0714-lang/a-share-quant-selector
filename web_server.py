@@ -33,6 +33,7 @@ from views.decision_api import decision_bp  # noqa: E402
 from views.factor_api import factor_bp  # noqa: E402
 from views.insight_api import insight_bp  # noqa: E402
 from views.operations_api import operations_bp  # noqa: E402
+from views.pipeline_api import pipeline_bp  # noqa: E402
 from views.performance_api import perf_bp  # noqa: E402
 from views.quant_pick_api import quant_pick_bp  # noqa: E402
 from views.super_b1_api import super_b1_bp  # noqa: E402
@@ -52,6 +53,7 @@ for blueprint in (
     decision_bp,
     universe_bp,
     operations_bp,
+    pipeline_bp,
 ):
     app.register_blueprint(blueprint)
 
@@ -577,12 +579,22 @@ def api_get_stock_kline(code: str):
         except Exception as exc:
             logger.debug("读取 canonical 历史信号失败 [%s]: %s", code, exc)
 
+        file_evidence = ((current.get("manifest") or {}).get("files") or {}).get(
+            code, {}
+        )
+
         return jsonify(
             {
                 "success": True,
                 "code": code,
                 "name": names.get(code, "未知"),
                 "period": period,
+                "snapshot_id": current.get("snapshot_id"),
+                "source_id": file_evidence.get("source_id"),
+                "history_source_id": file_evidence.get("history_source_id"),
+                "adjustment": file_evidence.get("adjustment"),
+                "stored_from": file_evidence.get("first_trade_date"),
+                "stored_rows": file_evidence.get("rows"),
                 "as_of": as_of.strftime("%Y-%m-%d"),
                 "week_end": week_end.strftime("%Y-%m-%d")
                 if week_end is not None

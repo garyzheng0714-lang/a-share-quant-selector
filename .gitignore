@@ -36,6 +36,7 @@ env/
 # Data files (large, should not be committed)
 data/
 !data/.gitkeep
+.runtime/
 
 # Logs
 *.log

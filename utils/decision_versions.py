@@ -118,7 +118,9 @@ def data_version(data_dir: str | Path = "data") -> str:
     """数据版本就是经 manifest 内容校验的不可变 snapshot ID。"""
     from utils.market_snapshot import load_current_market_snapshot, load_market_snapshot
 
-    root = Path(data_dir)
+    from utils.runtime_paths import market_data_dir
+
+    root = market_data_dir(data_dir)
     # CSVManager.data_dir 可能已经是 snapshots/<id>/payload。
     if root.name == "payload" and len(root.parent.name) == 64:
         base = root.parents[2]
