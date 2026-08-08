@@ -20,7 +20,7 @@ update:
 # ANTHROPIC_API_KEY。未配置时解释功能停用，不影响规则决策。
 llm:
   provider: "ark"  # ark | anthropic
-  model: ""        # Ark: ep-...；Anthropic: 可选模型名
+  model: "ep-20260708193245-4l9ft"  # 项目当前 Ark 接入点；Anthropic 可换模型名
   base_url: "https://ark.cn-beijing.volces.com/api/v3"
 
 # 分层决策：市场 → 板块 → 个股 → 执行

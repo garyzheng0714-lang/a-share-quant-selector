@@ -557,7 +557,7 @@ class DecisionLedgerTest(unittest.TestCase):
             "status": "not_called",
             "role": "explanation",
             "input_hash": "hash-1",
-            "reason_codes": ["no_approved_candidates"],
+            "reason_codes": ["no_cloud_stair_signals"],
         }
         first_ai = save_ai_decision_run(ai)
         second_ai = save_ai_decision_run(ai)

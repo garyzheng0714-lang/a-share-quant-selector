@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 _CONFIG_PATH = Path(__file__).parent.parent / "config" / "config.yaml"
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
 DEFAULT_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
-COMMENT_PROMPT_VERSION = "quant-explainer-v3"
+DEFAULT_ARK_MODEL = "ep-20260708193245-4l9ft"
+COMMENT_PROMPT_VERSION = "cloud-stair-explainer-v1"
 
 
 def _load_llm_config() -> dict:
@@ -130,10 +131,11 @@ _COMMENTS_SCHEMA = """
 """
 
 COMMENT_SYSTEM_PROMPT = (
-    "你是A股量化决策的解释器，服务的用户没有金融专业背景。"
+    "你是A股云阶战法的研究解释器，服务的用户没有金融专业背景。"
     "请用简体中文回复。"
-    "股票及其动作已经由分层量化系统确定；你无权挑选、排序或改变 buy/observe/avoid 动作。"
-    "你的唯一任务是解释候选为何进入研究池及其风险，不得输出直接买入指令或保证性结论。"
+    "股票及其买点已经由云阶公式确定；你无权增删、排序或改变规则动作。"
+    "你的唯一任务是结合云阶结构、K线特征与行业热度，解释当前优势和具体失效风险。"
+    "不得保证收益，也不得以你自己的判断覆盖云阶规则结论。"
     "只能使用输入里截至决策日的量化证据，禁止编造新闻、公告或业绩数据。"
 )
 
@@ -190,7 +192,7 @@ def _build_comment_prompt(
         f"## 决策截止日 {trade_date}",
         f"- 决策 run_id: {decision_run_id}",
         "",
-        "以下股票由量化策略选定。不得重排、增删或改变动作。",
+        "以下股票已通过云阶的突破确认。不得重排、增删或改变规则动作。",
         "",
     ]
     for stock in stocks:
@@ -199,6 +201,15 @@ def _build_comment_prompt(
             f"### {code} {stock.get('name')}｜现价 {stock.get('close')}｜"
             f"行业 {stock.get('industry') or '未知'}"
         )
+        signal_bits = []
+        if stock.get("peak_date"):
+            signal_bits.append(f"前高峰日 {stock.get('peak_date')}")
+        if stock.get("wave_gain_pct") is not None:
+            signal_bits.append(f"第一波涨幅 {stock.get('wave_gain_pct')}%")
+        if stock.get("pct_change") is not None:
+            signal_bits.append(f"信号日涨跌 {stock.get('pct_change')}%")
+        if signal_bits:
+            lines.append(f"- 云阶证据: {'；'.join(signal_bits)}；突破确认已成立")
         sector = stock.get("sector") or {}
         if sector:
             delta = sector.get("delta3")
@@ -222,8 +233,8 @@ def _build_comment_prompt(
     lines.extend(
         [
             "## 输出要求",
-            "1. market_note：说明这些是研究候选，不是确定性收益结论；",
-            "2. comments：逐一覆盖上面的每只股票，解释入池证据和具体风险条件；",
+            "1. market_note：用一句话说明今日云阶候选整体特征，不做收益保证；",
+            "2. comments：逐一覆盖上面的每只股票；comment 解释云阶结构与行业环境是否相互支持，risk 必须给出可观察的失效条件；",
             "3. 不得挑选、排序、增加或遗漏股票。",
         ]
     )
@@ -231,9 +242,7 @@ def _build_comment_prompt(
 
 
 def _call_ark_comment(api_key: str, llm_cfg: dict, prompt: str) -> tuple[dict, str]:
-    model = llm_cfg.get("model")
-    if not model:
-        raise ValueError("llm_model_missing")
+    model = llm_cfg.get("model") or DEFAULT_ARK_MODEL
     base_url = (llm_cfg.get("base_url") or DEFAULT_ARK_BASE_URL).rstrip("/")
     schema_hint = (
         "\n\n只输出 JSON 对象："

@@ -15,10 +15,12 @@ x-quant-common: &quant-common
     QUANT_ADMIN_TOKEN_FILE: /run/secrets/quant_admin_token
     QUANT_PUBLISHER_TOKEN_FILE: /run/secrets/quant_publisher_token
     QUANT_VIEWER_TOKEN_FILE: /run/secrets/quant_viewer_token
+    ARK_API_KEY_FILE: /run/secrets/ark_api_key
   secrets:
     - quant_admin_token
     - quant_publisher_token
     - quant_viewer_token
+    - ark_api_key
   security_opt:
     - no-new-privileges:true
   cap_drop:
@@ -84,3 +86,5 @@ secrets:
     file: ${QUANT_PUBLISHER_TOKEN_FILE:?set QUANT_PUBLISHER_TOKEN_FILE}
   quant_viewer_token:
     file: ${QUANT_VIEWER_TOKEN_FILE:?set QUANT_VIEWER_TOKEN_FILE}
+  ark_api_key:
+    file: ${ARK_API_KEY_FILE:?set ARK_API_KEY_FILE}

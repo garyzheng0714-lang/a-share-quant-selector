@@ -244,7 +244,13 @@ jobs:
           RELEASE_SHA: ${{ needs.verify.outputs.sha }}
           RUNTIME_IMAGE: ${{ steps.stage.outputs.image }}
           RUNTIME_IMAGE_ID: ${{ steps.stage.outputs.image_id }}
+          ARK_API_KEY: ${{ secrets.ARK_API_KEY }}
         run: |
+          ssh "$USER@$HOST" "install -m 700 -d /opt/a-share-quant/secrets"
+          if test -n "$ARK_API_KEY"; then
+            printf '%s' "$ARK_API_KEY" | ssh "$USER@$HOST" \
+              "umask 077; cat > /opt/a-share-quant/secrets/ark-api-key"
+          fi
           ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=8 "$USER@$HOST" \
             "IMAGE='$IMAGE' DIGEST='$DIGEST' RELEASE_SHA='$RELEASE_SHA' RUNTIME_IMAGE='$RUNTIME_IMAGE' RUNTIME_IMAGE_ID='$RUNTIME_IMAGE_ID' bash -s" <<'REMOTE'
           set -euo pipefail
@@ -263,6 +269,10 @@ jobs:
           ensure_runtime_token secrets/admin-token
           ensure_runtime_token secrets/publisher-token
           ensure_runtime_token secrets/viewer-token
+          if ! test -e secrets/ark-api-key; then
+            : > secrets/ark-api-key
+          fi
+          chmod 600 secrets/ark-api-key
           BOOTSTRAP_ENV=.bootstrap.env
           BOOTSTRAP_NAME=a-share-quant-snapshot-bootstrap
           cleanup_env() {
@@ -277,6 +287,7 @@ jobs:
             echo "QUANT_ADMIN_TOKEN_FILE=/opt/a-share-quant/secrets/admin-token"
             echo "QUANT_PUBLISHER_TOKEN_FILE=/opt/a-share-quant/secrets/publisher-token"
             echo "QUANT_VIEWER_TOKEN_FILE=/opt/a-share-quant/secrets/viewer-token"
+            echo "ARK_API_KEY_FILE=/opt/a-share-quant/secrets/ark-api-key"
           } > "$BOOTSTRAP_ENV"
           chmod 600 "$BOOTSTRAP_ENV"
           # A volume or cache directory first touched by an older/root container can
@@ -379,6 +390,10 @@ jobs:
           ensure_runtime_token secrets/admin-token
           ensure_runtime_token secrets/publisher-token
           ensure_runtime_token secrets/viewer-token
+          if ! test -e secrets/ark-api-key; then
+            : > secrets/ark-api-key
+          fi
+          chmod 600 secrets/ark-api-key
           # 上一次若在镜像预热阶段被外部取消，恢复它尚未切换的发布文件。
           if test -f .release.env.next && test -f .rollback-compose.yml; then
             cp -f .rollback-compose.yml docker-compose.yml
@@ -458,6 +473,7 @@ jobs:
             echo "QUANT_ADMIN_TOKEN_FILE=/opt/a-share-quant/secrets/admin-token"
             echo "QUANT_PUBLISHER_TOKEN_FILE=/opt/a-share-quant/secrets/publisher-token"
             echo "QUANT_VIEWER_TOKEN_FILE=/opt/a-share-quant/secrets/viewer-token"
+            echo "ARK_API_KEY_FILE=/opt/a-share-quant/secrets/ark-api-key"
           } > .release.env.next
           if test "$PREVIOUS_COMPOSE" -eq 1 && test "$PREVIOUS_ENV" -eq 1; then
             PREVIOUS_STOPPED=1
@@ -559,6 +575,7 @@ jobs:
           stats = read_json("/api/stats")
           decision = read_json("/api/decision/latest")
           quant_pick = read_json("/api/quant-pick")
+          recommend = read_json("/api/recommend")
           snapshot_id = version.get("snapshot_id")
           scheduler = readiness.get("scheduler") or {}
           market_data = readiness.get("market_data") or {}
@@ -580,6 +597,15 @@ jobs:
           assert quant_pick.get("available") is True
           assert (quant_pick.get("freshness") or {}).get("snapshot_id") == snapshot_id
           assert (quant_pick.get("decision") or {}).get("run_id") == decision.get("run_id")
+          assert recommend.get("available") is True
+          assert recommend.get("snapshot_id") == snapshot_id
+          candidates = recommend.get("candidates") or []
+          assert len(candidates) == int(recommend.get("signal_count") or 0)
+          assert all(row.get("industry_available") is True for row in candidates)
+          if candidates:
+              assert (recommend.get("ai") or {}).get("available") is True
+              assert (recommend.get("ai") or {}).get("status") == "explained"
+              assert all(row.get("ai_analysis") for row in candidates)
           PY
             then
               docker compose --env-file .release.env ps

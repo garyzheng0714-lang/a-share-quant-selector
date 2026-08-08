@@ -22,7 +22,7 @@ export function AppRouter() {
     if (location.pathname === "/data-pipeline") return { element: <DataPipelinePage />, params: {} };
     if (["/performance", "/history"].includes(location.pathname)) return { element: <Navigate to="/review" replace />, params: {} };
     if (location.pathname === "/today") return { element: <Navigate to="/stocks" replace />, params: {} };
-    return { element: <Navigate to="/sectors" replace />, params: {} };
+    return { element: <Navigate to="/stocks" replace />, params: {} };
   }, [location.pathname]);
 
   return (
