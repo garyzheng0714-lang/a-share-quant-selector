@@ -12,7 +12,7 @@ from utils.decision_ledger import save_ai_decision_run
 
 
 TZ = ZoneInfo("Asia/Shanghai")
-PROMPT_VERSION = "cloud-stair-explainer-v2"
+PROMPT_VERSION = "cloud-stair-explainer-v3"
 
 
 def _input_hash(

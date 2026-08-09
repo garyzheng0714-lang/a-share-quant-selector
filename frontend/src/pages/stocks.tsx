@@ -8,10 +8,10 @@ import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/Segme
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { DecisionKline, type DecisionPeriod, type DecisionSubPanel } from "@/components/decision/decision-kline";
 import { LoadError, Skeleton } from "@/components/ui";
-import type { CloudEventEvidence, CloudMarketContext, RecommendStock, SectorHot } from "@/lib/api";
+import type { CloudMarketContext, RecommendStock, SectorHot } from "@/lib/api";
 import { useCloudStairReview, useKline, useRecommend, useSectorDetail, useSectors } from "@/lib/hooks";
 
-type DetailPanel = "news" | "history" | "peers" | null;
+type DetailPanel = "history" | "peers" | null;
 type CandidateFilter = "sector" | "ai" | "wave" | "heat" | "industry";
 type SectorDrawerRow = {
   name: string;
@@ -23,7 +23,6 @@ type SectorDrawerRow = {
   heat_series?: number[];
   rank?: number;
   total?: number;
-  reasons?: string[];
 };
 
 const periodLabels: Record<DecisionPeriod, string> = {
@@ -45,24 +44,6 @@ function signed(value?: number | null, digits = 1, suffix = "") {
   return `${value > 0 ? "+" : ""}${value.toFixed(digits)}${suffix}`;
 }
 
-const riskTagLabels: Record<string, string> = {
-  accident: "事故或停产",
-  deal_failed: "重组终止",
-  debt_or_fraud: "债务或诉讼",
-  delisting: "退市风险",
-  earnings_shock: "业绩恶化",
-  inquiry: "监管问询",
-  investigation: "立案调查",
-  penalty: "处罚处分",
-  pledge: "质押或冻结",
-  reduction: "股东减持",
-  risk_notice: "风险提示",
-};
-
-function riskTagLabel(tag: string) {
-  return riskTagLabels[tag] || tag.replaceAll("_", " ");
-}
-
 function actionTone(stock: RecommendStock) {
   return stock.action === "buy" ? "buy" : "observe";
 }
@@ -77,28 +58,8 @@ function sectorLine(stock: RecommendStock) {
   return `${stock.industry} · 热度 ${Math.round(sector.score)} · ${sector.rank}/${sector.total} · ${stageLabel(sector.stage)}`;
 }
 
-function eventVariant(event: CloudEventEvidence): "success" | "error" | "warning" | "neutral" {
-  if (event.sentiment === "positive") return "success";
-  if (event.sentiment === "negative") return "error";
-  if (event.sentiment === "mixed") return "warning";
-  return "neutral";
-}
-
-function eventLabel(event: CloudEventEvidence) {
-  return event.sentiment_label || (event.source_category === "announcement" ? "公告" : "中性信息");
-}
-
-function eventTime(value?: string) {
-  if (!value) return "时间未记录";
-  return value.slice(5, 16).replace("T", " ");
-}
-
 function intelligenceLine(stock: RecommendStock) {
-  const counts = stock.event_counts;
-  const eventText = counts
-    ? `消息 +${counts.positive} / -${counts.negative}`
-    : "消息待收录";
-  return `云阶结构 ${stock.structure_score?.toFixed(0) ?? "—"} · ${sectorLine(stock)} · ${eventText}`;
+  return `云阶结构 ${stock.structure_score?.toFixed(0) ?? "—"} · ${sectorLine(stock)}`;
 }
 
 function visibleByFilters(stock: RecommendStock, filters: Set<CandidateFilter>) {
@@ -134,12 +95,10 @@ function CandidateDetail({
   stock,
   tradeDate,
   marketContext,
-  intelligenceCutoff,
 }: {
   stock: RecommendStock;
   tradeDate?: string;
   marketContext?: CloudMarketContext;
-  intelligenceCutoff?: string | null;
 }) {
   const [period, setPeriod] = useState<DecisionPeriod>("daily");
   const [chartSettings, setChartSettings] = useState(false);
@@ -155,14 +114,7 @@ function CandidateDetail({
     () => (review.data?.picks || []).filter((pick) => pick.code === stock.code).slice(0, 10),
     [review.data?.picks, stock.code],
   );
-  const events = stock.decision_evidence?.events || [];
-  const hardRiskTags = events.flatMap((event) => event.hard_tags || []);
-  const reviewRiskTags = events.flatMap((event) => event.review_tags || []);
-  const riskLine = hardRiskTags.length
-    ? `重要风险 · ${Array.from(new Set(hardRiskTags)).map(riskTagLabel).join(" / ")}`
-    : reviewRiskTags.length
-      ? `需复核 · ${Array.from(new Set(reviewRiskTags)).map(riskTagLabel).join(" / ")}`
-      : stock.ai_analysis?.risk || "通过 · 暂无已记录硬红线";
+  const riskLine = stock.ai_analysis?.risk || "暂无已记录的结构失效条件";
   const sector = stock.sector;
   const lastRow = kline.data?.data?.at(-1);
   const readoutDate = String(lastRow?.[0] || tradeDate || "—");
@@ -251,7 +203,7 @@ function CandidateDetail({
                 <Icon icon="viewColumns" size="xsm" color="accent" label="优先级证据" />
                 <strong>{stock.rank_label || "云阶候选"}</strong>
                 <Badge variant="neutral" label={`证据 ${stock.evidence_grade || "—"}级`} />
-                <span>综合优先级 {stock.priority_score.toFixed(1)}；云阶结构 {stock.structure_score?.toFixed(1) ?? "—"}，板块 {stock.sector_score?.toFixed(1) ?? "—"}，事件修正 {signed(stock.event_adjustment, 1)}。</span>
+                <span>综合优先级 {stock.priority_score.toFixed(1)}；云阶结构 {stock.structure_score?.toFixed(1) ?? "—"}，板块 {stock.sector_score?.toFixed(1) ?? "—"}。</span>
               </div>
             )}
             {(stock.signal_steps || []).map((step) => (
@@ -287,57 +239,19 @@ function CandidateDetail({
           </div>
         </section>
 
-        <section className="q-detail-section" aria-labelledby={`news-${stock.code}`}>
-          <div className="q-section-heading-row">
-            <h3 id={`news-${stock.code}`}>消息面</h3>
-            <span>{events.length ? `近 30 日 ${events.length} 条 · 利好 ${stock.event_counts?.positive || 0} · 利空 ${stock.event_counts?.negative || 0}` : stock.news_available === false ? "情报抓取部分失败" : "当前情报快照未收录事件"}</span>
-          </div>
-          {events.length ? (
-            <div className="q-top-news">
-              {events.slice(0, 3).map((event, index) => (
-                <div key={event.event_id || `${event.title}-${index}`}>
-                  <Badge variant={eventVariant(event)} label={eventLabel(event)} />
-                  <span className="q-news-copy">
-                    {event.source_url ? <a href={event.source_url} target="_blank" rel="noreferrer">{event.title}</a> : <strong>{event.title}</strong>}
-                    <small>{event.source_name || event.source || "来源未记录"}{event.summary ? ` · ${event.summary}` : ""}</small>
-                  </span>
-                  <time>{eventTime(event.published_at)}</time>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="q-muted-line">没有记录不代表没有利好或利空，只代表截至当前情报截止时间尚未收录。</p>
-          )}
-          {intelligenceCutoff && <p className="q-intelligence-cutoff">情报截止 {intelligenceCutoff.slice(0, 16).replace("T", " ")} · 推荐后出现的消息只进入后续复盘</p>}
-        </section>
-
         <div className={`q-next-step q-next-step--${actionTone(stock)}`}>
           <div>
             <span>下一步</span>
             <strong>{stock.action_label} · {marketContext?.execution_mode || stock.action_detail}</strong>
-            <p>云阶规则已完成突破确认；市场温度只调整执行强度，AI 只解释已落账证据。</p>
+            <p>云阶规则已完成突破确认；市场温度只调整执行强度，AI 只解释结构与板块证据。</p>
           </div>
           <div><span>证据与风险</span><strong>{stock.evidence_grade ? `${stock.evidence_grade}级 · ` : ""}{riskLine}</strong></div>
         </div>
 
         <div className="q-detail-links">
-          <Button label={`全部新闻与公告 (${events.length})`} variant="ghost" size="sm" onClick={() => togglePanel("news")} />
           <Button label={`历史被选中记录 (${history.length})`} variant="ghost" size="sm" onClick={() => togglePanel("history")} />
           <Button label="同板块横向对比" variant="ghost" size="sm" onClick={() => togglePanel("peers")} />
         </div>
-
-        {panel === "news" && (
-          <div className="q-inline-panel">
-            {events.length ? events.map((event, index) => (
-              <article key={event.event_id || `${event.title}-${index}`}>
-                <div><Badge variant={eventVariant(event)} label={eventLabel(event)} /><span>{event.source_name || event.source || "来源未记录"}</span><time>{event.published_at || "时间未记录"}</time></div>
-                <strong>{event.title}</strong>
-                {event.summary && <p>{event.summary}</p>}
-                {event.source_url && <a href={event.source_url} target="_blank" rel="noreferrer">查看来源</a>}
-              </article>
-            )) : <p>当前没有已落账的新闻或公告。</p>}
-          </div>
-        )}
 
         {panel === "history" && (
           <div className="q-inline-panel q-history-table" role="region" aria-label="历史被选中记录">
@@ -410,9 +324,6 @@ export function Component() {
   const leader = recommend.data?.sector_leader || sectorRows[0] || null;
   const activeSectorName = selectedSector || leader?.name || null;
   const activeSector = sectorRows.find((sector) => sector.name === activeSectorName) || leader;
-  const sectorEvents = allCandidates
-    .filter((stock) => stock.industry === activeSectorName)
-    .flatMap((stock) => stock.decision_evidence?.events || []);
 
   const resolvedOpenCode = openCode === undefined
     ? candidates[0]?.code || null
@@ -444,13 +355,6 @@ export function Component() {
   const visibleCandidates = showAll ? candidates : candidates.slice(0, 6);
   const marketContext = decision.market_context;
   const intelligence = decision.intelligence;
-  const eventTotals = allCandidates.reduce(
-    (total, stock) => ({
-      positive: total.positive + (stock.event_counts?.positive || 0),
-      negative: total.negative + (stock.event_counts?.negative || 0),
-    }),
-    { positive: 0, negative: 0 },
-  );
   const combinationStocks = (intelligence?.combination_codes || [])
     .map((code) => allCandidates.find((stock) => stock.code === code))
     .filter((stock): stock is RecommendStock => Boolean(stock));
@@ -481,9 +385,9 @@ export function Component() {
             <p>{leader ? `第 ${leader.rank || 1}/${leader.total || sectors.data?.industries || "—"} · 3 日 ${signed(leader.delta3, 1, " 分")}` : "行业热度尚未就绪"}</p>
           </div>
           <div>
-            <span>情报覆盖</span>
-            <strong>{intelligence?.coverage ? `${intelligence.coverage.covered}/${intelligence.coverage.total}` : "—"}<small>只</small></strong>
-            <p>利好 {eventTotals.positive} · 利空 {eventTotals.negative} · {intelligence?.available ? "已锁定截止时间" : "等待收盘情报任务"}</p>
+            <span>排序依据</span>
+            <strong>70 / 30</strong>
+            <p>云阶结构 / 板块共振 · AI 不改排序</p>
           </div>
         </div>
         <div className="q-ai-status"><StatusDot variant={aiStatus?.available ? "success" : "warning"} label={aiStatusText} /><span>{aiStatusText}</span></div>
@@ -517,7 +421,7 @@ export function Component() {
                 <span className="q-candidate-price"><strong>{stock.close.toFixed(2)}</strong><em className={(stock.pct_change || 0) >= 0 ? "q-up" : "q-down"}>{signed(stock.pct_change, 2, "%")}</em></span>
                 <Badge variant="error" label={stock.action_label} />
               </ClickableCard>
-              {isOpen && <CandidateDetail stock={stock} tradeDate={decision.trade_date} marketContext={marketContext} intelligenceCutoff={intelligence?.cutoff_at} />}
+              {isOpen && <CandidateDetail stock={stock} tradeDate={decision.trade_date} marketContext={marketContext} />}
             </div>
           );
         }) : (
@@ -566,7 +470,7 @@ export function Component() {
             <span className="q-drawer-trigger-copy">
               <strong>板块全景</strong>
               <span>{sectors.data?.industries || sectorRows.length} 个行业 · 当前主线 {leader?.name || "待补全"}</span>
-              <small>点开看排名与已落账事件</small>
+              <small>点开看排名、趋势与板块广度</small>
             </span>
           }
           className="q-drawer-shell"
@@ -596,17 +500,15 @@ export function Component() {
               ))}
             </div>
             <aside className="q-sector-evidence">
-              <h3>{activeSector?.name || "板块"} · 已落账信息</h3>
+              <h3>{activeSector?.name || "板块"} · 当前状态</h3>
               {activeSector && <p>热度 {Math.round(activeSector.score || 0)} · {stageLabel(activeSector.stage)} · 3 日 {signed(activeSector.delta3, 1, " 分")}</p>}
-              {sectorEvents.length ? sectorEvents.slice(0, 5).map((event, index) => (
-                <article key={event.event_id || `${event.title}-${index}`}><Badge variant="neutral" label="事件" /><span>{event.title}</span></article>
-              )) : <p>当前决策账本没有收录该行业的事件。</p>}
+              {activeSector?.breadth_ma10 != null && <p>站上 MA10 的板块成分股占比 {activeSector.breadth_ma10.toFixed(1)}%。</p>}
             </aside>
           </div>
         </Collapsible>
       </section>
 
-      <p className="q-disclaimer">研究工具，不构成投资建议。云阶规则决定入选；结构、板块和事件证据生成可追溯优先级，市场温度只调整执行强度；AI 只解释已落账事实，不增删候选。</p>
+      <p className="q-disclaimer">研究工具，不构成投资建议。云阶规则决定入选；结构占 70%、板块占 30%；市场温度只调整执行强度；AI 只解释，不增删候选、不改变排序。</p>
     </main>
   );
 }

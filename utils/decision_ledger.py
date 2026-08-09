@@ -1041,32 +1041,6 @@ def save_event_evidence(event: dict) -> None:
         )
 
 
-def get_recent_event_evidence(
-    codes: set[str],
-    *,
-    start_at: str,
-    end_at: str,
-) -> list[dict]:
-    """只读已经抓取过的事件证据，供后续云阶情报快照复用。"""
-    normalized = sorted({str(code).zfill(6) for code in codes if code})
-    if not normalized:
-        return []
-    placeholders = ",".join("?" for _ in normalized)
-    with _get_read_conn() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT payload_json
-            FROM event_evidence
-            WHERE code IN ({placeholders})
-              AND published_at >= ?
-              AND published_at <= ?
-            ORDER BY published_at DESC, fetched_at DESC, evidence_id DESC
-            """,
-            (*normalized, start_at, end_at),
-        ).fetchall()
-    return [_loads(row["payload_json"], {}) for row in rows]
-
-
 def save_ai_decision_run(run: dict) -> str:
     now = datetime.now().astimezone().isoformat(timespec="microseconds")
     ai_run_id = run.get("ai_run_id") or uuid4().hex[:24]

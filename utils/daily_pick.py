@@ -32,7 +32,7 @@ _CONFIG_PATH = Path(__file__).parent.parent / "config" / "config.yaml"
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
 DEFAULT_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_ARK_MODEL = "ep-20260708193245-4l9ft"
-COMMENT_PROMPT_VERSION = "cloud-stair-explainer-v2"
+COMMENT_PROMPT_VERSION = "cloud-stair-explainer-v3"
 
 
 def _load_llm_config() -> dict:
@@ -136,8 +136,8 @@ COMMENT_SYSTEM_PROMPT = (
     "股票及其买点已经由云阶公式确定；你无权增删、排序或改变规则动作。"
     "你的唯一任务是结合云阶结构、K线特征与行业热度，解释当前优势和具体失效风险。"
     "不得保证收益，也不得以你自己的判断覆盖云阶规则结论。"
-    "只能使用输入里截至决策时间的量化证据和带 event_id 的事件，禁止编造新闻、公告或业绩数据。"
-    "必须区分已披露事实与影响推断；没有事件时要明确说情报未收录，不能说没有利好或利空。"
+    "本版本不提供新闻、公告或业绩事实；不得主动补充、搜索、猜测或暗示消息面。"
+    "只能使用输入中的云阶结构、K线特征和行业热度。"
 )
 
 COMMENT_SCHEMA = {
@@ -219,24 +219,6 @@ def _build_comment_prompt(
                 f"- 所属板块热度: {sector.get('score')} 分（{sector.get('stage')}，"
                 f"排名 {sector.get('rank')}/{sector.get('total')}，近3日变化 {delta_text}）"
             )
-        intelligence = stock.get("intelligence") or {}
-        events = intelligence.get("events") or []
-        counts = intelligence.get("event_counts") or {}
-        if events:
-            lines.append(
-                "- 近期事件计数: "
-                f"利好线索 {counts.get('positive', 0)}；"
-                f"利空风险 {counts.get('negative', 0)}；"
-                f"混合 {counts.get('mixed', 0)}；中性 {counts.get('neutral', 0)}"
-            )
-            for event in events[:8]:
-                lines.append(
-                    f"  - [{event.get('event_id')}] {event.get('sentiment_label') or '中性信息'}｜"
-                    f"{event.get('published_at')}｜{event.get('source_name') or event.get('source')}｜"
-                    f"{event.get('title')}"
-                )
-        else:
-            lines.append("- 近期事件: 当前情报快照未收录；不得据此断言没有利好或利空")
         try:
             frame = csv_manager.read_stock(code)
             if not frame.empty:
@@ -254,8 +236,7 @@ def _build_comment_prompt(
             "## 输出要求",
             "1. market_note：用一句话说明今日云阶候选整体特征，不做收益保证；",
             "2. comments：逐一覆盖上面的每只股票；comment 解释云阶结构与行业环境是否相互支持，risk 必须给出可观察的失效条件；",
-            "3. 有事件时，comment 必须概括最重要的利好/利空并写出对应 event_id；不得把媒体标题当成确定收益；",
-            "4. 不得挑选、排序、增加或遗漏股票。",
+            "3. 不得补充消息面、公告或业绩事实，也不得挑选、排序、增加或遗漏股票。",
         ]
     )
     return "\n".join(lines)

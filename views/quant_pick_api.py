@@ -46,7 +46,7 @@ def _current_close_decision() -> tuple[dict | None, dict, str | None]:
 def api_quant_comment():
     """Get 已由 worker 生成且与当前决策绑定的 AI 解释。"""
     try:
-        from utils.daily_pick import get_quant_comment
+        from utils.daily_pick import COMMENT_PROMPT_VERSION, get_quant_comment
 
         decision, freshness, reason = _current_close_decision()
         if decision is None:
@@ -59,7 +59,11 @@ def api_quant_comment():
             ), 503
 
         comment = get_quant_comment(decision["trade_date"])
-        if not comment or comment.get("decision_run_id") != decision.get("run_id"):
+        if (
+            not comment
+            or comment.get("decision_run_id") != decision.get("run_id")
+            or comment.get("prompt_version") != COMMENT_PROMPT_VERSION
+        ):
             return jsonify(
                 {
                     "available": False,
@@ -125,9 +129,11 @@ def api_quant_pick():
 def api_recommend():
     """云阶唯一决策首屏：信号、行业、买入结论与已固化 AI 解释。"""
     try:
+        from utils.ai_decision import PROMPT_VERSION
         from utils.cloud_stair_decision import load_cloud_stair_decision
+        from utils.cloud_stair_intelligence import METHODOLOGY
         from utils.csv_manager import CSVManager
-        from utils.daily_pick import get_quant_comment
+        from utils.daily_pick import COMMENT_PROMPT_VERSION, get_quant_comment
         from utils.decision_ledger import get_latest_ai_decision_run
 
         manager = CSVManager("data", writable=False)
@@ -140,12 +146,18 @@ def api_recommend():
         ai_run = None
         if decision:
             stored_comment = get_quant_comment(str(result.get("trade_date") or ""))
-            if stored_comment and stored_comment.get("decision_run_id") == decision.get(
-                "run_id"
+            if (
+                stored_comment
+                and stored_comment.get("decision_run_id") == decision.get("run_id")
+                and stored_comment.get("prompt_version") == COMMENT_PROMPT_VERSION
             ):
                 comment = stored_comment
             latest_ai = get_latest_ai_decision_run()
-            if latest_ai and latest_ai.get("decision_run_id") == decision.get("run_id"):
+            if (
+                latest_ai
+                and latest_ai.get("decision_run_id") == decision.get("run_id")
+                and latest_ai.get("prompt_version") == PROMPT_VERSION
+            ):
                 ai_run = latest_ai
 
         by_code = (comment or {}).get("by_code") or {}
@@ -153,6 +165,7 @@ def api_recommend():
         intelligence = ai_payload.get("intelligence") or {}
         intelligence_valid = bool(
             intelligence.get("available")
+            and intelligence.get("methodology") == METHODOLOGY
             and intelligence.get("trade_date") == result.get("trade_date")
             and intelligence.get("snapshot_id") == result.get("snapshot_id")
         )
@@ -169,9 +182,6 @@ def api_recommend():
             code = str(candidate.get("code") or "")
             decision_row = decision_by_code.get(code) or {}
             candidate_intelligence = intelligence_by_code.get(code) or {}
-            events = candidate_intelligence.get("events")
-            if events is None:
-                events = decision_row.get("events") or []
             rows.append(
                 {
                     **candidate,
@@ -184,10 +194,7 @@ def api_recommend():
                             "structure_score",
                             "structure_detail",
                             "sector_score",
-                            "event_adjustment",
-                            "event_counts",
                             "evidence_grade",
-                            "news_available",
                         )
                         if candidate_intelligence.get(key) is not None
                     },
@@ -195,7 +202,6 @@ def api_recommend():
                     "decision_evidence": {
                         "reason_codes": decision_row.get("reason_codes") or [],
                         "explanation": decision_row.get("explanation"),
-                        "events": events,
                         "baseline": decision_row.get("baseline") or {},
                     },
                 }
@@ -237,12 +243,6 @@ def api_recommend():
                 "market_context": market_context,
                 "intelligence": {
                     "available": intelligence_valid,
-                    "cutoff_at": (
-                        intelligence.get("cutoff_at") if intelligence_valid else None
-                    ),
-                    "coverage": (
-                        intelligence.get("coverage") if intelligence_valid else None
-                    ),
                     "combination_codes": (
                         intelligence.get("combination_codes")
                         if intelligence_valid
@@ -254,10 +254,7 @@ def api_recommend():
                     "ranking_note": (
                         intelligence.get("ranking_note")
                         if intelligence_valid
-                        else "情报快照尚未生成，当前沿用板块热度排序。"
-                    ),
-                    "errors": (
-                        intelligence.get("errors") if intelligence_valid else []
+                        else "云阶证据尚未生成，当前沿用板块热度排序。"
                     ),
                 },
                 "decision_run_id": (decision or {}).get("run_id"),

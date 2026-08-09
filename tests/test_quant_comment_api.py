@@ -51,6 +51,7 @@ class QuantCommentApiTest(unittest.TestCase):
         "utils.daily_pick.get_quant_comment",
         return_value={
             "decision_run_id": "run-1",
+            "prompt_version": "cloud-stair-explainer-v3",
             "market_note": "已记录",
             "by_code": {"600000": {"comment": "x", "risk": "y"}},
         },

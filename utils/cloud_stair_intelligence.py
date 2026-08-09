@@ -1,22 +1,18 @@
-"""只为云阶候选服务的市场、板块与事件证据层。
+"""只为云阶候选服务的市场与板块证据层。
 
-云阶公式仍是唯一入围规则；本模块只生成可追溯的相对排序、情报摘要和
-市场执行语境。抓取只发生在 worker，Web 只读取已经落入不可变 AI run 的结果。
+云阶公式仍是唯一入围规则；本模块只根据本地快照生成可追溯的相对排序和
+市场执行语境。它不采集消息，也不让 AI 改变候选与排序。
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from utils.runtime_paths import runtime_state_dir
-
-
 TZ = ZoneInfo("Asia/Shanghai")
-METHODOLOGY = "cloud_stair_priority_v1"
+METHODOLOGY = "cloud_stair_priority_v2"
 
 
 def build_market_context(csv_manager) -> dict:
@@ -100,59 +96,10 @@ def _structure_score(candidate: dict) -> tuple[float, dict]:
     }
 
 
-def _normal_title(value: str) -> str:
-    return re.sub(r"[\W_\d]+", "", value, flags=re.UNICODE).lower()
-
-
-def _dedupe_events(events: list[dict]) -> list[dict]:
-    seen: set[str] = set()
-    rows = []
-
-    def importance(row: dict) -> tuple[int, int, str]:
-        impact = {"high": 3, "medium": 2, "low": 1}.get(str(row.get("impact")), 0)
-        relevance = {"direct": 3, "mentioned": 2, "search_result": 1}.get(
-            str(row.get("relevance")),
-            2 if row.get("source_category") == "announcement" else 0,
-        )
-        return impact, relevance, str(row.get("published_at") or "")
-
-    for event in sorted(events, key=importance, reverse=True):
-        key = _normal_title(str(event.get("title") or ""))
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        rows.append(event)
-    return rows
-
-
-def _event_adjustment(events: list[dict]) -> tuple[float, dict]:
-    positive = sum(event.get("sentiment") == "positive" for event in events)
-    negative = sum(event.get("sentiment") == "negative" for event in events)
-    mixed = sum(event.get("sentiment") == "mixed" for event in events)
-    hard = sum(bool(event.get("hard_tags")) for event in events)
-    adjustment = (
-        min(positive * 1.5, 5)
-        - min(negative * 2.5 + mixed * 1.5, 8)
-        - min(hard * 6, 12)
-    )
-    return round(adjustment, 1), {
-        "positive": positive,
-        "negative": negative,
-        "mixed": mixed,
-        "neutral": max(0, len(events) - positive - negative - mixed),
-        "hard_risk": hard,
-    }
-
-
-def _evidence_grade(structure: float, sector: float, counts: dict) -> str:
-    if (
-        structure >= 88
-        and sector >= 70
-        and not counts["negative"]
-        and not counts["hard_risk"]
-    ):
+def _evidence_grade(structure: float, sector: float) -> str:
+    if structure >= 88 and sector >= 70:
         return "A"
-    if structure >= 76 and sector >= 50 and not counts["hard_risk"]:
+    if structure >= 76 and sector >= 50:
         return "B"
     return "C"
 
@@ -182,10 +129,7 @@ def build_cloud_stair_intelligence(
     as_of: str,
     csv_manager,
 ) -> dict:
-    """抓取并固化一次云阶情报快照；外部情报失败时保留云阶结果。"""
-    from utils.decision_ledger import get_recent_event_evidence
-    from utils.event_risk import fetch_stock_news_events
-
+    """从绑定快照固化云阶结构与板块优先级。"""
     cutoff = datetime.fromisoformat(as_of)
     if cutoff.tzinfo is None:
         cutoff = cutoff.replace(tzinfo=TZ)
@@ -194,34 +138,12 @@ def build_cloud_stair_intelligence(
         f"{trade_date}T23:59:59+08:00"
     ).astimezone(TZ)
     cutoff = min(cutoff, trade_date_cutoff)
-    start_date = (cutoff.date() - timedelta(days=30)).isoformat()
-    cache_root = runtime_state_dir() / "event_cache"
-    codes = {str(row.get("code") or "").zfill(6) for row in candidates}
-    news = fetch_stock_news_events(
-        candidates,
-        start_date,
-        cutoff.isoformat(timespec="seconds"),
-        cache_root / "stock-news",
-    )
-    stored_events = get_recent_event_evidence(
-        codes,
-        start_at=f"{start_date}T00:00:00+08:00",
-        end_at=cutoff.isoformat(timespec="seconds"),
-    )
-    events_by_code = {code: [] for code in codes}
-    for event in [*stored_events, *(news.get("events") or [])]:
-        code = str(event.get("code") or "")
-        if code in events_by_code:
-            events_by_code[code].append(event)
-
     rows = []
     for candidate in candidates:
         code = str(candidate.get("code") or "").zfill(6)
-        events = _dedupe_events(events_by_code.get(code) or [])
         structure, structure_detail = _structure_score(candidate)
         sector_score = float((candidate.get("sector") or {}).get("score") or 50)
-        adjustment, counts = _event_adjustment(events)
-        priority = _clamp(structure * 0.7 + sector_score * 0.3 + adjustment)
+        priority = _clamp(structure * 0.7 + sector_score * 0.3)
         rows.append(
             {
                 "code": code,
@@ -231,13 +153,7 @@ def build_cloud_stair_intelligence(
                 "structure_score": structure,
                 "structure_detail": structure_detail,
                 "sector_score": round(sector_score, 1),
-                "event_adjustment": adjustment,
-                "event_counts": counts,
-                "evidence_grade": _evidence_grade(structure, sector_score, counts),
-                "events": events[:30],
-                "news_available": bool(
-                    (news.get("availability_by_code") or {}).get(code)
-                ),
+                "evidence_grade": _evidence_grade(structure, sector_score),
             }
         )
     rows.sort(
@@ -250,11 +166,15 @@ def build_cloud_stair_intelligence(
         )
 
     market = build_market_context(csv_manager)
-    source_refs = ["event-evidence-ledger:recent", *(news.get("source_refs") or [])]
+    snapshot_id = getattr(csv_manager, "snapshot_id", None)
+    source_refs = [
+        f"cloud-stair-structure:{snapshot_id}",
+        f"sector-rotation:{snapshot_id}",
+    ]
     content = {
         "methodology": METHODOLOGY,
         "trade_date": trade_date,
-        "snapshot_id": getattr(csv_manager, "snapshot_id", None),
+        "snapshot_id": snapshot_id,
         "cutoff_at": cutoff.isoformat(timespec="seconds"),
         "market_context": market,
         "candidates": rows,
@@ -266,15 +186,12 @@ def build_cloud_stair_intelligence(
             "utf-8"
         )
     ).hexdigest()
-    covered = sum(bool(row.get("news_available")) for row in rows)
     return {
         "available": True,
         **content,
         "content_hash": f"sha256:{content_hash}",
-        "coverage": {"covered": covered, "total": len(rows)},
-        "errors": news.get("errors") or [],
         "ranking_note": (
-            "云阶决定入围；结构占 70%、板块占 30%，事件只作小幅修正。"
+            "云阶决定入围；结构占 70%、板块占 30%。不使用消息或 AI 改变排序。"
             "当前为可追溯优先级，不代表收益保证。"
         ),
     }

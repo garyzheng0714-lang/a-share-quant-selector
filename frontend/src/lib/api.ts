@@ -872,24 +872,6 @@ export interface FactorScanResponse {
   errors?: number;
 }
 
-export interface CloudEventEvidence {
-  event_id?: string;
-  title: string;
-  summary?: string;
-  source?: string;
-  source_name?: string;
-  source_category?: "announcement" | "media" | string;
-  source_url?: string;
-  published_at?: string;
-  sentiment?: "positive" | "negative" | "mixed" | "neutral";
-  sentiment_label?: string;
-  impact?: "high" | "medium" | "low";
-  relevance?: "direct" | "mentioned" | "search_result";
-  hard_tags?: string[];
-  review_tags?: string[];
-  positive_tags?: string[];
-}
-
 export interface CloudMarketContext {
   available: boolean;
   reason?: string;
@@ -925,16 +907,7 @@ export interface RecommendStock {
   priority_score?: number;
   structure_score?: number;
   sector_score?: number;
-  event_adjustment?: number;
   evidence_grade?: "A" | "B" | "C";
-  news_available?: boolean;
-  event_counts?: {
-    positive: number;
-    negative: number;
-    mixed: number;
-    neutral: number;
-    hard_risk: number;
-  };
   /** 推荐理由：云阶结构 + 板块热度/排名/趋势 */
   reason?: string;
   evidence?: string[];
@@ -956,7 +929,6 @@ export interface RecommendStock {
   decision_evidence?: {
     reason_codes: string[];
     explanation?: string | null;
-    events: CloudEventEvidence[];
     baseline: Record<string, unknown>;
   };
 }
@@ -993,12 +965,9 @@ export interface RecommendResponse {
   market_context?: CloudMarketContext;
   intelligence?: {
     available: boolean;
-    cutoff_at?: string | null;
-    coverage?: { covered: number; total: number } | null;
     combination_codes?: string[];
     source_refs?: string[];
     ranking_note?: string;
-    errors?: Array<{ code?: string; date?: string; error?: string }>;
   };
   decision_run_id?: string | null;
   freshness?: {
