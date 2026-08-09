@@ -54,7 +54,7 @@ class KlineApiTest(unittest.TestCase):
         self.assertTrue(all(value is not None for value in payload["data"][-1][6:10]))
 
     def test_invalid_period_is_rejected(self):
-        response = self.client.get("/api/stock/600000/kline?period=monthly")
+        response = self.client.get("/api/stock/600000/kline?period=quarterly")
         self.assertEqual(response.status_code, 400)
 
 
