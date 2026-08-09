@@ -149,12 +149,24 @@ def api_recommend():
                 ai_run = latest_ai
 
         by_code = (comment or {}).get("by_code") or {}
+        decision_by_code = {
+            str(item.get("code") or ""): item
+            for item in ((decision or {}).get("candidates") or [])
+        }
         rows = []
         for candidate in result.get("candidates") or []:
+            code = str(candidate.get("code") or "")
+            decision_row = decision_by_code.get(code) or {}
             rows.append(
                 {
                     **candidate,
-                    "ai_analysis": by_code.get(str(candidate.get("code") or "")),
+                    "ai_analysis": by_code.get(code),
+                    "decision_evidence": {
+                        "reason_codes": decision_row.get("reason_codes") or [],
+                        "explanation": decision_row.get("explanation"),
+                        "events": decision_row.get("events") or [],
+                        "baseline": decision_row.get("baseline") or {},
+                    },
                 }
             )
 

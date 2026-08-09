@@ -133,8 +133,10 @@ export interface KlineResponse {
   stored_rows?: number | null;
   as_of: string;
   week_end?: string | null;
+  period_end?: string | null;
   current_week_partial?: boolean;
-  change_label: "今日涨跌" | "本周涨跌";
+  current_period_partial?: boolean;
+  change_label: "今日涨跌" | "本周涨跌" | "本月涨跌";
   data: (string | number)[][];
   signals?: KlineSignal[];
 }
@@ -896,6 +898,25 @@ export interface RecommendStock {
   breakout_price?: number;
   wave_gain_pct?: number;
   ai_analysis?: { comment: string; risk: string } | null;
+  signal_steps?: Array<{
+    key: "first_wave" | "consolidation" | "breakout" | string;
+    label: string;
+    passed: boolean;
+    detail: string;
+  }>;
+  decision_evidence?: {
+    reason_codes: string[];
+    explanation?: string | null;
+    events: Array<{
+      event_id?: string;
+      title: string;
+      source_url?: string;
+      published_at?: string;
+      hard_tags?: string[];
+      review_tags?: string[];
+    }>;
+    baseline: Record<string, unknown>;
+  };
 }
 
 export interface RecommendResponse {
@@ -912,6 +933,7 @@ export interface RecommendResponse {
     plain: string;
     why?: string;
     decision_rule?: string;
+    steps?: Array<{ key: string; label: string }>;
     track?: {
       name: string;
       hold_days: number;
@@ -921,6 +943,7 @@ export interface RecommendResponse {
       oos_excess: number;
     };
   };
+  sector_leader?: ({ name: string } & Partial<SectorState>) | null;
   candidates?: RecommendStock[];
   today_buy?: RecommendStock[];
   honest_note?: string;

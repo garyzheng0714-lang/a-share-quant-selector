@@ -1,60 +1,46 @@
 import { useLocation } from "@/lib/spa-router";
 import { TopNav, TopNavHeading, TopNavItem } from "@astryxdesign/core/TopNav";
-import { Badge } from "@astryxdesign/core/Badge";
-import { Icon } from "@astryxdesign/core/Icon";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
-import { Text } from "@astryxdesign/core/Text";
-import { useSystemStatus } from "@/lib/hooks";
+import { usePipelineStatus } from "@/lib/hooks";
 
-const navItems = [{ to: "/stocks", label: "云阶决策", matches: ["/stocks", "/stock/"] }];
+const navItems = [
+  { to: "/stocks", label: "决策台" },
+  { to: "/review", label: "复盘" },
+  { to: "/admin", label: "后台" },
+];
 
 export function NavBar() {
   const location = useLocation();
-  const status = useSystemStatus();
-  const fresh = status.data?.market_data?.fresh;
-  const localDate = status.data?.market_data?.local_date;
-  const expectedDate = status.data?.market_data?.expected_date;
-  const statusLabel = status.error
-    ? "数据状态读取失败"
-    : fresh === true
-      ? `数据就绪${localDate ? ` · ${localDate}` : ""}`
-      : fresh === false
-        ? `数据过期${localDate ? ` · 截至 ${localDate}` : ""}${expectedDate ? ` · 应更新至 ${expectedDate}` : ""}`
-        : "正在检查数据";
+  const pipeline = usePipelineStatus();
+  const fresh = pipeline.data?.market.fresh === true;
+  const failed = Boolean(pipeline.error) || pipeline.data?.state === "unavailable";
+  const date = pipeline.data?.market.local_date;
+  const snapshot = pipeline.data?.market.snapshot_id;
+  const statusLabel = failed ? "数据不可用" : fresh ? "数据就绪" : pipeline.isLoading ? "正在检查数据" : "数据需复核";
 
   return (
     <TopNav
-      className="app-top-nav bg-surface"
+      className="q-top-nav"
       label="主导航"
       heading={
         <TopNavHeading
-          heading="QSelect · 云阶"
+          heading="QSelect 决策台"
           headingHref="/stocks"
-          logo={<Icon icon="viewColumns" size="sm" />}
+          logo={<img src="/favicon.svg" alt="QSelect" className="q-nav-logo" />}
         />
       }
       startContent={
-        <div className="hidden sm:flex">
+        <div className="q-nav-tabs">
           {navItems.map((item) => (
-            <TopNavItem
-              key={item.to}
-              href={item.to}
-              label={item.label}
-              isSelected={item.matches.some((path) => location.pathname.startsWith(path))}
-            />
+            <TopNavItem key={item.to} href={item.to} label={item.label} isSelected={location.pathname === item.to} />
           ))}
         </div>
       }
       endContent={
-        <div className="flex items-center gap-2" role="status" aria-live="polite" title={statusLabel}>
-          <StatusDot variant={fresh === true ? "success" : fresh === false || status.error ? "error" : "neutral"} label={statusLabel} />
-          <Text type="supporting" className="hidden md:inline">{statusLabel}</Text>
-          <span className="md:hidden">
-            <Badge
-              variant={fresh === true ? "success" : fresh === false || status.error ? "error" : "neutral"}
-              label={fresh === true ? "就绪" : fresh === false ? "过期" : status.error ? "失败" : "检查中"}
-            />
-          </span>
+        <div className="q-nav-status" role="status" aria-live="polite">
+          <span><StatusDot variant={failed ? "error" : fresh ? "success" : "warning"} label={statusLabel} /><b className="q-nav-status-label">{statusLabel}</b></span>
+          {date && <time>{date} 收盘</time>}
+          {snapshot && <><i /><span className="q-nav-snapshot">快照 <code title={snapshot}>{snapshot.slice(0, 8)}…</code></span></>}
         </div>
       }
     />

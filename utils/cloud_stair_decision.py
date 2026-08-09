@@ -19,13 +19,33 @@ def _industry_map(csv_manager) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _sector_heat(csv_manager) -> dict:
+def _sector_rotation(csv_manager) -> dict:
     from utils.sector_rotation import get_sector_rotation
 
     result = get_sector_rotation(csv_manager)
     if not result.get("available"):
-        return {}
-    return result.get("heat_map") or {}
+        return {"available": False, "heat_map": {}, "hot": []}
+    return result
+
+
+def _sector_leader(rotation: dict) -> dict | None:
+    rows = list(rotation.get("hot") or [])
+    if not rows:
+        rows = [
+            {"name": name, **state}
+            for name, state in (rotation.get("heat_map") or {}).items()
+            if isinstance(state, dict)
+        ]
+    if not rows:
+        return None
+    rows.sort(
+        key=lambda row: (
+            int(row.get("rank") or 10_000),
+            -float(row.get("score") or 0),
+            str(row.get("name") or ""),
+        )
+    )
+    return rows[0]
 
 
 def _sector_sort_key(row: dict) -> tuple[float, float, str]:
@@ -68,6 +88,42 @@ def _candidate_reason(row: dict) -> tuple[str, list[str]]:
     return "；".join(evidence), evidence
 
 
+def _signal_steps(row: dict) -> list[dict]:
+    wave_gain = row.get("wave_gain_pct")
+    peak_date = row.get("peak_date")
+    close = row.get("close")
+    breakout = row.get("breakout_price")
+    return [
+        {
+            "key": "first_wave",
+            "label": "第一波大涨",
+            "passed": True,
+            "detail": (
+                f"第一波涨幅 {float(wave_gain):.1f}%"
+                + (f"，峰值日 {peak_date}" if peak_date else "")
+                if wave_gain is not None
+                else "第一波涨幅门槛已通过"
+            ),
+        },
+        {
+            "key": "consolidation",
+            "label": "缩量横盘",
+            "passed": True,
+            "detail": "横盘区间、回撤与缩量门槛均已通过",
+        },
+        {
+            "key": "breakout",
+            "label": "再次突破",
+            "passed": True,
+            "detail": (
+                f"收盘 {float(close):.2f}，突破确认线 {float(breakout):.2f}"
+                if close is not None and breakout is not None
+                else "当日收盘突破确认已完成"
+            ),
+        },
+    ]
+
+
 def load_cloud_stair_decision(csv_manager) -> dict:
     """读取与当前快照绑定的云阶决策。"""
     from utils.factor_scan import read_cached_factor_hits
@@ -89,7 +145,8 @@ def load_cloud_stair_decision(csv_manager) -> dict:
         hits = [row for row in hits if is_main_board(str(row.get("code") or ""))]
 
     industries = _industry_map(csv_manager)
-    heat_map = _sector_heat(csv_manager)
+    rotation = _sector_rotation(csv_manager)
+    heat_map = rotation.get("heat_map") or {}
     candidates = []
     for hit in hits:
         code = str(hit.get("code") or "")
@@ -108,6 +165,7 @@ def load_cloud_stair_decision(csv_manager) -> dict:
         reason, evidence = _candidate_reason(row)
         row["reason"] = reason
         row["evidence"] = evidence
+        row["signal_steps"] = _signal_steps(row)
         candidates.append(row)
 
     candidates.sort(key=_sector_sort_key, reverse=True)
@@ -133,7 +191,13 @@ def load_cloud_stair_decision(csv_manager) -> dict:
             "plain": "第一波大涨 → 缩量横盘不破位 → 再次突破前高",
             "decision_rule": "只有完成突破确认才进入今日买入名单",
             "track": CORE_TRACK,
+            "steps": [
+                {"key": "first_wave", "label": "第一波大涨"},
+                {"key": "consolidation", "label": "缩量横盘不破位"},
+                {"key": "breakout", "label": "再次突破前高"},
+            ],
         },
+        "sector_leader": _sector_leader(rotation),
         "candidates": candidates,
         "ranking_note": (
             "云阶决定是否入选；行业热度只决定多只候选的查看顺序，"

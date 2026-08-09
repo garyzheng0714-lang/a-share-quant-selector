@@ -442,11 +442,11 @@ def api_get_stock_detail(code: str):
 
 @app.get("/api/stock/<code>/kline")
 def api_get_stock_kline(code: str):
-    """读取有上限的日线或周线；历史信号只取 canonical outcome。"""
+    """读取有上限的日/月/周 K 线；历史信号只取 canonical outcome。"""
     if not _valid_stock_code(code):
         return jsonify({"success": False, "error": "invalid_stock_code"}), 400
     period = request.args.get("period", "daily")
-    if period not in {"daily", "weekly"}:
+    if period not in {"daily", "weekly", "monthly"}:
         return jsonify({"success": False, "error": "invalid_period"}), 400
     default_days = 200 if period == "daily" else 2000
     try:
@@ -471,11 +471,12 @@ def api_get_stock_kline(code: str):
         week_end = None
         current_week_partial = False
 
-        if period == "weekly":
+        if period in {"weekly", "monthly"}:
             data_frame["date"] = pd.to_datetime(data_frame["date"], errors="coerce")
-            weekly = (
+            period_rule = "W-FRI" if period == "weekly" else "ME"
+            aggregate = (
                 data_frame.dropna(subset=["date"])
-                .resample("W-FRI", on="date")
+                .resample(period_rule, on="date")
                 .agg(
                     open=("open", "first"),
                     high=("high", "max"),
@@ -485,13 +486,13 @@ def api_get_stock_kline(code: str):
                 )
                 .dropna(subset=["open"])
             )
-            if not weekly.empty:
-                week_end = weekly.index[-1]
+            if not aggregate.empty:
+                week_end = aggregate.index[-1]
                 current_week_partial = bool(as_of.normalize() < week_end.normalize())
             for window in (5, 10, 20, 60):
-                weekly[f"MA{window}"] = weekly["close"].rolling(window).mean()
-            close = weekly["close"].astype(float)
-            weekly["trend_line"] = (
+                aggregate[f"MA{window}"] = aggregate["close"].rolling(window).mean()
+            close = aggregate["close"].astype(float)
+            aggregate["trend_line"] = (
                 close.ewm(span=10, adjust=False)
                 .mean()
                 .ewm(
@@ -500,7 +501,7 @@ def api_get_stock_kline(code: str):
                 )
                 .mean()
             )
-            weekly["dk_line"] = (
+            aggregate["dk_line"] = (
                 sum(close.rolling(window).mean() for window in (14, 28, 57, 114)) / 4
             )
             data = [
@@ -523,7 +524,7 @@ def api_get_stock_kline(code: str):
                         )
                     ],
                 ]
-                for date, row in weekly.iterrows()
+                for date, row in aggregate.iterrows()
             ]
         else:
             kdj = KDJ(data_frame, n=9, m1=3, m2=3)
@@ -540,6 +541,9 @@ def api_get_stock_kline(code: str):
             dk_line = (
                 sum(close.rolling(window).mean() for window in (14, 28, 57, 114)) / 4
             )
+            moving_averages = {
+                window: close.rolling(window).mean() for window in (5, 10, 20, 60)
+            }
             data = []
             for index, (_, row) in enumerate(data_frame.iterrows()):
                 date = pd.to_datetime(row.get("date"), errors="coerce")
@@ -560,6 +564,12 @@ def api_get_stock_kline(code: str):
                         round(float(dk_line.iloc[index]), 2)
                         if pd.notna(dk_line.iloc[index])
                         else None,
+                        *[
+                            round(float(moving_averages[window].iloc[index]), 2)
+                            if pd.notna(moving_averages[window].iloc[index])
+                            else None
+                            for window in (5, 10, 20, 60)
+                        ],
                     ]
                 )
 
@@ -597,10 +607,20 @@ def api_get_stock_kline(code: str):
                 "stored_rows": file_evidence.get("rows"),
                 "as_of": as_of.strftime("%Y-%m-%d"),
                 "week_end": week_end.strftime("%Y-%m-%d")
+                if period == "weekly" and week_end is not None
+                else None,
+                "period_end": week_end.strftime("%Y-%m-%d")
                 if week_end is not None
                 else None,
                 "current_week_partial": current_week_partial,
-                "change_label": "本周涨跌" if period == "weekly" else "今日涨跌",
+                "current_period_partial": current_week_partial,
+                "change_label": (
+                    "本周涨跌"
+                    if period == "weekly"
+                    else "本月涨跌"
+                    if period == "monthly"
+                    else "今日涨跌"
+                ),
                 "data": data,
                 "signals": signals,
             }

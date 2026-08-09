@@ -20,7 +20,7 @@ export function RootLayout() {
         variant="section"
         mobileNav={false}
       >
-        <div className="min-h-[calc(100dvh-56px)]">
+        <div className="q-app-stage">
           <Outlet />
         </div>
       </AppShell>
