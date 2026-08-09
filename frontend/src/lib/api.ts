@@ -872,7 +872,41 @@ export interface FactorScanResponse {
   errors?: number;
 }
 
-/** 云阶当日候选：规则决定入选，行业热度只决定展示顺序。 */
+export interface CloudEventEvidence {
+  event_id?: string;
+  title: string;
+  summary?: string;
+  source?: string;
+  source_name?: string;
+  source_category?: "announcement" | "media" | string;
+  source_url?: string;
+  published_at?: string;
+  sentiment?: "positive" | "negative" | "mixed" | "neutral";
+  sentiment_label?: string;
+  impact?: "high" | "medium" | "low";
+  relevance?: "direct" | "mentioned" | "search_result";
+  hard_tags?: string[];
+  review_tags?: string[];
+  positive_tags?: string[];
+}
+
+export interface CloudMarketContext {
+  available: boolean;
+  reason?: string;
+  score?: number;
+  state_label: string;
+  execution_mode: string;
+  level?: "hot" | "cold" | "normal";
+  trend?: "bull" | "bear" | "sideways";
+  warming_sector_ratio?: number;
+  cooling_sector_ratio?: number;
+  delta3_mean?: number;
+  sector_count?: number;
+  as_of?: string;
+  summary: string;
+}
+
+/** 云阶当日候选：规则决定入选，证据层只做可追溯优先级。 */
 export interface RecommendStock {
   code: string;
   name: string;
@@ -886,6 +920,21 @@ export interface RecommendStock {
   /** 按板块热度排序后的名次（1-based，rank_total 为当日命中总数） */
   rank?: number;
   rank_total?: number;
+  priority_rank?: number;
+  rank_label?: string;
+  priority_score?: number;
+  structure_score?: number;
+  sector_score?: number;
+  event_adjustment?: number;
+  evidence_grade?: "A" | "B" | "C";
+  news_available?: boolean;
+  event_counts?: {
+    positive: number;
+    negative: number;
+    mixed: number;
+    neutral: number;
+    hard_risk: number;
+  };
   /** 推荐理由：云阶结构 + 板块热度/排名/趋势 */
   reason?: string;
   evidence?: string[];
@@ -907,14 +956,7 @@ export interface RecommendStock {
   decision_evidence?: {
     reason_codes: string[];
     explanation?: string | null;
-    events: Array<{
-      event_id?: string;
-      title: string;
-      source_url?: string;
-      published_at?: string;
-      hard_tags?: string[];
-      review_tags?: string[];
-    }>;
+    events: CloudEventEvidence[];
     baseline: Record<string, unknown>;
   };
 }
@@ -948,6 +990,16 @@ export interface RecommendResponse {
   today_buy?: RecommendStock[];
   honest_note?: string;
   ranking_note?: string;
+  market_context?: CloudMarketContext;
+  intelligence?: {
+    available: boolean;
+    cutoff_at?: string | null;
+    coverage?: { covered: number; total: number } | null;
+    combination_codes?: string[];
+    source_refs?: string[];
+    ranking_note?: string;
+    errors?: Array<{ code?: string; date?: string; error?: string }>;
+  };
   decision_run_id?: string | null;
   freshness?: {
     fresh?: boolean;

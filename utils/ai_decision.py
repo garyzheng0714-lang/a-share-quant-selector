@@ -12,16 +12,21 @@ from utils.decision_ledger import save_ai_decision_run
 
 
 TZ = ZoneInfo("Asia/Shanghai")
-PROMPT_VERSION = "cloud-stair-explainer-v1"
+PROMPT_VERSION = "cloud-stair-explainer-v2"
 
 
-def _input_hash(decision: dict | None, candidates: list[dict]) -> str:
+def _input_hash(
+    decision: dict | None,
+    candidates: list[dict],
+    intelligence: dict | None = None,
+) -> str:
     payload = {
         "decision_run_id": (decision or {}).get("run_id"),
         "strategy_version": (decision or {}).get("strategy_version"),
         "model_version": (decision or {}).get("model_version"),
         "data_version": (decision or {}).get("data_version"),
         "snapshot_id": ((decision or {}).get("market") or {}).get("snapshot_id"),
+        "intelligence_hash": (intelligence or {}).get("content_hash"),
         "candidates": [
             {
                 "code": row.get("code"),
@@ -43,6 +48,11 @@ def run_ai_decision(decision: dict | None, *, csv_manager=None) -> dict:
     trade_date = decision.get("trade_date") or now[:10]
     cloud_result = None
     cloud_candidates = []
+    intelligence = {
+        "available": False,
+        "reason": "cloud_stair_intelligence_not_ready",
+        "candidates": [],
+    }
     decision_ready = bool(decision.get("run_id"))
     snapshot_pinned = bool(
         csv_manager is not None
@@ -55,27 +65,56 @@ def run_ai_decision(decision: dict | None, *, csv_manager=None) -> dict:
         cloud_result = load_cloud_stair_decision(csv_manager)
         if cloud_result.get("available"):
             cloud_candidates = cloud_result.get("candidates") or []
+            try:
+                from utils.cloud_stair_intelligence import (
+                    build_cloud_stair_intelligence,
+                )
+
+                intelligence = build_cloud_stair_intelligence(
+                    cloud_candidates,
+                    trade_date=str(cloud_result.get("trade_date") or trade_date),
+                    as_of=now,
+                    csv_manager=csv_manager,
+                )
+            except Exception as exc:
+                intelligence = {
+                    "available": False,
+                    "reason": "cloud_stair_intelligence_failed",
+                    "error_type": type(exc).__name__,
+                    "candidates": [],
+                }
+    intelligence_by_code = {
+        str(row.get("code") or ""): row
+        for row in (intelligence.get("candidates") or [])
+    }
     base = {
         "trade_date": trade_date,
         "decision_run_id": decision.get("run_id"),
         "as_of": now,
         "role": "explanation",
         "prompt_version": PROMPT_VERSION,
-        "input_hash": _input_hash(decision, cloud_candidates),
+        "input_hash": _input_hash(decision, cloud_candidates, intelligence),
     }
 
     if not decision_ready:
-        run = {**base, "status": "not_called", "reason_codes": ["decision_not_ready"]}
+        run = {
+            **base,
+            "status": "not_called",
+            "payload": {"intelligence": intelligence},
+            "reason_codes": ["decision_not_ready"],
+        }
     elif not snapshot_pinned:
         run = {
             **base,
             "status": "not_called",
+            "payload": {"intelligence": intelligence},
             "reason_codes": ["decision_snapshot_not_pinned"],
         }
     elif not cloud_result or not cloud_result.get("available"):
         run = {
             **base,
             "status": "not_called",
+            "payload": {"intelligence": intelligence},
             "reason_codes": [
                 str((cloud_result or {}).get("reason") or "cloud_stair_not_ready")
             ],
@@ -84,13 +123,19 @@ def run_ai_decision(decision: dict | None, *, csv_manager=None) -> dict:
         run = {
             **base,
             "status": "not_called",
+            "payload": {"intelligence": intelligence},
             "reason_codes": ["no_cloud_stair_signals"],
         }
     else:
         from utils.daily_pick import generate_quant_comment, get_api_key
 
         if not get_api_key():
-            run = {**base, "status": "not_called", "reason_codes": ["llm_unconfigured"]}
+            run = {
+                **base,
+                "status": "not_called",
+                "payload": {"intelligence": intelligence},
+                "reason_codes": ["llm_unconfigured"],
+            }
         else:
             stocks = []
             for item in cloud_candidates:
@@ -107,6 +152,8 @@ def run_ai_decision(decision: dict | None, *, csv_manager=None) -> dict:
                         "peak_date": item.get("peak_date"),
                         "wave_gain_pct": item.get("wave_gain_pct"),
                         "action": item.get("action"),
+                        "intelligence": intelligence_by_code.get(str(item["code"]))
+                        or {},
                     }
                 )
             result = generate_quant_comment(
@@ -120,14 +167,20 @@ def run_ai_decision(decision: dict | None, *, csv_manager=None) -> dict:
                     **base,
                     "status": "explained",
                     "model": result.get("model"),
-                    "payload": result,
+                    "payload": {
+                        "intelligence": intelligence,
+                        "comment": result,
+                    },
                 }
             else:
                 failure_reason = str(result.get("reason") or "llm_call_failed")
                 run = {
                     **base,
                     "status": "failed",
-                    "payload": result,
+                    "payload": {
+                        "intelligence": intelligence,
+                        "comment": result,
+                    },
                     "reason_codes": [failure_reason],
                 }
     run["ai_run_id"] = save_ai_decision_run(run)

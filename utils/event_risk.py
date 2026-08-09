@@ -11,12 +11,14 @@ import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 
 from utils.decision_ledger import save_event_evidence
 
 logger = logging.getLogger(__name__)
+TZ = ZoneInfo("Asia/Shanghai")
 
 HARD_PATTERNS = {
     "investigation": ("立案调查", "立案告知"),
@@ -32,6 +34,14 @@ REVIEW_PATTERNS = {
     "inquiry": ("问询函", "监管函", "关注函"),
     "risk_notice": ("风险提示", "异常波动"),
     "pledge": ("质押", "冻结"),
+}
+POSITIVE_PATTERNS = {
+    "earnings_growth": ("业绩预增", "扭亏为盈", "净利润增长", "业绩快报增长"),
+    "major_contract": ("中标", "重大合同", "签订合同", "项目定点"),
+    "shareholder_support": ("回购股份", "回购计划", "增持计划", "增持股份"),
+    "approval": ("获得批准", "获批", "取得注册证", "取得专利"),
+    "capacity": ("建成投产", "正式投产", "扩产", "新增产能"),
+    "subsidy": ("政府补助", "专项补助"),
 }
 
 
@@ -49,6 +59,39 @@ def _match(title: str, patterns: dict[str, tuple[str, ...]]) -> list[str]:
             matched.append(code)
             break
     return matched
+
+
+def _classify_event(title: str, summary: str = "") -> dict:
+    """把事件压缩成可追溯标签；只描述文本，不预测价格。"""
+    text = f"{title} {summary}".strip()
+    hard_tags = _match(text, HARD_PATTERNS)
+    review_tags = _match(text, REVIEW_PATTERNS)
+    positive_tags = _match(text, POSITIVE_PATTERNS)
+    if positive_tags and (hard_tags or review_tags):
+        sentiment = "mixed"
+    elif hard_tags or review_tags:
+        sentiment = "negative"
+    elif positive_tags:
+        sentiment = "positive"
+    else:
+        sentiment = "neutral"
+    return {
+        "sentiment": sentiment,
+        "sentiment_label": {
+            "positive": "利好线索",
+            "negative": "利空风险",
+            "mixed": "影响混合",
+            "neutral": "中性信息",
+        }[sentiment],
+        "impact": "high"
+        if hard_tags
+        else "medium"
+        if review_tags or positive_tags
+        else "low",
+        "hard_tags": hard_tags,
+        "review_tags": review_tags,
+        "positive_tags": positive_tags,
+    }
 
 
 def fetch_notice_events(
@@ -103,22 +146,25 @@ def fetch_notice_events(
                 else hashlib.sha256(title.encode()).hexdigest()[:16]
             )
             event_id = f"eastmoney-notice:{stamp}:{code}:{raw_id}"
+            classification = _classify_event(title)
             event = {
                 "event_id": event_id,
                 "code": code,
                 "name": str(row.get("名称", "")),
                 "source": "eastmoney_notice_index",
+                "source_name": "东方财富公告索引",
+                "source_category": "announcement",
                 "source_url": url,
                 "published_at": f"{day.isoformat()}T00:00:00+08:00",
                 "published_at_precision": "date",
                 "eligible_stage": ["preopen"],
                 "title": title,
+                "summary": "",
                 "notice_type": str(row.get("公告类型", "")),
                 "text_hash": "sha256:" + hashlib.sha256(title.encode()).hexdigest(),
                 "raw_ref": url,
                 "fetched_at": fetched_at,
-                "hard_tags": _match(title, HARD_PATTERNS),
-                "review_tags": _match(title, REVIEW_PATTERNS),
+                **classification,
             }
             save_event_evidence(event)
             events.append(event)
@@ -128,6 +174,128 @@ def fetch_notice_events(
         "events": events,
         "errors": errors,
         "source_refs": [f"eastmoney-notice:{start_date}:{end_date}"],
+    }
+
+
+def fetch_stock_news_events(
+    candidates: list[dict],
+    start_date: str,
+    as_of: str,
+    cache_dir: str | Path,
+) -> dict:
+    """抓取每只云阶候选最近新闻；只在 worker 中调用并保留精确截止时间。"""
+    import akshare as ak
+
+    cutoff = datetime.fromisoformat(as_of)
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=TZ)
+    cutoff = cutoff.astimezone(TZ)
+    start = datetime.fromisoformat(start_date).date()
+    cache_root = Path(cache_dir)
+    cache_root.mkdir(parents=True, exist_ok=True)
+    fetched_at = datetime.now(TZ).isoformat(timespec="seconds")
+    events: list[dict] = []
+    errors: list[dict] = []
+    successful_codes: set[str] = set()
+
+    for candidate in candidates:
+        code = str(candidate.get("code") or "").zfill(6)
+        name = str(candidate.get("name") or "")
+        cache_file = cache_root / f"{cutoff.date().isoformat()}-{code}.json"
+        rows = None
+        if cache_file.is_file():
+            try:
+                cached = json.loads(cache_file.read_text(encoding="utf-8"))
+                rows = cached.get("rows") if isinstance(cached, dict) else None
+            except (OSError, json.JSONDecodeError):
+                rows = None
+        if rows is None:
+            try:
+                frame = ak.stock_news_em(symbol=code)
+                rows = frame.to_dict("records") if frame is not None else []
+                cache_file.write_text(
+                    json.dumps(
+                        {"fetched_at": fetched_at, "rows": rows},
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                    encoding="utf-8",
+                )
+            except Exception as exc:
+                logger.warning("个股新闻获取失败 %s: %s", code, exc)
+                errors.append({"code": code, "error": type(exc).__name__})
+                continue
+        successful_codes.add(code)
+
+        accepted = 0
+        for row in rows:
+            title = str(row.get("新闻标题") or "").strip()
+            published_raw = str(row.get("发布时间") or "").strip()
+            if not title or not published_raw:
+                continue
+            try:
+                published = datetime.fromisoformat(published_raw)
+            except ValueError:
+                continue
+            if published.tzinfo is None:
+                published = published.replace(tzinfo=TZ)
+            published = published.astimezone(TZ)
+            if published.date() < start or published > cutoff:
+                continue
+            summary = " ".join(str(row.get("新闻内容") or "").split())[:500]
+            url = str(row.get("新闻链接") or "").strip()
+            raw_identity = url or f"{code}|{published.isoformat()}|{title}"
+            raw_id = hashlib.sha256(raw_identity.encode("utf-8")).hexdigest()[:20]
+            classification = _classify_event(title, summary)
+            relevance = (
+                "direct"
+                if code in title or (name and name in title)
+                else "mentioned"
+                if code in summary or (name and name in summary)
+                else "search_result"
+            )
+            event = {
+                "event_id": f"eastmoney-news:{code}:{raw_id}",
+                "code": code,
+                "name": name,
+                "source": "eastmoney_stock_news",
+                "source_name": str(row.get("文章来源") or "东方财富资讯").strip(),
+                "source_category": "media",
+                "source_url": url,
+                "published_at": published.isoformat(timespec="seconds"),
+                "published_at_precision": "second",
+                "eligible_stage": ["close", "preopen"],
+                "title": title,
+                "summary": summary,
+                "relevance": relevance,
+                "text_hash": "sha256:"
+                + hashlib.sha256(f"{title}\n{summary}".encode("utf-8")).hexdigest(),
+                "raw_ref": url,
+                "fetched_at": fetched_at,
+                **classification,
+            }
+            save_event_evidence(event)
+            events.append(event)
+            accepted += 1
+            if accepted >= 30:
+                break
+
+    return {
+        "available": not errors,
+        "availability_by_code": {
+            str(candidate.get("code") or "").zfill(6): str(
+                candidate.get("code") or ""
+            ).zfill(6)
+            in successful_codes
+            for candidate in candidates
+        },
+        "events": events,
+        "errors": errors,
+        "source_refs": [
+            f"eastmoney-stock-news:{start_date}:{cutoff.isoformat(timespec='seconds')}"
+        ]
+        if candidates
+        else [],
     }
 
 

@@ -149,6 +149,17 @@ def api_recommend():
                 ai_run = latest_ai
 
         by_code = (comment or {}).get("by_code") or {}
+        ai_payload = (ai_run or {}).get("payload") or {}
+        intelligence = ai_payload.get("intelligence") or {}
+        intelligence_valid = bool(
+            intelligence.get("available")
+            and intelligence.get("trade_date") == result.get("trade_date")
+            and intelligence.get("snapshot_id") == result.get("snapshot_id")
+        )
+        intelligence_by_code = {
+            str(item.get("code") or ""): item
+            for item in (intelligence.get("candidates") if intelligence_valid else [])
+        }
         decision_by_code = {
             str(item.get("code") or ""): item
             for item in ((decision or {}).get("candidates") or [])
@@ -157,18 +168,56 @@ def api_recommend():
         for candidate in result.get("candidates") or []:
             code = str(candidate.get("code") or "")
             decision_row = decision_by_code.get(code) or {}
+            candidate_intelligence = intelligence_by_code.get(code) or {}
+            events = candidate_intelligence.get("events")
+            if events is None:
+                events = decision_row.get("events") or []
             rows.append(
                 {
                     **candidate,
+                    **{
+                        key: candidate_intelligence.get(key)
+                        for key in (
+                            "priority_score",
+                            "priority_rank",
+                            "rank_label",
+                            "structure_score",
+                            "structure_detail",
+                            "sector_score",
+                            "event_adjustment",
+                            "event_counts",
+                            "evidence_grade",
+                            "news_available",
+                        )
+                        if candidate_intelligence.get(key) is not None
+                    },
                     "ai_analysis": by_code.get(code),
                     "decision_evidence": {
                         "reason_codes": decision_row.get("reason_codes") or [],
                         "explanation": decision_row.get("explanation"),
-                        "events": decision_row.get("events") or [],
+                        "events": events,
                         "baseline": decision_row.get("baseline") or {},
                     },
                 }
             )
+        if intelligence_valid:
+            rows.sort(
+                key=lambda row: (
+                    int(row.get("priority_rank") or 10_000),
+                    str(row.get("code") or ""),
+                )
+            )
+        for index, row in enumerate(rows, 1):
+            row["rank"] = index
+            row["rank_total"] = len(rows)
+
+        market_context = (
+            intelligence.get("market_context") if intelligence_valid else None
+        )
+        if not market_context:
+            from utils.cloud_stair_intelligence import build_market_context
+
+            market_context = build_market_context(manager)
 
         ai_status = (ai_run or {}).get("status") or "not_called"
         ai_reasons = (ai_run or {}).get("reason_codes") or []
@@ -185,6 +234,32 @@ def api_recommend():
                 "today_buy": rows,
                 "honest_note": result.get("ranking_note"),
                 "freshness": freshness,
+                "market_context": market_context,
+                "intelligence": {
+                    "available": intelligence_valid,
+                    "cutoff_at": (
+                        intelligence.get("cutoff_at") if intelligence_valid else None
+                    ),
+                    "coverage": (
+                        intelligence.get("coverage") if intelligence_valid else None
+                    ),
+                    "combination_codes": (
+                        intelligence.get("combination_codes")
+                        if intelligence_valid
+                        else []
+                    ),
+                    "source_refs": (
+                        intelligence.get("source_refs") if intelligence_valid else []
+                    ),
+                    "ranking_note": (
+                        intelligence.get("ranking_note")
+                        if intelligence_valid
+                        else "情报快照尚未生成，当前沿用板块热度排序。"
+                    ),
+                    "errors": (
+                        intelligence.get("errors") if intelligence_valid else []
+                    ),
+                },
                 "decision_run_id": (decision or {}).get("run_id"),
                 "ai": {
                     "available": bool(comment),

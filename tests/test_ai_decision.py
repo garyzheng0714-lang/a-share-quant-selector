@@ -100,6 +100,14 @@ class AiDecisionTest(unittest.TestCase):
             ],
         },
     )
+    @patch(
+        "utils.cloud_stair_intelligence.build_cloud_stair_intelligence",
+        return_value={
+            "available": True,
+            "content_hash": "intelligence-1",
+            "candidates": [{"code": "600000", "priority_score": 88.0}],
+        },
+    )
     @patch("utils.daily_pick.get_api_key", return_value="secret")
     @patch(
         "utils.daily_pick.generate_quant_comment",
@@ -107,7 +115,7 @@ class AiDecisionTest(unittest.TestCase):
     )
     @patch("utils.ai_decision.save_ai_decision_run", return_value="ai-3")
     def test_cloud_stair_signal_calls_ai_even_when_broad_decision_observes(
-        self, _save, comment, _key, _load
+        self, _save, comment, _key, _intelligence, _load
     ):
         decision = {
             "run_id": "run-3",
@@ -131,6 +139,14 @@ class AiDecisionTest(unittest.TestCase):
             "candidates": [{"code": "600000", "action": "buy"}],
         },
     )
+    @patch(
+        "utils.cloud_stair_intelligence.build_cloud_stair_intelligence",
+        return_value={
+            "available": True,
+            "content_hash": "intelligence-2",
+            "candidates": [{"code": "600000", "priority_score": 80.0}],
+        },
+    )
     @patch("utils.daily_pick.get_api_key", return_value="secret")
     @patch(
         "utils.daily_pick.generate_quant_comment",
@@ -138,7 +154,7 @@ class AiDecisionTest(unittest.TestCase):
     )
     @patch("utils.ai_decision.save_ai_decision_run", return_value="ai-4")
     def test_ai_failure_preserves_safe_provider_reason(
-        self, _save, _comment, _key, _load
+        self, _save, _comment, _key, _intelligence, _load
     ):
         decision = {
             "run_id": "run-4",
