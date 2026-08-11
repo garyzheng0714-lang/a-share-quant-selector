@@ -225,6 +225,50 @@ def run_close_decision(csv_manager: CSVManager | None = None) -> dict:
             "reason": "stale_market_data",
             "freshness": freshness,
         }
+    from utils.reference_snapshots import forward_capture_evidence
+
+    forward_capture = forward_capture_evidence(verified)
+    if forward_capture.get("eligible") is not True:
+        trade_date = str(freshness.get("local_date") or "")
+        models, model_version = _active_model_bundle()
+        runtime_manifest = policy_manifest(
+            policy_version=model_version,
+            weekly_gate_mode=config["weekly_gate_mode"],
+            strict_unvalidated_market=config["strict_unvalidated_gate"],
+            top_n=3,
+            components={},
+        )
+        run = {
+            "trade_date": trade_date,
+            "stage": "close",
+            "as_of": str((verified.get("manifest") or {}).get("captured_at") or ""),
+            "status": "degraded",
+            "final_action": "none",
+            "strategy_version": strategy_version(),
+            "feature_version": FEATURE_VERSION,
+            "model_version": model_version,
+            "data_version": f"snapshot-{freshness['snapshot_id']}",
+            "source_refs": [f"market-snapshot:{freshness['snapshot_id']}"],
+            "market": {
+                "snapshot_id": freshness["snapshot_id"],
+                "models_active": sorted(models),
+                "policy_manifest": runtime_manifest,
+                "derived_artifacts": {},
+                "decision_for_date": next_trade_date(
+                    trade_date,
+                    data_dir=manager.base_data_dir,
+                    snapshot_id=manager.snapshot_id,
+                ),
+                "actionable": False,
+                "forward_capture": forward_capture,
+            },
+            "evaluation": {},
+            "reason_codes": ["backfill_non_actionable"],
+        }
+        run_id = save_decision_run(run, [])
+        from utils.decision_ledger import get_decision
+
+        return {"available": True, **get_decision(run_id)}
     trade_date, baseline, derived_artifacts = _baseline_candidates(manager)
     if not trade_date:
         return {"available": False, "reason": "baseline_unavailable"}

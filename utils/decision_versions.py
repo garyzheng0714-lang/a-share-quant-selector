@@ -41,8 +41,9 @@ VALIDATED_MODEL_SOURCE_REFS = frozenset(
         "immutable-market-snapshots-v2",
         "point-in-time-reference-snapshots-v4",
         "point-in-time-feature-snapshots-v1",
+        "super-b1-pit-feature-ledger-v2",
         "pit-security-state-and-listing-regime-v2",
-        "a-share-eod-open-open-v3",
+        "a-share-eod-open-open-v5",
         "purged-walk-forward-v2",
         "independent-final-calibration-v1",
     }

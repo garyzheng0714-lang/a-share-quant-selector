@@ -140,7 +140,11 @@ def _sync_from_results(csv_manager) -> int:
     return added
 
 
-def _evaluate_one(daily: pd.DataFrame, run_date: str) -> dict:
+def _evaluate_one(
+    daily: pd.DataFrame,
+    run_date: str,
+    trading_sessions: list[str],
+) -> dict:
     """用一只股票的日线数据计算 run_date 之后的表现.
 
     daily: 正序（从早到晚）的日线数据，含 date/open/high/low/close
@@ -178,7 +182,12 @@ def _evaluate_one(daily: pd.DataFrame, run_date: str) -> dict:
     # 保留原有毛收益口径作对照，同时写入保守成交模型的净收益。
     from utils.execution_model import evaluate_trade
 
-    execution = evaluate_trade(daily, run_date, hold_days=5)
+    execution = evaluate_trade(
+        daily,
+        run_date,
+        hold_days=5,
+        trading_sessions=trading_sessions,
+    )
     if execution.get("available"):
         fields.update(
             {
@@ -206,6 +215,9 @@ def update_performance(csv_manager) -> dict:
     """
     init_performance_table()
     added = _sync_from_results(csv_manager)
+    from utils.execution_model import load_exchange_sessions
+
+    trading_sessions = load_exchange_sessions(csv_manager.data_dir)
 
     with _get_conn() as conn:
         # complete=已追踪满，invalid=买入价异常无法计算的终态；两者都不再重读 CSV
@@ -235,7 +247,11 @@ def update_performance(csv_manager) -> dict:
         now = datetime.now().isoformat()
         with _get_conn() as conn:
             for item in items:
-                fields = _evaluate_one(daily, item["run_date"])
+                fields = _evaluate_one(
+                    daily,
+                    item["run_date"],
+                    trading_sessions,
+                )
                 if not fields:
                     continue
                 sets = ", ".join(f"{k} = ?" for k in fields)

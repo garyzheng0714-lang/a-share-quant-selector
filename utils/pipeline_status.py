@@ -39,6 +39,7 @@ PIPELINE_TASK_LABELS = {
     "full_market_rebuild": "全量基线重建",
     "daily_market_ingestion": "每日行情采集",
     "daily_close_pipeline": "每日收盘闭环",
+    "materialize_snapshot_decision": "当前快照学习补物化",
 }
 
 
@@ -99,6 +100,66 @@ def _read_decision(freshness: dict) -> dict:
         "trade_date": decision.get("trade_date") if current else None,
         "final_action": decision.get("final_action") if current else None,
         "candidate_counts": counts if current else {"buy": 0, "observe": 0, "avoid": 0},
+    }
+
+
+def _read_learning(freshness: dict, decision_summary: dict) -> dict:
+    """校验当前快照的策略复盘和模型进化，不回退旧日结果。"""
+    if not decision_summary.get("available"):
+        return {
+            "available": False,
+            "review": {"current": False, "reason": "decision_not_ready"},
+            "evolution": {"current": False, "reason": "decision_not_ready"},
+        }
+    try:
+        from utils.decision_ledger import (
+            get_current_evolution_run,
+            get_latest_decision,
+            get_latest_strategy_review_run,
+        )
+        from utils.daily_strategy_review import strategy_review_is_current
+        from utils.self_evolution import evolution_pipeline_version
+
+        decision = get_latest_decision("close")
+        trade_date = str(freshness.get("local_date") or "")
+        snapshot_id = str(freshness.get("snapshot_id") or "")
+        review = get_latest_strategy_review_run(trade_date)
+        review_current = strategy_review_is_current(review, decision, snapshot_id)
+        evolution = get_current_evolution_run(
+            trade_date,
+            f"snapshot-{snapshot_id}",
+            evolution_pipeline_version(),
+        )
+    except (FileNotFoundError, RuntimeError, sqlite3.Error):
+        review = None
+        review_current = False
+        evolution = None
+    evolution_metrics = (evolution or {}).get("metrics") or {}
+    return {
+        "available": bool(review_current and evolution),
+        "review": {
+            "current": bool(review_current),
+            "review_id": (review or {}).get("review_id"),
+            "status": (review or {}).get("status"),
+            "ai_status": (review or {}).get("ai_status"),
+            "reason": None if review_current else "strategy_review_not_ready",
+        },
+        "evolution": {
+            "current": evolution is not None,
+            "evolution_id": (evolution or {}).get("evolution_id"),
+            "status": (evolution or {}).get("status"),
+            "promotion_status": (evolution or {}).get("promotion_status"),
+            "training_status": evolution_metrics.get("training_status"),
+            "model_state": evolution_metrics.get("model_state"),
+            "trained": evolution_metrics.get("trained"),
+            "reference_months": evolution_metrics.get("reference_months"),
+            "minimum_reference_months": evolution_metrics.get(
+                "minimum_reference_months"
+            ),
+            "signal_months": evolution_metrics.get("signal_months"),
+            "minimum_signal_months": evolution_metrics.get("minimum_signal_months"),
+            "reason": None if evolution else "model_evolution_not_ready",
+        },
     }
 
 
@@ -254,6 +315,7 @@ def build_pipeline_status(data_dir: str | Path = "data") -> dict:
     scheduler, latest_task, latest_alerts, alerts = _read_operations_state()
     run = _task_summary(latest_task, data_root)
     decision = _read_decision(freshness)
+    learning = _read_learning(freshness, decision)
     storage = _storage_status(data_root)
 
     attention = []
@@ -301,6 +363,22 @@ def build_pipeline_status(data_dir: str | Path = "data") -> dict:
                 "message": "行情已经就绪，但当前快照的收盘决策尚未生成",
             }
         )
+    if decision.get("available") and not learning["review"]["current"]:
+        attention.append(
+            {
+                "code": "strategy_review_not_ready",
+                "level": "warning",
+                "message": "当前快照的全策略复盘尚未生成",
+            }
+        )
+    if decision.get("available") and not learning["evolution"]["current"]:
+        attention.append(
+            {
+                "code": "model_evolution_not_ready",
+                "level": "warning",
+                "message": "当前快照的影子模型进化尚未完成",
+            }
+        )
     if storage["retention_state"] != "configured":
         attention.append(
             {
@@ -338,6 +416,7 @@ def build_pipeline_status(data_dir: str | Path = "data") -> dict:
         },
         "run": run,
         "decision": decision,
+        "learning": learning,
         "sources": _source_status(snapshot),
         "attention": attention,
         "alerts": {

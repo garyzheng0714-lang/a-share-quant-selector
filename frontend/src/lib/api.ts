@@ -1,15 +1,28 @@
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 
+export class ApiRequestError<T = unknown> extends Error {
+  status: number;
+  payload?: T;
+
+  constructor(status: number, statusText: string, payload?: T) {
+    super(`API error: ${status} ${statusText}`);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE}${path}`;
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json", ...options?.headers },
     ...options,
   });
+  const payload = await res.json().catch(() => undefined);
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
+    throw new ApiRequestError(res.status, res.statusText, payload);
   }
-  return res.json();
+  return payload as T;
 }
 
 export interface ApiResponse<T> {
@@ -353,33 +366,92 @@ export interface BenchmarkAgg {
   ret_20: number | null;
 }
 
+export interface CanonicalOutcomeMetrics {
+  /** 兼容字段：等于 numeric_return_count，不是全部结果数。 */
+  count: number;
+  numeric_return_count: number;
+  outcome_count: number;
+  terminal_outcome_count: number;
+  complete_count: number;
+  invalid_count: number;
+  pending_count: number;
+  partial_count: number;
+  entry_failure_count: number;
+  exit_failure_count: number;
+  universe_removal_count: number;
+  universe_removal_with_entry_unknown_count: number;
+  exit_failure_or_universe_removal_count: number;
+  execution_failure_count: number;
+  /** 终局但无数值收益，包含已分类的成交失败。 */
+  missing_return_count: number;
+  other_missing_return_count: number;
+  return_coverage_ratio: number | null;
+  tracking_completion_ratio: number | null;
+  /** 只能解读为“可评估数值收益子集”的胜率。 */
+  numeric_return_win_rate: number | null;
+  /** 兼容别名，口径同 numeric_return_win_rate。 */
+  win_rate: number | null;
+  win_rate_scope: "numeric_return_subset_only";
+  numeric_return_avg_net_ret_5: number | null;
+  /** 兼容别名，口径同 numeric_return_avg_net_ret_5。 */
+  avg_net_ret_5: number | null;
+}
+
+export interface CanonicalOutcomeSummary {
+  metric_contract_version: "canonical-outcome-summary-v2";
+  stage: "close" | "preopen";
+  execution_policy_version: string;
+  buy: CanonicalOutcomeMetrics;
+  observe: CanonicalOutcomeMetrics;
+  avoid: CanonicalOutcomeMetrics;
+  total: CanonicalOutcomeMetrics;
+  missed_winner_rate: number | null;
+  missed_winner_numeric_return_rate: number | null;
+  missed_winner_rate_scope: "numeric_return_subset_only";
+  missed_winner_numeric_return_count: number;
+  missed_winner_return_coverage_ratio: number | null;
+}
+
 export interface PerformanceSummary {
-  total_records: number;
-  overall: PerfAgg;
-  by_category: Record<string, PerfAgg>;
-  by_similarity: Record<string, PerfAgg>;
-  /** 同期上证基准（接口失败时缺省，前端不显示超额行） */
-  benchmark?: BenchmarkAgg | null;
+  available: boolean;
+  strategy: "super-b1-canonical";
+  execution_policy_version: string;
+  stage: "close" | "preopen";
+  summary: CanonicalOutcomeSummary;
+  legacy_results_included: false;
 }
 
 export interface PerformanceRecord {
-  id: number;
-  view_id: number;
-  run_date: string;
+  outcome_id: string;
+  observation_no: number;
+  run_id: string;
   code: string;
-  name: string;
-  category: string;
-  similarity_score: number | null;
-  sel_close: number | null;
-  buy_price: number | null;
+  source_snapshot_id: string;
+  stage: "close" | "preopen";
+  trade_date: string;
+  action: "buy" | "observe" | "avoid";
+  entry_date: string | null;
+  entry_price: number | null;
   ret_1: number | null;
-  ret_5: number | null;
-  ret_10: number | null;
-  ret_20: number | null;
-  max_gain: number | null;
-  max_drawdown: number | null;
+  net_ret_5: number | null;
+  max_gain_5: number | null;
+  max_drawdown_5: number | null;
+  entry_feasible: 0 | 1 | null;
+  exit_feasible: 0 | 1 | null;
+  execution_status: string | null;
+  execution_policy_version: string | null;
   days_tracked: number;
-  status: string;
+  status: "pending" | "partial" | "complete" | "invalid";
+  updated_at: string;
+}
+
+export interface PerformanceRecordsResponse {
+  available: boolean;
+  execution_policy_version: string;
+  stage: "close" | "preopen";
+  total: number;
+  records: PerformanceRecord[];
+  legacy_results_included: false;
 }
 
 export interface DailyPick {
@@ -620,12 +692,7 @@ export interface EvolutionStatus {
   challenger_version?: string | null;
   promotion_status: "promoted" | "shadow_registered" | "kept_champion" | "not_evaluated";
   reason_codes: string[];
-  outcomes?: {
-    buy?: { count: number; win_rate: number | null; avg_net_ret_5: number | null };
-    observe?: { count: number; win_rate: number | null; avg_net_ret_5: number | null };
-    avoid?: { count: number; win_rate: number | null; avg_net_ret_5: number | null };
-    missed_winner_rate?: number | null;
-  };
+  outcomes?: CanonicalOutcomeSummary;
 }
 
 export interface EvolutionResponse {
@@ -772,6 +839,30 @@ export interface PipelineStatusResponse {
     final_action?: DecisionAction | null;
     candidate_counts: Record<"buy" | "observe" | "avoid", number>;
   };
+  learning: {
+    available: boolean;
+    review: {
+      current: boolean;
+      review_id?: string | null;
+      status?: string | null;
+      ai_status?: string | null;
+      reason?: string | null;
+    };
+    evolution: {
+      current: boolean;
+      evolution_id?: string | null;
+      status?: string | null;
+      promotion_status?: string | null;
+      training_status?: string | null;
+      model_state?: string | null;
+      trained?: boolean | null;
+      reference_months?: number | null;
+      minimum_reference_months?: number | null;
+      signal_months?: number | null;
+      minimum_signal_months?: number | null;
+      reason?: string | null;
+    };
+  };
   sources: {
     kline: {
       primary: string;
@@ -911,9 +1002,13 @@ export interface RecommendStock {
   /** 推荐理由：云阶结构 + 板块热度/排名/趋势 */
   reason?: string;
   evidence?: string[];
-  action: "buy";
+  signal_status?: "confirmed" | string;
+  signal_label?: string;
+  action: DecisionAction;
   action_label: string;
   action_detail: string;
+  candidate_decision_available?: boolean;
+  action_source?: "canonical_candidate" | "not_evaluated" | string;
   industry_available?: boolean;
   peak_date?: string;
   peak_high?: number;
@@ -927,6 +1022,7 @@ export interface RecommendStock {
     detail: string;
   }>;
   decision_evidence?: {
+    available?: boolean;
     reason_codes: string[];
     explanation?: string | null;
     baseline: Record<string, unknown>;
@@ -970,6 +1066,13 @@ export interface RecommendResponse {
     ranking_note?: string;
   };
   decision_run_id?: string | null;
+  canonical_decision?: {
+    available: boolean;
+    status?: "complete" | "degraded" | string | null;
+    final_action: DecisionAction | null;
+    model_version: string;
+    reason_codes: string[];
+  };
   freshness?: {
     fresh?: boolean;
     local_date?: string | null;
@@ -1124,6 +1227,138 @@ export type CloudStairReviewResponse = StrategyReviewResponse;
 export type CloudStairPick = StrategyReviewPick;
 export type CloudStairWindowAgg = StrategyWindowAgg;
 
+export interface DailyStrategyWindow {
+  sample_count: number;
+  signal_days: number;
+  observed_win_rate_pct: number | null;
+  bayesian_win_rate_pct: number | null;
+  wilson_lower_bound_pct: number | null;
+  daily_avg_net_return_pct: number | null;
+  median_net_return_pct: number | null;
+  worst_net_return_pct: number | null;
+  cvar10_net_return_pct: number | null;
+  avg_max_drawdown_pct: number | null;
+  terminal_execution_failure_count: number;
+  pending_signal_day_count: number;
+  overdue_pending_signal_day_count: number;
+  pit_verified_sample_count: number;
+  forward_approximation_sample_count: number;
+  evidence_complete: boolean;
+}
+
+export interface DailyStrategyRow {
+  strategy: string;
+  strategy_name: string;
+  name: string;
+  group: string;
+  today_hit_count: number | null;
+  status: "eligible" | "warming_up";
+  eligible: boolean;
+  eligibility: {
+    required_signal_days: number;
+    required_sample_count: number;
+    missing_signal_days: number;
+    missing_sample_count: number;
+    blocking_execution_failures: number;
+    blocking_overdue_evidence_days: number;
+  };
+  primary_window: string;
+  shadow_score: number | null;
+  score_components: {
+    bayesian_win: number | null;
+    wilson_confidence: number | null;
+    return_quality: number | null;
+    tail_risk_quality: number | null;
+  };
+  shadow_weight: number;
+  rank: number | null;
+  evidence_quality?: "pit_verified" | "forward_approximation" | string;
+  windows: Record<"T+1" | "T+5" | "T+10" | "T+20", DailyStrategyWindow>;
+}
+
+export interface DailyStrategyConclusion {
+  headline: string;
+  summary: string;
+  observations: string[];
+  risks: string[];
+  next_actions: string[];
+  feedback: "shadow_only";
+  source: "deterministic_model" | "llm_explanation" | string;
+}
+
+export interface DailyStrategyReport {
+  available: boolean;
+  reason?: string | null;
+  status: "ready" | "warming_up" | "factor_snapshot_not_ready" | "unavailable" | string;
+  trade_date: string;
+  snapshot_trade_date?: string | null;
+  generated_at?: string;
+  snapshot_id?: string | null;
+  feedback_mode: "shadow_only";
+  model_version: string;
+  algorithm_version?: string;
+  execution_policy_version?: string;
+  evidence_quality?: "shadow_forward_approximation" | string;
+  primary_horizon: number;
+  primary_window: string;
+  eligibility: {
+    required_signal_days: number;
+    required_sample_count: number;
+  };
+  today_hit_count: number | null;
+  today_known_hit_count: number;
+  today_hits_complete: boolean;
+  today_hits_reason?: string | null;
+  strategy_count: number;
+  eligible_strategy_count: number;
+  leader?: {
+    strategy: string;
+    strategy_name: string;
+    name: string;
+    shadow_score: number;
+    shadow_weight: number;
+    primary_window: string;
+  } | null;
+  strategies: DailyStrategyRow[];
+  score_formula: string;
+  methodology: string;
+  method: string;
+  source_hash?: string;
+}
+
+export interface DailyStrategyReviewResponse {
+  available: boolean;
+  reason?: string;
+  review_id?: string;
+  trade_date?: string;
+  snapshot_id?: string;
+  decision_run_id?: string | null;
+  as_of?: string;
+  status?: "ready" | "warming_up";
+  model_version?: string;
+  primary_horizon?: number;
+  input_hash?: string;
+  report?: DailyStrategyReport;
+  ai_status?: "not_called" | "explained" | "failed";
+  ai_model?: string | null;
+  ai_prompt_version?: string | null;
+  ai_payload?: {
+    conclusion?: DailyStrategyConclusion;
+    deterministic_fallback?: DailyStrategyConclusion;
+  };
+  reason_codes?: string[];
+  created_at?: string;
+  freshness?: {
+    fresh?: boolean;
+    local_date?: string | null;
+    expected_date?: string | null;
+    snapshot_id?: string | null;
+    coverage_ratio?: number;
+    reason?: string | null;
+    reason_codes?: string[];
+  };
+}
+
 export const api = {
   getStats: () => request<ApiResponse<StatsData>>("/api/stats"),
   getStocks: (page: number = 1, perPage: number = 50) => {
@@ -1164,7 +1399,7 @@ export const api = {
     ),
   getPerformanceSummary: () => request<PerformanceSummary>("/api/performance/summary"),
   getPerformanceRecords: (limit = 200) =>
-    request<{ total: number; records: PerformanceRecord[] }>(`/api/performance/records?limit=${limit}`),
+    request<PerformanceRecordsResponse>(`/api/performance/records?limit=${limit}`),
   refreshPerformance: () =>
     request<{ success: boolean; synced: number; updated: number }>("/api/performance/refresh", { method: "POST" }),
   getCloudStairReview: (limit = 300) =>
@@ -1174,4 +1409,18 @@ export const api = {
     request<StrategyReviewResponse>(
       `/api/review/strategy?strategy=${encodeURIComponent(strategy)}&limit=${limit}`,
     ),
+  getDailyStrategyReview: async () => {
+    try {
+      return await request<DailyStrategyReviewResponse>("/api/review/daily/latest");
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 503 && error.payload && typeof error.payload === "object") {
+        const payload = error.payload as DailyStrategyReviewResponse;
+        if (
+          payload.available === false
+          && ["stale_market_data", "daily_strategy_review_not_ready"].includes(payload.reason || "")
+        ) return payload;
+      }
+      throw error;
+    }
+  },
 };

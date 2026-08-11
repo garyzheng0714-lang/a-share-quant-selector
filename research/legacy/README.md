@@ -7,7 +7,7 @@
 - 不得连接生产账本或覆盖 `CURRENT_SNAPSHOT`。
 - 输出必须写到独立的临时研究目录。
 - 结果不得标记为 active/validated，也不得用于生产发布审批。
-- 正式训练、回放和模拟盘统一使用 `a-share-eod-open-open-v3` 执行政策。
+- 正式训练、回放和模拟盘统一使用 `a-share-eod-open-open-v5` 执行政策。
 
 旧 CLI 文件是实验档案，不承诺与当前生产数据契约兼容。它默认拒绝运行，必须同时设置
 `ALLOW_LEGACY_RESEARCH=1` 和仓库外的绝对路径 `LEGACY_RESEARCH_ROOT`。

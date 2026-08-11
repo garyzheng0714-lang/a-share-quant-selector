@@ -1,4 +1,4 @@
-import { useLocation } from "@/lib/spa-router";
+import { useLocation } from "react-router";
 import { TopNav, TopNavHeading, TopNavItem } from "@astryxdesign/core/TopNav";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { usePipelineStatus } from "@/lib/hooks";

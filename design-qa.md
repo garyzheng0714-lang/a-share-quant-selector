@@ -1,65 +1,80 @@
-# QSelect 云阶决策台 TRACE 验收
+# 决策台设计 QA
 
-验收日期：2026-08-09。
+## 对照目标
 
-## T — 真实目标
+- source visual truth path: `/Users/simba/Agentic-Engineering/归档/share/a-share-quant-selector-astryx-rebase/frontend/design-references/decision-console-master-detail.png`
+- implementation screenshot path: `/Users/simba/Agentic-Engineering/归档/share/a-share-quant-selector-astryx-rebase/.runtime/qa/stocks-implementation.png`
+- route: `http://127.0.0.1:5124/stocks`
+- viewport: `1487 × 1058` CSS px
+- source pixels: `1487 × 1058`
+- implementation pixels: `1487 × 1058`
+- deviceScaleFactor: `1`
+- density normalization: 无需缩放；源图与实现截图像素尺寸相同。
+- state: 亮色主题，`2026-08-11` 收盘，3 个云阶信号，默认选中“威派格”和日 K。
 
-- 目标用户：以云阶为当前最高胜率策略、希望收盘后立即判断是否值得买入的研究用户。
-- 核心结果：首屏直接回答“今日 2 只云阶信号、股票、行业排名/热度、值得买入”，并能继续查看 K 线、三段条件、AI 解释与失效风险。
-- 非目标：不在首页混放其他策略，不让 AI 自主选股，不补假新闻、假行业或假复盘结果。
+## 对照证据
 
-## R — 任务路径
+- full-view comparison evidence: `/Users/simba/Agentic-Engineering/归档/share/a-share-quant-selector-astryx-rebase/.runtime/qa/stocks-design-comparison.png`
+- focused list comparison evidence: `/Users/simba/Agentic-Engineering/归档/share/a-share-quant-selector-astryx-rebase/.runtime/qa/stocks-design-focus-list.png`
+- focused detail comparison evidence: `/Users/simba/Agentic-Engineering/归档/share/a-share-quant-selector-astryx-rebase/.runtime/qa/stocks-design-focus-detail.png`
+- mobile implementation evidence: `/Users/simba/Agentic-Engineering/归档/share/a-share-quant-selector-astryx-rebase/.runtime/qa/stocks-mobile-final.png`
+- mobile viewport: `390 × 844` CSS px，全页截图 `390 × 1533` px，页面水平溢出为 `0` px。
 
-1. `/stocks` 首屏读今日数量与总体主线。
-2. 第一只候选默认展开；用户查看价格、行业、日 K 和明确买入结论。
-3. 继续查看云阶三段证据、AI 解释、行业共振和风险失效条件。
-4. 按需切换候选、周/月 K、图表设置、历史、同板块比较、筛选和板块全景。
-5. `/review` 只看云阶真实账本；`/admin` 只看管线、快照、云阶发布、AI 与来源。
+## Findings
 
-## A — 行为与状态证据
+- 无剩余 P0 / P1 / P2 问题。
+- 字体与排版：继续使用项目锁定的系统中文无衬线和等宽数字；标题、信号数、候选名称、价格与辅助信息层级清楚，没有截断或错位。实现比概念稿略紧凑，是为容纳真实 K 线、图例与三条证据，不改变阅读层级。
+- 间距与布局：已实现 420px 候选清单 + 自适应研究区的主从工作面；候选、图表、证据链和执行结论的分区与概念稿一致。页面容器放宽到 1440px 后，大屏留白、左右比例和原图更接近。
+- 颜色与 token：使用项目 Neutral 主题的画布、面板、边框和强调色；互动色统一为蓝色，A 股涨跌继续使用红涨绿跌，无渐变、重阴影或额外卡片噪声。
+- 图像与资产：目标界面不包含摄影、插画或装饰资产；实现使用真实 ECharts K 线和 Astryx 图标，没有占位图、CSS 伪资产或手写 SVG。
+- 文案与内容：删除重复的“值得买入”胶囊、优先组合、AI 未配置和板块全景等非当前决策内容；保留真实优先级、买点确认、市场执行强度、证据链和详情入口。零点时间已从证据日期中移除。
+- 图标与状态：买点确认使用 Astryx `Icon`；候选选中、图表设置展开、周 K 选中、错误重试、空状态与加载骨架都有真实反馈。
+- 响应式与可访问性：候选按钮可用键盘 Space 切换，选中状态通过 `aria-current` 暴露；`prefers-reduced-motion: reduce` 下详情动画时长为 `0s`；390px 宽度下无页面级横向滚动。
 
-- 真实接口：`/api/recommend` 返回 2 只云阶候选、行业映射、行业排名、明确 `值得买入` 和当前决策 Run。
-- AI：火山方舟模型 `ep-20260708193245-4l9ft` 已生成并落账逐票解释与风险，状态为 `explained`；AI 改票数固定为 0。
-- K 线：日、周、月接口均可读取；月线返回 73 行、周期结束日和未完成周期标记。
-- 浏览器已实际操作：候选切换、日/周/月 K、MA60、图表设置、展示筛选、清空、板块全景、审计日志展开。
-- 空/部分状态：复盘样本未成熟时显示“样本不足”；事件账本为空时说明“未收录不等于没有事件”；接口失败页提供重试。
-- 权限边界：后台写操作保持禁用并说明需要管理员 Bearer Token 与 HMAC；没有伪造可写路径。
+## 互动与运行证据
 
-## C — 工艺与代码证据
+- 候选切换：威派格 → 美盈森的下一可绘制帧反馈为 31.2ms，低于 100ms 门槛；工作面顶部与宽度保持稳定。
+- 提交范围：该次切换观察到 9 条 DOM 变更记录、1 个新增节点、3 个移除节点，无 long task，没有出现大范围重复提交。
+- 稳定与动效：加载与候选切换累计 CLS 为 `0.000416`；自定义详情进场为 `qs-fade 0.15s cubic-bezier(0.16, 1, 0.3, 1)`，关键帧只改变 `opacity` 和 `transform`，时长与缓动来自项目 token。
+- 键盘：聚焦第三个候选后按 Space，当前研究对象切换为“地铁设计”。
+- 图表：周 K `aria-checked=true`；图表设置面板可展开；详情链接随当前候选切换为 `/stock/003013`。
+- 状态：延迟接口时出现 752 × 640 骨架；503 时显示“云阶决策暂不可用”与重试按钮；空候选时说明不会为有票而降低门槛。
+- 浏览器控制台错误：0。
+- 网络请求失败：0（正常真实数据状态）。
+- `npm run lint`：通过。
+- `npm run build`：通过（TypeScript + Vite）。
+- 按项目约定，本轮没有新增或运行自动化测试；使用真实浏览器状态、交互、错误恢复和视觉对照作为本轮功能证据。
 
-- 复用项目锁定的 Astryx Neutral 主题以及 `TopNav`、`Button`、`Badge`、`StatusDot`、`SegmentedControl`、`Collapsible`、`ClickableCard`。
-- 复用现有 React + Flask + SQLite + ECharts 技术栈，没有增加图表或状态管理依赖。
-- K 线聚合在后端完成；云阶规则、行业轮动、AI 决策账本和前端表现层边界清晰。
-- 候选首屏最多 6 只、板块列表当前 31 行，没有把全市场股票常驻 DOM。
-- 展开动效只改 `opacity` / `transform`，使用项目 token；全局 reduced-motion 规则把动画与过渡降至 0.01ms。
+## TRACE
 
-## E — 真实验收证据
+- T — 真实目标：帮助收盘后复盘的 A 股研究用户，在十几秒内判断有无云阶信号、优先看哪只、理由是什么，不虚构买点、行业或 AI 结论。
+- R — 任务路径：信号数与市场环境 → 候选优先级比较 → 选中一只 → K 线与三段证据 → 执行强度或个股详情；历史与同板块对比按需展开。
+- A — 行为与状态：默认、候选切换、周 K、图表设置、详情链接、加载、空、可恢复错误和手机端都有真实运行证据。
+- C — 工艺与代码：复用项目 Astryx `Item` / `Button` / `SegmentedControl` / `Icon`、Neutral 主题、现有 ECharts 与真实 API；未新增依赖，未增加假入口或不可操作控件。
+- E — 验收证据：同尺寸双图对照、桌面/手机浏览器截图、主路径交互、错误恢复、键盘、减少动效、布局稳定、控制台/网络、Lint 与构建均已记录。
 
-### 视觉
+## Comparison History
 
-- 参考前端：`/tmp/qselect-source-final-1600x1000.png`
-- 当前实现：`/tmp/qselect-impl-final-1600x1000.png`
-- 同图并排：`/tmp/qselect-side-by-side.png`
-- 移动端：`/tmp/qselect-impl-390x844-final.png`
-- 1600×1000 并排检查后，导航高度、900px 主列、首屏留白、候选卡起点、卡宽、展开层级、图表工具栏和理由区结构对齐；真实数据内容与参考样例不同，不做假数据复制。
-- 390×844 检查无页面级横向溢出；导航、今日结论、候选、买入标签和 K 线保持可见。
+1. 第一次对照发现 [P1] 执行文案“试仓观察”会弱化已确认买点，证据日期显示无意义的 `00:00:00`。已改为真实执行强度“试仓”，并对证据日期做只读格式化。
+2. 第一次对照发现 [P2] 1320px 桌面容器在 1487px 参考尺寸下两侧留白过大，右侧研究区偏窄。已放宽为 1440px，使候选分栏、K 线与证据链的比例接近概念稿。
+3. 修复后重新以 `1487 × 1058` 截图，并生成全景、候选清单和研究区聚焦对照。未再发现可执行的 P0 / P1 / P2 问题。
 
-### 性能与稳定
+## Open Questions
 
-- 在浏览器页内临时插入首帧计时后复测候选切换：`20ms` 出现下一帧反馈，低于 100ms 门槛；计时代码验收后已移除。
-- React Profiler 临时测得候选列表切换提交耗时 `3.1ms`；Profiler 代码验收后已移除。
-- 候选切换先提交卡片展开状态，ECharts 在 effect 中初始化，不阻塞同步事件处理。
-- 减少动态规则已在 CSS 中静态核对；当前内置浏览器未提供媒体偏好仿真能力，因此未声称完成真实 OS 级 reduced-motion 仿真。
+- 无阻塞项。顶部导航保留项目真实的“决策台 / 复盘 / 后台”三个入口，没有照搬 ImageGen 概念稿中未存在的页面。
+- 真实 K 线保留 MA5/10/20/60、多空线、趋势线和 KDJ，比概念稿的简化图表更密，这是真实功能约束。
 
-### 工程
+## Implementation Checklist
 
-- `python -m py_compile utils/cloud_stair_decision.py views/quant_pick_api.py web_server.py`：通过。
-- `npm run build`：通过（TypeScript + Vite）；只有 ECharts chunk 超过 500kB 的既有体积警告。
-- `npm run lint`：通过，无 error / warning。
-- 按项目 `AGENTS.md` 的“先实现、用户确认后再补测试”规则，本轮没有新增或运行自动化测试；已完成真实浏览器操作验收。
+- [x] 主从工作面与真实候选数据
+- [x] 候选切换、日/周/月 K、图表设置与详情入口
+- [x] 三段信号证据与执行强度
+- [x] 加载、空、错误与重试状态
+- [x] 1487px 桌面与 390px 手机浏览器验收
+- [x] 键盘、降级动效、溢出与控制台检查
 
-## 结论
+## Follow-up Polish
 
-当前实现满足核心任务、视觉参考、真实数据、关键交互和快照长期保留要求。除内置浏览器无法切换 OS 减少动效偏好、自动化测试按项目规则留待用户确认后补充外，没有发现阻断核心使用的 P0/P1/P2 缺陷。
+- [P3] 如后续希望更贴近概念稿的视觉尺度，可在不减少真实图表信息的前提下，再轻微放大候选列表文字。
 
-最终结论：可发布。
+final result: passed

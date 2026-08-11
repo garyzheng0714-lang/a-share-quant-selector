@@ -32,7 +32,7 @@ _CONFIG_PATH = Path(__file__).parent.parent / "config" / "config.yaml"
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
 DEFAULT_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_ARK_MODEL = "ep-20260708193245-4l9ft"
-COMMENT_PROMPT_VERSION = "cloud-stair-explainer-v3"
+COMMENT_PROMPT_VERSION = "cloud-stair-explainer-v6"
 
 
 def _load_llm_config() -> dict:
@@ -133,11 +133,27 @@ _COMMENTS_SCHEMA = """
 COMMENT_SYSTEM_PROMPT = (
     "你是A股云阶战法的研究解释器，服务的用户没有金融专业背景。"
     "请用简体中文回复。"
-    "股票及其买点已经由云阶公式确定；你无权增删、排序或改变规则动作。"
+    "股票只代表云阶结构信号已确认；买入、观察或回避动作由正式决策账本给出。"
+    "你无权增删、排序或改变账本动作，也不得把结构信号说成买点。"
     "你的唯一任务是结合云阶结构、K线特征与行业热度，解释当前优势和具体失效风险。"
     "不得保证收益，也不得以你自己的判断覆盖云阶规则结论。"
     "本版本不提供新闻、公告或业绩事实；不得主动补充、搜索、猜测或暗示消息面。"
     "只能使用输入中的云阶结构、K线特征和行业热度。"
+)
+
+COMMENT_FORBIDDEN_ACTION_TERMS = (
+    "建议买入",
+    "买入",
+    "卖出",
+    "加仓",
+    "减仓",
+    "清仓",
+    "抄底",
+    "继续观察",
+    "建议观察",
+    "保证收益",
+    "必涨",
+    "稳赚",
 )
 
 COMMENT_SCHEMA = {
@@ -193,7 +209,8 @@ def _build_comment_prompt(
         f"## 决策截止日 {trade_date}",
         f"- 决策 run_id: {decision_run_id}",
         "",
-        "以下股票已通过云阶的突破确认。不得重排、增删或改变规则动作。",
+        "以下股票已通过云阶结构确认。只有标记‘已纳入正式模型’的股票才有账本动作；"
+        "其余股票不得被描述为观察、买入或回避。不得重排、增删或改变账本动作。",
         "",
     ]
     for stock in stocks:
@@ -202,6 +219,12 @@ def _build_comment_prompt(
             f"### {code} {stock.get('name')}｜现价 {stock.get('close')}｜"
             f"行业 {stock.get('industry') or '未知'}"
         )
+        if stock.get("decision_evaluated") is True:
+            lines.append(
+                "- 正式账本状态: 已纳入正式模型；具体动作由界面直读账本，AI 不得复述"
+            )
+        else:
+            lines.append("- 正式账本状态: 未纳入正式模型，无买卖或观察动作")
         signal_bits = []
         if stock.get("peak_date"):
             signal_bits.append(f"前高峰日 {stock.get('peak_date')}")
@@ -235,7 +258,7 @@ def _build_comment_prompt(
         [
             "## 输出要求",
             "1. market_note：用一句话说明今日云阶候选整体特征，不做收益保证；",
-            "2. comments：逐一覆盖上面的每只股票；comment 解释云阶结构与行业环境是否相互支持，risk 必须给出可观察的失效条件；",
+            "2. comments：逐一覆盖上面的每只股票；comment 只解释云阶结构、技术特征与行业环境，不提及任何买卖或观察动作；risk 必须给出可观察的失效条件；",
             "3. 不得补充消息面、公告或业绩事实，也不得挑选、排序、增加或遗漏股票。",
         ]
     )
@@ -265,7 +288,7 @@ def _call_ark_comment(api_key: str, llm_cfg: dict, prompt: str) -> tuple[dict, s
             ],
             "temperature": 0.3,
         },
-        timeout=180,
+        timeout=60,
     )
     response.raise_for_status()
     text = response.json()["choices"][0]["message"]["content"]
@@ -280,11 +303,10 @@ def _call_anthropic_comment(
     import anthropic
 
     model = str(llm_cfg.get("model") or DEFAULT_ANTHROPIC_MODEL)
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
     response = client.messages.create(
         model=model,
-        max_tokens=16000,
-        thinking={"type": "adaptive"},
+        max_tokens=2000,
         system=COMMENT_SYSTEM_PROMPT,
         output_config={"format": {"type": "json_schema", "schema": COMMENT_SCHEMA}},
         messages=[{"role": "user", "content": prompt}],
@@ -418,6 +440,18 @@ def generate_quant_comment(
             }
     if set(by_code) != valid_codes:
         return {"available": False, "reason": "llm_output_incomplete"}
+    free_text = "\n".join(
+        [
+            str(result.get("market_note") or ""),
+            *(
+                value
+                for item in by_code.values()
+                for value in (item.get("comment", ""), item.get("risk", ""))
+            ),
+        ]
+    )
+    if any(term in free_text for term in COMMENT_FORBIDDEN_ACTION_TERMS):
+        return {"available": False, "reason": "llm_action_policy_violation"}
 
     verified, reason = _verify_comment_snapshot(csv_manager, trade_date)
     if not verified:

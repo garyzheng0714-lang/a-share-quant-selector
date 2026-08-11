@@ -112,7 +112,7 @@ class RuntimeSchemaTest(unittest.TestCase):
                    execution_policy_version, as_of, cash, market_value,
                    total_equity, exposure, drawdown, turnover, benchmark_value,
                    pricing_status, created_at)
-                VALUES ('unverified-nav', 'paper-main-v1', '2026-01-05',
+                VALUES ('unverified-nav', 'paper-main-v5', '2026-01-05',
                         'unpublished-test-data', 'a-share-eod-open-open-v3',
                         '2026-01-05T15:00:00+08:00', 1000000, 0, 1000000,
                         0, 0, 0, NULL, 'complete',

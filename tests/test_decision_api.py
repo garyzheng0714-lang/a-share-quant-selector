@@ -52,7 +52,7 @@ class DecisionApiTest(unittest.TestCase):
         response = self.client.get("/api/decision/latest?stage=intraday")
         self.assertEqual(response.status_code, 400)
 
-    @patch("views.decision_api.get_latest_evolution")
+    @patch("views.decision_api._current_evolution")
     def test_evolution_status_is_exposed(self, latest):
         latest.return_value = {
             "trade_date": "2026-07-14",
@@ -83,7 +83,7 @@ class DecisionApiTest(unittest.TestCase):
         },
     )
     @patch(
-        "views.decision_api.get_latest_evolution",
+        "views.decision_api._current_evolution",
         return_value={
             "status": "complete",
             "promotion_status": "shadow_registered",

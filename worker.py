@@ -19,12 +19,14 @@ from utils.operations_store import (
     acquire_scheduler_lease,
     claim_job_run,
     claim_next_task,
-    enqueue_task,
+    enqueue_scheduled_task,
+    execution_lease_is_current,
     finish_job_run,
     finish_task,
     get_task,
     heartbeat_task,
     release_scheduler_lease,
+    task_execution_token,
     update_task_progress,
 )
 from utils.runtime_paths import market_data_dir
@@ -37,6 +39,7 @@ STOP = threading.Event()
 PREOPEN_RECONCILE_START = wall_time(8, 45)
 PREOPEN_RECONCILE_END = wall_time(9, 25)
 CLOSE_RECONCILE_START = wall_time(16, 0)
+SCHEDULER_RECOVERY_COOLDOWN_SECONDS = 300
 DATA_DIR = market_data_dir()
 PIPELINE_STAGE_LABELS = {
     "market_ingestion": "采集并发布行情",
@@ -44,7 +47,17 @@ PIPELINE_STAGE_LABELS = {
     "outcome_refresh": "回填历史决策结果",
     "paper_pricing": "模拟盘估值",
     "decision_materialization": "计算指标并生成收盘决策",
+    "factor_outcome_refresh": "回填多策略成熟结果",
+    "strategy_review_materialization": "生成全策略评分与 AI 复盘",
+    "model_evolution": "运行影子模型进化",
 }
+
+
+def _require_execution_lease(payload: dict) -> None:
+    task_id = str(payload.get("task_id") or "")
+    token = str(payload.get("execution_token") or "")
+    if not task_id or not token or not execution_lease_is_current(task_id, token):
+        raise RuntimeError("task_execution_lease_lost")
 
 
 def _new_pipeline(requested_trade_date: str) -> dict:
@@ -150,10 +163,25 @@ def _preopen_decision(_payload: dict) -> dict:
     return result
 
 
-def _model_evolution(_payload: dict) -> dict:
-    from utils.self_evolution import run_daily_evolution
+def _model_evolution(payload: dict) -> dict:
+    from utils.csv_manager import CSVManager
+    from utils.data_freshness import local_data_status
 
-    return run_daily_evolution()
+    _require_execution_lease(payload)
+    manager = CSVManager(DATA_DIR, writable=False)
+    freshness = local_data_status(manager)
+    if freshness.get("fresh") is not True:
+        return {"success": False, "reason": "stale_market_data"}
+    result = _run_evolution_once(
+        manager,
+        trade_date=str(freshness.get("local_date") or ""),
+        snapshot_id=str(freshness.get("snapshot_id") or ""),
+        execution_context=payload,
+    )
+    return {
+        **result,
+        "success": result.get("available") is True and result.get("status") != "failed",
+    }
 
 
 def _outcome_refresh(_payload: dict) -> dict:
@@ -164,8 +192,15 @@ def _outcome_refresh(_payload: dict) -> dict:
     return {"available": True, **result}
 
 
-def _run_decision_materialization(manager, freshness: dict) -> dict:
+def _run_decision_materialization(
+    manager,
+    freshness: dict,
+    *,
+    execution_context: dict | None = None,
+) -> dict:
     """为已发布快照重建派生缓存并落账决策，不再次抓取行情。"""
+    if execution_context:
+        _require_execution_lease(execution_context)
     from utils.market_snapshot import read_snapshot_metadata
 
     names, _ = read_snapshot_metadata(
@@ -176,31 +211,54 @@ def _run_decision_materialization(manager, freshness: dict) -> dict:
     from utils.sector_rotation import get_sector_rotation
 
     sectors = get_sector_rotation(manager, force=True)
+    if execution_context:
+        _require_execution_lease(execution_context)
     if not sectors.get("available"):
         return {"success": False, "stage": "sector_rotation", "result": sectors}
     from utils.market_thermometer import refresh_thermometer
 
     thermometer = refresh_thermometer(manager, sectors)
+    if execution_context:
+        _require_execution_lease(execution_context)
     if not thermometer.get("available"):
         return {"success": False, "stage": "market_thermometer", "result": thermometer}
     from utils.super_b1_scan import get_super_b1
 
     super_b1 = get_super_b1(manager, names, force=True)
+    if execution_context:
+        _require_execution_lease(execution_context)
     if not super_b1.get("available"):
         return {"success": False, "stage": "super_b1", "result": super_b1}
     from utils.factor_scan import prewarm_all
 
     factors = prewarm_all(manager, names)
+    if execution_context:
+        _require_execution_lease(execution_context)
     if not factors.get("available"):
         return {"success": False, "stage": "factor_scan", "result": factors}
+    from utils.factor_evidence import materialize_factor_signal_run
+
+    factor_evidence = materialize_factor_signal_run(manager, factors)
+    if execution_context:
+        _require_execution_lease(execution_context)
+    if not factor_evidence.get("available"):
+        return {
+            "success": False,
+            "stage": "factor_signal_ledger",
+            "result": factor_evidence,
+        }
     from utils.hierarchical_decision import run_close_decision
 
     decision = run_close_decision(manager)
+    if execution_context:
+        _require_execution_lease(execution_context)
     ai = None
     if decision.get("available"):
         from utils.ai_decision import run_ai_decision
 
         ai = run_ai_decision(decision, csv_manager=manager)
+        if execution_context:
+            _require_execution_lease(execution_context)
     return {
         "success": bool(decision.get("available")),
         "stage": "complete",
@@ -209,9 +267,136 @@ def _run_decision_materialization(manager, freshness: dict) -> dict:
         "thermometer": thermometer,
         "super_b1": super_b1,
         "factor_trade_date": factors.get("trade_date"),
+        "factor_evidence": factor_evidence,
         "decision": decision,
         "ai": ai,
     }
+
+
+def _ensure_factor_signal_evidence(
+    manager,
+    *,
+    execution_context: dict | None = None,
+) -> dict:
+    """在正式决策无需重算时，仍可为新因子版本补物化证据。"""
+    from utils.market_snapshot import read_snapshot_metadata
+
+    names, _ = read_snapshot_metadata(
+        "stock_names.json",
+        manager.base_data_dir,
+        snapshot_id=manager.snapshot_id,
+    )
+    from utils.factor_scan import prewarm_all
+
+    factors = prewarm_all(manager, names)
+    if execution_context:
+        _require_execution_lease(execution_context)
+    if not factors.get("available"):
+        return {"available": False, "reason": "factor_scan_unavailable"}
+    from utils.factor_evidence import materialize_factor_signal_run
+
+    result = materialize_factor_signal_run(manager, factors)
+    if execution_context:
+        _require_execution_lease(execution_context)
+    return result
+
+
+def _evolution_succeeded(evolution: dict) -> bool:
+    return bool(
+        evolution.get("available") is True and evolution.get("status") != "failed"
+    )
+
+
+def _evolution_is_current(
+    evolution: dict | None,
+    trade_date: str,
+    snapshot_id: str,
+) -> bool:
+    from utils.self_evolution import evolution_pipeline_version
+
+    return bool(
+        evolution
+        and evolution.get("trade_date") == trade_date
+        and evolution.get("data_version") == f"snapshot-{snapshot_id}"
+        and evolution.get("status") == "complete"
+        and (evolution.get("metrics") or {}).get("evolution_pipeline_version")
+        == evolution_pipeline_version()
+    )
+
+
+def _learning_pipeline_version(policy_version: str) -> str:
+    """收盘学习 DAG 独立版本；复盘或进化代码变更必须重物化。"""
+    from utils.daily_strategy_review import review_pipeline_version
+    from utils.self_evolution import evolution_pipeline_version
+
+    identity = ":".join(
+        (policy_version, review_pipeline_version(), evolution_pipeline_version())
+    )
+    return f"daily-learning-v2-{hashlib.sha256(identity.encode()).hexdigest()[:20]}"
+
+
+def _run_evolution_once(
+    manager,
+    *,
+    trade_date: str,
+    snapshot_id: str,
+    execution_context: dict,
+) -> dict:
+    """所有 worker 入口共用一个进化业务键，防止重复训练和覆盖产物。"""
+    from utils.decision_ledger import get_current_evolution_run
+    from utils.decision_versions import data_version
+    from utils.self_evolution import evolution_pipeline_version, run_daily_evolution
+
+    task_id = str(execution_context.get("task_id") or "")
+    execution_token = str(execution_context.get("execution_token") or "")
+    _require_execution_lease(execution_context)
+    current_data_version = data_version(manager.data_dir)
+    if current_data_version != f"snapshot-{snapshot_id}":
+        return {"available": False, "reason": "evolution_snapshot_mismatch"}
+    pipeline_version = evolution_pipeline_version()
+    claim_version = f"{pipeline_version}:{current_data_version}"
+    claim = claim_job_run(
+        "daily_model_evolution",
+        trade_date,
+        snapshot_id,
+        claim_version,
+        task_id,
+        execution_token=execution_token,
+    )
+    if not claim.get("claimed"):
+        current = get_current_evolution_run(
+            trade_date, current_data_version, pipeline_version
+        )
+        if claim.get("status") == "succeeded" and current is not None:
+            return {"available": True, "existing": True, **current}
+        return {
+            "available": False,
+            "reason": (
+                "model_evolution_in_progress"
+                if claim.get("status") == "running"
+                else "model_evolution_claim_inconsistent"
+            ),
+        }
+
+    succeeded = False
+    try:
+        result = run_daily_evolution(
+            manager,
+            lease_guard=lambda: _require_execution_lease(execution_context),
+        )
+        _require_execution_lease(execution_context)
+        succeeded = _evolution_succeeded(result)
+        return result
+    finally:
+        finish_job_run(
+            "daily_model_evolution",
+            trade_date,
+            snapshot_id,
+            claim_version,
+            task_id,
+            succeeded=succeeded,
+            execution_token=execution_token,
+        )
 
 
 def _run_daily_close_downstream(
@@ -219,9 +404,15 @@ def _run_daily_close_downstream(
     freshness: dict,
     *,
     task_id: str,
+    execution_token: str,
     pipeline: dict,
 ) -> dict:
     """只消费已绑定快照；调用前业务幂等键已被占用。"""
+    execution_context = {
+        "task_id": task_id,
+        "execution_token": execution_token,
+    }
+    _require_execution_lease(execution_context)
     _mark_pipeline_stage(pipeline, task_id, "outcome_refresh", "running")
     try:
         outcomes = _outcome_refresh({})
@@ -251,6 +442,7 @@ def _run_daily_close_downstream(
     from utils.paper_trading import run_daily_paper_cycle
 
     paper = run_daily_paper_cycle(freshness["local_date"], manager)
+    _require_execution_lease(execution_context)
     if not paper.get("available"):
         _mark_pipeline_stage(
             pipeline,
@@ -276,7 +468,11 @@ def _run_daily_close_downstream(
     )
 
     _mark_pipeline_stage(pipeline, task_id, "decision_materialization", "running")
-    result = _run_decision_materialization(manager, freshness)
+    result = _run_decision_materialization(
+        manager,
+        freshness,
+        execution_context=execution_context,
+    )
     decision_succeeded = result.get("success") is True
     _mark_pipeline_stage(
         pipeline,
@@ -288,11 +484,165 @@ def _run_daily_close_downstream(
             "run_id": (result.get("decision") or {}).get("run_id"),
         },
     )
-    _finish_pipeline(pipeline, task_id, succeeded=decision_succeeded)
+    if not decision_succeeded:
+        _finish_pipeline(pipeline, task_id, succeeded=False)
+        return {
+            **result,
+            "paper": paper,
+            "outcome_refresh": outcomes,
+            "pipeline": pipeline,
+        }
+
+    _mark_pipeline_stage(pipeline, task_id, "factor_outcome_refresh", "running")
+    try:
+        from utils.factor_evidence import refresh_factor_outcomes
+
+        factor_outcomes = refresh_factor_outcomes(
+            manager, str(freshness.get("local_date") or "")
+        )
+        _require_execution_lease(execution_context)
+    except Exception as exc:
+        logger.exception("因子结果回填失败: %s", exc)
+        factor_outcomes = {
+            "available": False,
+            "reason": "factor_outcome_refresh_exception",
+            "error_type": type(exc).__name__,
+        }
+    _mark_pipeline_stage(
+        pipeline,
+        task_id,
+        "factor_outcome_refresh",
+        "complete" if factor_outcomes.get("available") else "failed",
+        detail={
+            "inserted": int(factor_outcomes.get("inserted") or 0),
+            "complete": int(factor_outcomes.get("complete") or 0),
+            "pending": int(factor_outcomes.get("pending") or 0),
+            "reason": factor_outcomes.get("reason"),
+        },
+    )
+    if factor_outcomes.get("available") is not True:
+        _finish_pipeline(pipeline, task_id, succeeded=False)
+        return {
+            **result,
+            "success": False,
+            "stage": "factor_outcome_refresh",
+            "paper": paper,
+            "outcome_refresh": outcomes,
+            "factor_outcomes": factor_outcomes,
+            "pipeline": pipeline,
+        }
+
+    _mark_pipeline_stage(
+        pipeline, task_id, "strategy_review_materialization", "running"
+    )
+    try:
+        from utils.daily_strategy_review import materialize_daily_strategy_review
+
+        _require_execution_lease(execution_context)
+        strategy_review = materialize_daily_strategy_review(
+            manager,
+            result.get("decision"),
+            task_id=task_id,
+            execution_token=execution_token,
+        )
+        _require_execution_lease(execution_context)
+    except Exception as exc:
+        logger.exception("每日全策略复盘失败: %s", exc)
+        strategy_review = {
+            "available": False,
+            "reason": "strategy_review_exception",
+            "error_type": type(exc).__name__,
+        }
+    review_ready = strategy_review.get("available") is True
+    _mark_pipeline_stage(
+        pipeline,
+        task_id,
+        "strategy_review_materialization",
+        (
+            "complete"
+            if review_ready and strategy_review.get("ai_status") == "explained"
+            else "attention"
+            if review_ready
+            else "failed"
+        ),
+        detail={
+            "review_id": strategy_review.get("review_id"),
+            "status": strategy_review.get("status"),
+            "ai_status": strategy_review.get("ai_status"),
+            "reason": strategy_review.get("reason"),
+        },
+    )
+    if not review_ready:
+        _finish_pipeline(pipeline, task_id, succeeded=False)
+        return {
+            **result,
+            "success": False,
+            "stage": "strategy_review_materialization",
+            "paper": paper,
+            "outcome_refresh": outcomes,
+            "factor_outcomes": factor_outcomes,
+            "strategy_review": strategy_review,
+            "pipeline": pipeline,
+        }
+
+    _mark_pipeline_stage(pipeline, task_id, "model_evolution", "running")
+    try:
+        evolution = _run_evolution_once(
+            manager,
+            trade_date=str(freshness.get("local_date") or ""),
+            snapshot_id=str(freshness.get("snapshot_id") or ""),
+            execution_context=execution_context,
+        )
+    except Exception as exc:
+        logger.exception("每日影子模型进化失败: %s", exc)
+        evolution = {
+            "available": False,
+            "reason": "model_evolution_exception",
+            "error_type": type(exc).__name__,
+        }
+    evolution_ok = _evolution_succeeded(evolution)
+    _mark_pipeline_stage(
+        pipeline,
+        task_id,
+        "model_evolution",
+        (
+            "complete"
+            if evolution_ok and evolution.get("promotion_status") == "shadow_registered"
+            else "attention"
+            if evolution_ok
+            else "failed"
+        ),
+        detail={
+            "evolution_id": evolution.get("evolution_id"),
+            "promotion_status": evolution.get("promotion_status"),
+            "reason": evolution.get("reason"),
+            "reason_codes": evolution.get("reason_codes") or [],
+        },
+    )
+
+    if not evolution_ok:
+        _finish_pipeline(pipeline, task_id, succeeded=False)
+        return {
+            **result,
+            "success": False,
+            "stage": "model_evolution",
+            "paper": paper,
+            "outcome_refresh": outcomes,
+            "factor_outcomes": factor_outcomes,
+            "strategy_review": strategy_review,
+            "evolution": evolution,
+            "pipeline": pipeline,
+        }
+
+    _finish_pipeline(pipeline, task_id, succeeded=True)
     return {
         **result,
+        "success": True,
         "paper": paper,
         "outcome_refresh": outcomes,
+        "factor_outcomes": factor_outcomes,
+        "strategy_review": strategy_review,
+        "evolution": evolution,
         "pipeline": pipeline,
     }
 
@@ -321,8 +671,14 @@ def _materialize_snapshot_decision(payload: dict) -> dict:
     from utils.data_freshness import local_data_status
     from utils.decision_ledger import get_latest_decision
     from utils.decision_versions import strategy_version
+    from utils.daily_strategy_review import (
+        review_pipeline_version,
+        strategy_review_is_current,
+    )
+    from utils.self_evolution import evolution_pipeline_version
 
     manager = CSVManager(DATA_DIR, writable=False)
+    _require_execution_lease(payload)
     freshness = local_data_status(manager)
     if not freshness.get("fresh"):
         return {"success": False, "stage": "freshness", "freshness": freshness}
@@ -330,15 +686,24 @@ def _materialize_snapshot_decision(payload: dict) -> dict:
     trade_date = str(freshness.get("local_date") or "")
     snapshot_id = str(freshness.get("snapshot_id") or "")
     policy_version = strategy_version()
+    current_review_version = review_pipeline_version()
+    current_evolution_version = evolution_pipeline_version()
+    current_learning_version = _learning_pipeline_version(policy_version)
     requested = {
         "trade_date": str(payload.get("trade_date") or ""),
         "snapshot_id": str(payload.get("snapshot_id") or ""),
         "strategy_version": str(payload.get("strategy_version") or ""),
+        "review_version": str(payload.get("review_version") or ""),
+        "evolution_version": str(payload.get("evolution_version") or ""),
+        "learning_version": str(payload.get("learning_version") or ""),
     }
     current = {
         "trade_date": trade_date,
         "snapshot_id": snapshot_id,
         "strategy_version": policy_version,
+        "review_version": current_review_version,
+        "evolution_version": current_evolution_version,
+        "learning_version": current_learning_version,
     }
     if requested != current:
         return {
@@ -350,6 +715,92 @@ def _materialize_snapshot_decision(payload: dict) -> dict:
 
     decision = get_latest_decision("close")
     if _decision_matches_snapshot(decision, freshness, policy_version):
+        from utils.decision_ledger import (
+            get_latest_evolution_run,
+            get_latest_strategy_review_run,
+        )
+
+        review = get_latest_strategy_review_run(trade_date)
+        review_current = strategy_review_is_current(review, decision, snapshot_id)
+        evolution = get_latest_evolution_run()
+        evolution_current = _evolution_is_current(evolution, trade_date, snapshot_id)
+        if not review_current:
+            from utils.daily_strategy_review import materialize_daily_strategy_review
+            from utils.factor_evidence import refresh_factor_outcomes
+
+            factor_signal = _ensure_factor_signal_evidence(
+                manager,
+                execution_context=payload,
+            )
+            if factor_signal.get("available") is not True:
+                return {
+                    "success": False,
+                    "stage": "factor_signal_ledger",
+                    "factor_evidence": factor_signal,
+                }
+            factor_outcomes = refresh_factor_outcomes(manager, trade_date)
+            _require_execution_lease(payload)
+            if factor_outcomes.get("available") is not True:
+                return {
+                    "success": False,
+                    "stage": "factor_outcome_refresh",
+                    "factor_evidence": factor_signal,
+                    "factor_outcomes": factor_outcomes,
+                }
+            _require_execution_lease(payload)
+            review = materialize_daily_strategy_review(
+                manager,
+                decision,
+                task_id=str(payload.get("task_id") or ""),
+                execution_token=str(payload.get("execution_token") or ""),
+            )
+            _require_execution_lease(payload)
+            if review.get("available") is not True:
+                return {
+                    "success": False,
+                    "stage": "strategy_review_materialization",
+                    "factor_evidence": factor_signal,
+                    "factor_outcomes": factor_outcomes,
+                    "strategy_review": review,
+                }
+            evolution = _run_evolution_once(
+                manager,
+                trade_date=trade_date,
+                snapshot_id=snapshot_id,
+                execution_context=payload,
+            )
+            learning_ready = bool(
+                review.get("available") is True and _evolution_succeeded(evolution)
+            )
+            return {
+                "success": learning_ready,
+                "stage": "idempotent_decision_learning_materialized",
+                "trade_date": trade_date,
+                "snapshot_id": snapshot_id,
+                "policy_version": policy_version,
+                "run_id": decision.get("run_id"),
+                "factor_evidence": factor_signal,
+                "factor_outcomes": factor_outcomes,
+                "strategy_review": review,
+                "evolution": evolution,
+            }
+        if not evolution_current:
+            evolution = _run_evolution_once(
+                manager,
+                trade_date=trade_date,
+                snapshot_id=snapshot_id,
+                execution_context=payload,
+            )
+            return {
+                "success": _evolution_succeeded(evolution),
+                "stage": "idempotent_evolution_materialized",
+                "trade_date": trade_date,
+                "snapshot_id": snapshot_id,
+                "policy_version": policy_version,
+                "run_id": decision.get("run_id"),
+                "strategy_review": review,
+                "evolution": evolution,
+            }
         return {
             "success": True,
             "stage": "idempotent_replay",
@@ -360,15 +811,18 @@ def _materialize_snapshot_decision(payload: dict) -> dict:
         }
 
     task_id = str(payload.get("task_id") or "").strip()
+    execution_token = str(payload.get("execution_token") or "").strip()
     if not task_id:
         return {"success": False, "stage": "business_task_identity_missing"}
     job_name = "snapshot_decision_materialization"
+    learning_version = current_learning_version
     claim = claim_job_run(
         job_name,
         trade_date,
         snapshot_id,
-        policy_version,
+        learning_version,
         task_id,
+        execution_token=execution_token,
     )
     if not claim["claimed"]:
         return {
@@ -383,17 +837,57 @@ def _materialize_snapshot_decision(payload: dict) -> dict:
 
     succeeded = False
     try:
-        result = _run_decision_materialization(manager, freshness)
+        result = _run_decision_materialization(
+            manager,
+            freshness,
+            execution_context=payload,
+        )
         succeeded = result.get("success") is True
+        if succeeded:
+            from utils.daily_strategy_review import materialize_daily_strategy_review
+            from utils.factor_evidence import refresh_factor_outcomes
+
+            result["factor_outcomes"] = refresh_factor_outcomes(
+                manager, str(freshness.get("local_date") or "")
+            )
+            _require_execution_lease(payload)
+            result["strategy_review"] = materialize_daily_strategy_review(
+                manager,
+                result.get("decision"),
+                task_id=task_id,
+                execution_token=execution_token,
+            )
+            _require_execution_lease(payload)
+            if result["strategy_review"].get("available") is True:
+                result["evolution"] = _run_evolution_once(
+                    manager,
+                    trade_date=trade_date,
+                    snapshot_id=snapshot_id,
+                    execution_context=payload,
+                )
+            else:
+                result["evolution"] = {
+                    "available": False,
+                    "reason": "strategy_review_not_ready",
+                }
+            succeeded = bool(
+                result["factor_outcomes"].get("available") is True
+                and result["strategy_review"].get("available") is True
+                and _evolution_succeeded(result["evolution"])
+            )
+            result["success"] = succeeded
+            if not succeeded:
+                result["stage"] = "snapshot_learning_materialization"
         return result
     finally:
         finish_job_run(
             job_name,
             trade_date,
             snapshot_id,
-            policy_version,
+            learning_version,
             task_id,
             succeeded=succeeded,
+            execution_token=execution_token,
         )
 
 
@@ -401,8 +895,10 @@ def _daily_close_pipeline(_payload: dict) -> dict:
     """同一快照上的收盘 DAG；上游失败立即停止。"""
     requested_trade_date = str(_payload.get("trade_date") or "").strip()
     task_id = str(_payload.get("task_id") or "").strip()
+    execution_token = str(_payload.get("execution_token") or "").strip()
     if not task_id:
         return {"success": False, "stage": "business_task_identity_missing"}
+    _require_execution_lease(_payload)
     pipeline = _new_pipeline(requested_trade_date)
     _mark_pipeline_stage(pipeline, task_id, "market_ingestion", "running")
     if requested_trade_date:
@@ -505,12 +1001,14 @@ def _daily_close_pipeline(_payload: dict) -> dict:
     trade_date = freshness["local_date"]
     snapshot_id = freshness["snapshot_id"]
     policy_version = strategy_version()
+    learning_version = _learning_pipeline_version(policy_version)
     claim = claim_job_run(
         job_name,
         trade_date,
         snapshot_id,
-        policy_version,
+        learning_version,
         task_id,
+        execution_token=execution_token,
     )
     if not claim["claimed"]:
         if claim["status"] == "succeeded":
@@ -521,6 +1019,7 @@ def _daily_close_pipeline(_payload: dict) -> dict:
                 "trade_date": trade_date,
                 "snapshot_id": snapshot_id,
                 "policy_version": policy_version,
+                "learning_version": learning_version,
                 "original_task_id": claim.get("task_id"),
                 "pipeline": pipeline,
             }
@@ -538,6 +1037,7 @@ def _daily_close_pipeline(_payload: dict) -> dict:
             manager,
             freshness,
             task_id=task_id,
+            execution_token=execution_token,
             pipeline=pipeline,
         )
         succeeded = result.get("success") is True
@@ -547,9 +1047,10 @@ def _daily_close_pipeline(_payload: dict) -> dict:
             job_name,
             trade_date,
             snapshot_id,
-            policy_version,
+            learning_version,
             task_id,
             succeeded=succeeded,
+            execution_token=execution_token,
         )
 
 
@@ -565,10 +1066,15 @@ HANDLERS = {
 }
 
 
-def _heartbeat_loop(task_id: str, done: threading.Event) -> None:
+def _heartbeat_loop(
+    task_id: str,
+    done: threading.Event,
+    lease_lost: threading.Event,
+) -> None:
     while not done.wait(30):
         if not heartbeat_task(task_id, OWNER_ID, lease_seconds=180):
             logger.error("任务租约已丢失: %s", task_id)
+            lease_lost.set()
             return
 
 
@@ -586,15 +1092,27 @@ def _process_one() -> bool:
         )
         return True
     done = threading.Event()
+    lease_lost = threading.Event()
+    execution_token = task_execution_token(
+        task["task_id"], int(task["attempt_count"]), OWNER_ID
+    )
     heartbeat = threading.Thread(
         target=_heartbeat_loop,
-        args=(task["task_id"], done),
+        args=(task["task_id"], done, lease_lost),
         daemon=True,
     )
     heartbeat.start()
     try:
-        payload = {**task["payload"], "task_id": task["task_id"]}
+        payload = {
+            **task["payload"],
+            "task_id": task["task_id"],
+            "execution_token": execution_token,
+        }
         result = handler(payload)
+        if lease_lost.is_set() or not execution_lease_is_current(
+            task["task_id"], execution_token
+        ):
+            raise RuntimeError("task_execution_lease_lost")
         error = (
             None
             if result.get("success", result.get("available", False))
@@ -645,13 +1163,15 @@ def _enqueue_completed_close(current: datetime) -> dict:
     )
     if not due:
         return {"eligible": False, "trade_date": completed or None, "created": False}
-    task, created = enqueue_task(
+    task, created = enqueue_scheduled_task(
         "daily_close_pipeline",
         f"scheduled-close:{completed}",
         payload={"trade_date": completed},
+        scheduler_owner=OWNER_ID,
         requested_by=f"scheduler:{OWNER_ID}",
         change_reason="scheduled close pipeline",
         max_attempts=32,
+        recovery_cooldown_seconds=SCHEDULER_RECOVERY_COOLDOWN_SECONDS,
     )
     return {
         "eligible": True,
@@ -664,8 +1184,17 @@ def _enqueue_completed_close(current: datetime) -> dict:
 def _enqueue_current_snapshot_decision(current: datetime) -> dict:
     """新快照或新策略版本必须拥有自己的当前决策。"""
     from utils.data_freshness import local_data_status
-    from utils.decision_ledger import get_latest_decision
+    from utils.decision_ledger import (
+        get_latest_decision,
+        get_latest_evolution_run,
+        get_latest_strategy_review_run,
+    )
     from utils.decision_versions import strategy_version
+    from utils.daily_strategy_review import (
+        review_pipeline_version,
+        strategy_review_is_current,
+    )
+    from utils.self_evolution import evolution_pipeline_version
 
     freshness = local_data_status(as_of=current)
     if not freshness.get("fresh"):
@@ -678,8 +1207,18 @@ def _enqueue_current_snapshot_decision(current: datetime) -> dict:
     snapshot_id = str(freshness["snapshot_id"])
     trade_date = str(freshness["local_date"])
     policy_version = strategy_version()
+    current_review_version = review_pipeline_version()
+    current_evolution_version = evolution_pipeline_version()
+    current_learning_version = _learning_pipeline_version(policy_version)
     decision = get_latest_decision("close")
-    if _decision_matches_snapshot(decision, freshness, policy_version):
+    decision_current = _decision_matches_snapshot(decision, freshness, policy_version)
+    review = get_latest_strategy_review_run(trade_date)
+    review_current = decision_current and strategy_review_is_current(
+        review, decision, snapshot_id
+    )
+    evolution = get_latest_evolution_run()
+    evolution_current = _evolution_is_current(evolution, trade_date, snapshot_id)
+    if review_current and evolution_current:
         return {
             "eligible": False,
             "ready": True,
@@ -688,18 +1227,22 @@ def _enqueue_current_snapshot_decision(current: datetime) -> dict:
             "snapshot_id": snapshot_id,
             "run_id": decision.get("run_id"),
         }
-    policy_hash = hashlib.sha256(policy_version.encode()).hexdigest()[:16]
-    task, created = enqueue_task(
+    task, created = enqueue_scheduled_task(
         "materialize_snapshot_decision",
-        f"snapshot-decision:{snapshot_id}:{policy_hash}",
+        f"snapshot-decision:{snapshot_id}:{current_learning_version}",
         payload={
             "trade_date": trade_date,
             "snapshot_id": snapshot_id,
             "strategy_version": policy_version,
+            "review_version": current_review_version,
+            "evolution_version": current_evolution_version,
+            "learning_version": current_learning_version,
         },
+        scheduler_owner=OWNER_ID,
         requested_by=f"scheduler:{OWNER_ID}",
         change_reason="materialize current snapshot decision",
         max_attempts=32,
+        recovery_cooldown_seconds=SCHEDULER_RECOVERY_COOLDOWN_SECONDS,
     )
     return {
         "eligible": True,
@@ -724,12 +1267,14 @@ def _enqueue_current_preopen(current: datetime) -> dict:
     )
     if not eligible:
         return {"eligible": False, "trade_date": today, "created": False}
-    task, created = enqueue_task(
+    task, created = enqueue_scheduled_task(
         "preopen_decision",
         f"scheduled-preopen:{today}",
         payload={"trade_date": today},
+        scheduler_owner=OWNER_ID,
         requested_by=f"scheduler:{OWNER_ID}",
         change_reason="scheduled preopen review",
+        recovery_cooldown_seconds=SCHEDULER_RECOVERY_COOLDOWN_SECONDS,
     )
     return {
         "eligible": True,
@@ -793,6 +1338,10 @@ def run_worker() -> None:
                     )
                 except sqlite3.OperationalError as exc:
                     logger.warning("调度账本暂时不可用，稍后重试: %s", exc)
+                except RuntimeError as exc:
+                    if str(exc) != "scheduler_lease_not_current":
+                        raise
+                    logger.warning("调度租约已由其他 leader 接管，本轮停止入队")
                 last_reconciliation = now
             if not process_one():
                 STOP.wait(1)

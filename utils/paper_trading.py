@@ -17,12 +17,12 @@ import orjson
 import pandas as pd
 
 from utils.csv_manager import CSVManager
-from utils.data_freshness import next_trade_date
 from utils.execution_model import (
     DEFAULT_EXECUTION_POLICY,
     calculate_fees,
     enrich_security_state_with_history,
     is_one_word_limit,
+    load_exchange_calendar,
     resolve_price_limit_regime,
     security_state_from_name,
 )
@@ -30,7 +30,7 @@ from views.view_manager import _get_conn, _get_migration_conn, _get_read_conn
 
 
 TZ = ZoneInfo("Asia/Shanghai")
-DEFAULT_ACCOUNT_ID = "paper-main-v1"
+DEFAULT_ACCOUNT_ID = "paper-main-v5"
 
 
 RULES = DEFAULT_EXECUTION_POLICY
@@ -279,7 +279,33 @@ def _require_account(account_id: str = DEFAULT_ACCOUNT_ID) -> dict:
         ).fetchone()
     if row is None:
         raise RuntimeError(f"paper_account_not_initialized:{account_id}")
-    return dict(row)
+    account = dict(row)
+    if account.get("rule_version") != RULES.version:
+        raise RuntimeError(
+            "paper_account_rule_version_mismatch:"
+            f"{account.get('rule_version')}:{RULES.version}"
+        )
+    return account
+
+
+def _paper_exchange_calendar(manager: CSVManager) -> list[str]:
+    """生产只读 pinned payload；未发布根目录仅供显式测试开关。"""
+    if getattr(manager, "snapshot_id", None):
+        return load_exchange_calendar(manager.data_dir)
+    if getattr(manager, "allow_unpublished_calendar", False) is True:
+        return load_exchange_calendar(manager.base_data_dir)
+    return []
+
+
+def _calendar_distance(
+    sessions: list[str],
+    start_date: str,
+    end_date: str,
+) -> int | None:
+    try:
+        return sessions.index(end_date) - sessions.index(start_date)
+    except ValueError:
+        return None
 
 
 def create_paper_order(
@@ -295,6 +321,7 @@ def create_paper_order(
     source_lot_id: str | None = None,
     reason_codes: list[str] | None = None,
 ) -> str:
+    _require_account(account_id)
     if side not in {"buy", "sell"}:
         raise ValueError("side 必须是 buy 或 sell")
     identity = "|".join(
@@ -423,14 +450,25 @@ def _fees(gross: float, side: str) -> float:
 
 
 def _security_state(manager: CSVManager, code: str, trade_date: str) -> dict | None:
-    """模拟成交只读取同一不可变快照中的当日风险警示状态。"""
+    """只接受同一 pinned payload 内完整复验的官方证券状态。"""
     path = manager.data_dir / "stock_names.json"
     try:
         names = orjson.loads(path.read_bytes())
     except (OSError, orjson.JSONDecodeError):
         return None
-    name = names.get(code)
-    return security_state_from_name(name, trade_date) if name else None
+    if not isinstance(names, dict) or code not in names:
+        return None
+    from utils.reference_snapshots import _security_states
+
+    states = _security_states(manager.data_dir, trade_date, set(names))
+    if states:
+        return states.get(code)
+    if getattr(
+        manager, "allow_unpublished_paper_snapshot_for_tests", False
+    ) is True and not getattr(manager, "snapshot_id", None):
+        # 仅保留给明确标记的未发布单元测试；生产不得用名称伪造 active。
+        return security_state_from_name(names.get(code), trade_date)
+    return None
 
 
 def _record_attempt(
@@ -529,6 +567,7 @@ def execute_pending_orders(
 ) -> list[dict]:
     _require_account(account_id)
     snapshot_id = _market_snapshot_reference(manager)
+    trading_sessions = _paper_exchange_calendar(manager)
     results = []
     with _get_conn() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -554,6 +593,77 @@ def execute_pending_orders(
         ]
         for order in orders:
             order["_execution_snapshot_id"] = snapshot_id
+            if not trading_sessions:
+                results.append(
+                    _record_attempt(
+                        conn,
+                        order,
+                        trade_date,
+                        "rejected" if order["side"] == "buy" else "deferred",
+                        "trading_calendar_unavailable",
+                    )
+                )
+                continue
+            entry_offset = _calendar_distance(
+                trading_sessions,
+                order["signal_date"],
+                order["earliest_trade_date"],
+            )
+            if order["side"] == "buy" and entry_offset != 1:
+                results.append(
+                    _record_attempt(
+                        conn,
+                        order,
+                        trade_date,
+                        "rejected",
+                        "invalid_entry_session",
+                        evidence={"signal_to_entry_sessions": entry_offset},
+                    )
+                )
+                continue
+            session_delay = _calendar_distance(
+                trading_sessions,
+                order["earliest_trade_date"],
+                trade_date,
+            )
+            if session_delay is None or session_delay < 0:
+                results.append(
+                    _record_attempt(
+                        conn,
+                        order,
+                        trade_date,
+                        "rejected" if order["side"] == "buy" else "deferred",
+                        "trading_calendar_unavailable",
+                    )
+                )
+                continue
+            if order["side"] == "buy" and session_delay != 0:
+                results.append(
+                    _record_attempt(
+                        conn,
+                        order,
+                        trade_date,
+                        "rejected",
+                        "entry_session_missed",
+                        evidence={"entry_session_delay": session_delay},
+                    )
+                )
+                continue
+            if (
+                order["side"] == "sell"
+                and session_delay > RULES.max_exit_delay_sessions
+            ):
+                results.append(
+                    _record_attempt(
+                        conn,
+                        order,
+                        trade_date,
+                        "rejected",
+                        "max_exit_delay_exceeded",
+                        evidence={"exit_delay_sessions": session_delay},
+                    )
+                )
+                continue
             daily, row, previous = _price_rows(manager, order["code"], trade_date)
             if row is None or previous is None:
                 results.append(
@@ -561,8 +671,14 @@ def execute_pending_orders(
                         conn,
                         order,
                         trade_date,
-                        "deferred",
+                        (
+                            "rejected"
+                            if order["side"] == "buy"
+                            or session_delay >= RULES.max_exit_delay_sessions
+                            else "deferred"
+                        ),
                         "market_data_missing",
+                        evidence={"session_delay": session_delay},
                     )
                 )
                 continue
@@ -574,7 +690,12 @@ def execute_pending_orders(
                         conn,
                         order,
                         trade_date,
-                        "deferred",
+                        (
+                            "rejected"
+                            if order["side"] == "buy"
+                            or session_delay >= RULES.max_exit_delay_sessions
+                            else "deferred"
+                        ),
                         "invalid_open_price",
                     )
                 )
@@ -591,7 +712,12 @@ def execute_pending_orders(
                         conn,
                         order,
                         trade_date,
-                        "deferred",
+                        (
+                            "rejected"
+                            if order["side"] == "buy"
+                            or session_delay >= RULES.max_exit_delay_sessions
+                            else "deferred"
+                        ),
                         "pit_security_state_missing",
                         evidence={"regime": regime},
                     )
@@ -604,20 +730,27 @@ def execute_pending_orders(
                         conn,
                         order,
                         trade_date,
-                        "deferred",
+                        (
+                            "rejected"
+                            if order["side"] == "buy"
+                            or session_delay >= RULES.max_exit_delay_sessions
+                            else "deferred"
+                        ),
                         "security_suspended",
-                        evidence={"regime": regime, "volume": volume},
+                        evidence={
+                            "regime": regime,
+                            "volume": volume,
+                            "session_delay": session_delay,
+                        },
                     )
                 )
                 continue
             if order["side"] == "buy":
-                sellable_date = next_trade_date(
-                    trade_date,
-                    data_dir=getattr(manager, "base_data_dir", "data"),
-                    snapshot_id=getattr(manager, "snapshot_id", None),
-                    allow_unpublished_calendar=(
-                        getattr(manager, "allow_unpublished_calendar", False) is True
-                    ),
+                trade_session_i = trading_sessions.index(trade_date)
+                sellable_date = (
+                    trading_sessions[trade_session_i + 1]
+                    if trade_session_i + 1 < len(trading_sessions)
+                    else ""
                 )
                 if not sellable_date:
                     results.append(
@@ -625,7 +758,7 @@ def execute_pending_orders(
                             conn,
                             order,
                             trade_date,
-                            "deferred",
+                            "rejected",
                             "trading_calendar_unavailable",
                         )
                     )
@@ -659,7 +792,7 @@ def execute_pending_orders(
                             conn,
                             order,
                             trade_date,
-                            "deferred",
+                            "rejected",
                             "portfolio_price_missing",
                         )
                     )
@@ -808,12 +941,17 @@ def execute_pending_orders(
                         conn,
                         order,
                         trade_date,
-                        "deferred",
+                        (
+                            "rejected"
+                            if session_delay >= RULES.max_exit_delay_sessions
+                            else "deferred"
+                        ),
                         "one_word_limit_down",
                         evidence={
                             "open": open_price,
                             "previous_close": previous_close,
                             "regime": regime,
+                            "exit_delay_sessions": session_delay,
                         },
                     )
                 )
@@ -895,6 +1033,9 @@ def queue_due_exit_orders(
 ) -> list[str]:
     _require_account(account_id)
     _market_snapshot_reference(manager)
+    trading_sessions = _paper_exchange_calendar(manager)
+    if trade_date not in trading_sessions:
+        raise RuntimeError("paper_trading_calendar_unavailable")
     order_ids = []
     with _get_conn() as conn:
         lots = _open_lots(conn, account_id)
@@ -905,25 +1046,24 @@ def queue_due_exit_orders(
             ).fetchone()
             if existing:
                 continue
-            frame = manager.read_stock(lot["code"])
-            if frame is None or frame.empty:
+            try:
+                opened_i = trading_sessions.index(lot["opened_date"])
+            except ValueError:
                 continue
-            dates = sorted(
-                pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d").unique()
-            )
-            completed = [
-                date for date in dates if lot["opened_date"] < date < trade_date
-            ]
-            if len(completed) < int(lot["hold_sessions"]) - 1:
+            target_i = opened_i + int(lot["hold_sessions"])
+            if target_i >= len(trading_sessions):
                 continue
-            signal_date = completed[-1] if completed else lot["opened_date"]
+            target_date = trading_sessions[target_i]
+            if target_date > trade_date:
+                continue
+            signal_date = trading_sessions[target_i - 1]
             order_ids.append(
                 create_paper_order(
                     account_id,
                     lot["code"],
                     "sell",
                     signal_date,
-                    trade_date,
+                    target_date,
                     requested_quantity=int(lot["remaining_quantity"]),
                     decision_run_id=f"fixed-exit:{lot['lot_id']}",
                     source_lot_id=lot["lot_id"],

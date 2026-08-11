@@ -73,7 +73,7 @@ def _validation_artifact(artifact_type):
                     "opportunity_cost_pct": 0.4,
                     "reconciliation_error": 0.0,
                     "ablation_components": list(COMPONENTS),
-                    "execution_policy_version": "a-share-eod-open-open-v3",
+                    "execution_policy_version": "a-share-eod-open-open-v5",
                 },
             }
         )
@@ -248,7 +248,7 @@ class DecisionLedgerTest(unittest.TestCase):
         self.assertFalse(append_decision_outcome(partial))
         self.assertEqual(len(list_pending_outcome_candidates()), 1)
 
-        complete = {
+        old_policy_complete = {
             **partial,
             "ret_1": 1.0,
             "net_ret_5": 5.0,
@@ -260,20 +260,27 @@ class DecisionLedgerTest(unittest.TestCase):
             "days_tracked": 5,
             "status": "complete",
         }
+        self.assertTrue(append_decision_outcome(old_policy_complete))
+        self.assertEqual(len(list_pending_outcome_candidates()), 1)
+
+        complete = {
+            **old_policy_complete,
+            "execution_policy_version": "a-share-eod-open-open-v5",
+        }
         self.assertTrue(append_decision_outcome(complete))
 
-        records = list_decision_outcomes()
+        records = list_decision_outcomes(stage="close")
         self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["observation_no"], 2)
+        self.assertEqual(records[0]["observation_no"], 3)
         self.assertEqual(records[0]["status"], "complete")
         self.assertEqual(len(records[0]["outcome_id"]), 64)
         self.assertEqual(list_pending_outcome_candidates(), [])
-        self.assertEqual(outcome_summary()["buy"]["count"], 1)
+        self.assertEqual(outcome_summary("close")["buy"]["count"], 1)
 
         with sqlite3.connect(view_manager.DB_PATH) as conn:
             self.assertEqual(
                 conn.execute("SELECT count(*) FROM decision_outcomes").fetchone()[0],
-                2,
+                3,
             )
             with self.assertRaises(sqlite3.IntegrityError):
                 conn.execute(
@@ -292,14 +299,192 @@ class DecisionLedgerTest(unittest.TestCase):
                 """
                 INSERT INTO decision_outcomes
                   (outcome_id, run_id, code, source_snapshot_id, observation_no,
-                   stage, trade_date, action, days_tracked, status, updated_at)
-                VALUES (?, ?, '600000', ?, 3, 'close', '2026-01-05', 'buy', 5,
-                        'complete', '2026-01-13T16:00:00+08:00')
+                   stage, trade_date, action, execution_policy_version,
+                   days_tracked, status, updated_at)
+                VALUES (?, ?, '600000', ?, 4, 'close', '2026-01-05', 'buy',
+                        'a-share-eod-open-open-v5', 5, 'complete',
+                        '2026-01-13T16:00:00+08:00')
                 """,
                 ("f" * 64, run_id, "a" * 64),
             )
         with self.assertRaisesRegex(RuntimeError, "decision_outcome_integrity_failed"):
-            list_decision_outcomes()
+            list_decision_outcomes(stage="close")
+
+    def test_outcome_summary_discloses_failures_and_numeric_return_coverage(self):
+        actions = {
+            "600001": "buy",
+            "600002": "buy",
+            "600003": "buy",
+            "600004": "buy",
+            "600005": "buy",
+            "600006": "buy",
+            "600007": "observe",
+            "600008": "buy",
+        }
+        run_id = save_decision_run(
+            {
+                "trade_date": "2026-01-05",
+                "stage": "close",
+                "as_of": "2026-01-05T15:00:00+08:00",
+                "status": "complete",
+                "final_action": "buy",
+                "strategy_version": "s1",
+                "feature_version": "f1",
+                "model_version": "baseline",
+                "data_version": "d1",
+            },
+            [{"code": code, "action": action} for code, action in actions.items()],
+        )
+        common = {
+            "run_id": run_id,
+            "source_snapshot_id": "a" * 64,
+            "stage": "close",
+            "trade_date": "2026-01-05",
+            "execution_policy_version": "a-share-eod-open-open-v5",
+        }
+        outcomes = [
+            {
+                **common,
+                "code": "600001",
+                "action": "buy",
+                "entry_feasible": 1,
+                "exit_feasible": 1,
+                "execution_status": "filled_round_trip",
+                "net_ret_5": 2.0,
+                "days_tracked": 5,
+                "status": "complete",
+            },
+            {
+                **common,
+                "code": "600002",
+                "action": "buy",
+                "entry_feasible": 0,
+                "execution_status": "entry_unbuyable",
+                "days_tracked": 1,
+                "status": "complete",
+            },
+            {
+                **common,
+                "code": "600003",
+                "action": "buy",
+                "entry_feasible": 1,
+                "exit_feasible": 0,
+                "execution_status": "exit_unsellable",
+                "days_tracked": 5,
+                "status": "complete",
+            },
+            {
+                **common,
+                "code": "600004",
+                "action": "buy",
+                "entry_feasible": 1,
+                "exit_feasible": 0,
+                "execution_status": "universe_removed_before_label",
+                "days_tracked": 3,
+                "status": "complete",
+            },
+            {
+                **common,
+                "code": "600005",
+                "action": "buy",
+                "entry_feasible": 1,
+                "execution_status": "unknown_terminal",
+                "days_tracked": 5,
+                "status": "complete",
+            },
+            {
+                **common,
+                "code": "600006",
+                "action": "buy",
+                "execution_status": "holding_incomplete",
+                "days_tracked": 2,
+                "status": "partial",
+            },
+            {
+                **common,
+                "code": "600007",
+                "action": "observe",
+                "entry_feasible": 1,
+                "exit_feasible": 1,
+                "execution_status": "filled_round_trip",
+                "net_ret_5": -1.0,
+                "days_tracked": 5,
+                "status": "complete",
+            },
+            {
+                **common,
+                "code": "600008",
+                "action": "buy",
+                "execution_status": "universe_removed_with_entry_unknown",
+                "days_tracked": 2,
+                "status": "complete",
+            },
+        ]
+        for outcome in outcomes:
+            self.assertTrue(append_decision_outcome(outcome))
+
+        preopen_run_id = save_decision_run(
+            {
+                "trade_date": "2026-01-05",
+                "stage": "preopen",
+                "as_of": "2026-01-06T09:00:00+08:00",
+                "status": "complete",
+                "final_action": "buy",
+                "strategy_version": "s1",
+                "feature_version": "f1",
+                "model_version": "baseline",
+                "data_version": "d1",
+            },
+            [{"code": "600001", "action": "buy"}],
+        )
+        self.assertTrue(
+            append_decision_outcome(
+                {
+                    **common,
+                    "run_id": preopen_run_id,
+                    "stage": "preopen",
+                    "code": "600001",
+                    "action": "buy",
+                    "entry_feasible": 1,
+                    "exit_feasible": 1,
+                    "execution_status": "filled_round_trip",
+                    "net_ret_5": 2.0,
+                    "days_tracked": 5,
+                    "status": "complete",
+                }
+            )
+        )
+
+        summary = outcome_summary("close")
+        executed_summary = outcome_summary()
+        buy = summary["buy"]
+        self.assertEqual(buy["count"], 1)  # 兼容字段：数值收益样本
+        self.assertEqual(buy["numeric_return_count"], 1)
+        self.assertEqual(buy["outcome_count"], 7)
+        self.assertEqual(buy["terminal_outcome_count"], 6)
+        self.assertEqual(buy["entry_failure_count"], 1)
+        self.assertEqual(buy["exit_failure_count"], 1)
+        self.assertEqual(buy["universe_removal_count"], 1)
+        self.assertEqual(buy["universe_removal_with_entry_unknown_count"], 1)
+        self.assertEqual(buy["missing_return_count"], 5)
+        self.assertEqual(buy["other_missing_return_count"], 2)
+        self.assertEqual(buy["return_coverage_ratio"], 0.1667)
+        self.assertEqual(buy["tracking_completion_ratio"], 0.8571)
+        self.assertEqual(buy["numeric_return_win_rate"], 1.0)
+        self.assertEqual(buy["win_rate"], 1.0)
+        self.assertEqual(buy["win_rate_scope"], "numeric_return_subset_only")
+
+        self.assertEqual(summary["total"]["numeric_return_count"], 2)
+        self.assertEqual(summary["total"]["terminal_outcome_count"], 7)
+        self.assertEqual(summary["total"]["return_coverage_ratio"], 0.2857)
+        self.assertEqual(summary["missed_winner_rate"], 0.0)
+        self.assertEqual(
+            summary["missed_winner_rate_scope"], "numeric_return_subset_only"
+        )
+        self.assertEqual(summary["missed_winner_numeric_return_count"], 1)
+        self.assertEqual(summary["missed_winner_return_coverage_ratio"], 1.0)
+        self.assertEqual(executed_summary["stage"], "preopen")
+        self.assertEqual(executed_summary["buy"]["numeric_return_count"], 1)
 
     def test_shadow_policy_cannot_be_activated(self):
         def register(key, version, status):
@@ -738,7 +923,7 @@ class DecisionLedgerTest(unittest.TestCase):
                 }
                 self.assertIn("decision_runs", parents)
         self.assertEqual(len(list_pending_outcome_candidates()), 1)
-        self.assertEqual(outcome_summary()["observe"]["count"], 0)
+        self.assertEqual(outcome_summary("close")["observe"]["count"], 0)
 
 
 if __name__ == "__main__":

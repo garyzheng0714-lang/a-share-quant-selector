@@ -218,6 +218,107 @@ EVENT_EVIDENCE_SCHEMA = """
     )
 """
 
+STRATEGY_REVIEW_RUNS_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS strategy_review_runs (
+        review_id TEXT PRIMARY KEY,
+        trade_date TEXT NOT NULL,
+        snapshot_id TEXT NOT NULL CHECK(length(snapshot_id) = 64),
+        decision_run_id TEXT,
+        as_of TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('warming_up', 'ready', 'failed')),
+        model_version TEXT NOT NULL,
+        primary_horizon INTEGER NOT NULL CHECK(primary_horizon > 0),
+        input_hash TEXT NOT NULL,
+        report_json TEXT NOT NULL,
+        ai_status TEXT NOT NULL CHECK(ai_status IN
+            ('not_called', 'explained', 'failed')),
+        ai_model TEXT,
+        ai_prompt_version TEXT,
+        ai_payload_json TEXT NOT NULL,
+        reason_codes_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+"""
+
+FACTOR_SIGNAL_RUNS_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS factor_signal_runs (
+        run_id TEXT PRIMARY KEY,
+        trade_date TEXT NOT NULL,
+        snapshot_id TEXT NOT NULL CHECK(length(snapshot_id) = 64),
+        strategy_version TEXT NOT NULL,
+        registry_version TEXT NOT NULL,
+        cache_key TEXT NOT NULL,
+        source_artifact_hash TEXT NOT NULL,
+        universe_hash TEXT,
+        scanned_count INTEGER NOT NULL CHECK(scanned_count >= 0),
+        factor_count INTEGER NOT NULL CHECK(factor_count >= 0),
+        status TEXT NOT NULL CHECK(status IN ('complete', 'failed')),
+        created_at TEXT NOT NULL,
+        UNIQUE(snapshot_id, strategy_version, registry_version, cache_key)
+    )
+"""
+
+FACTOR_RUN_STATS_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS factor_run_stats (
+        run_id TEXT NOT NULL,
+        factor_key TEXT NOT NULL,
+        hit_count INTEGER NOT NULL CHECK(hit_count >= 0),
+        scanned_count INTEGER NOT NULL CHECK(scanned_count >= 0),
+        error_count INTEGER NOT NULL CHECK(error_count >= 0),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(run_id, factor_key),
+        FOREIGN KEY(run_id) REFERENCES factor_signal_runs(run_id)
+    )
+"""
+
+FACTOR_SIGNALS_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS factor_signals (
+        signal_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        trade_date TEXT NOT NULL,
+        factor_key TEXT NOT NULL,
+        code TEXT NOT NULL,
+        name TEXT,
+        close REAL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(run_id, factor_key, code),
+        FOREIGN KEY(run_id) REFERENCES factor_signal_runs(run_id)
+    )
+"""
+
+FACTOR_OUTCOME_OBSERVATIONS_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS factor_outcome_observations (
+        observation_id TEXT PRIMARY KEY,
+        signal_id TEXT NOT NULL,
+        horizon_sessions INTEGER NOT NULL CHECK(horizon_sessions IN (1, 5, 10, 20)),
+        observed_as_of TEXT NOT NULL,
+        pricing_snapshot_id TEXT NOT NULL CHECK(length(pricing_snapshot_id) = 64),
+        entry_date TEXT,
+        entry_price REAL,
+        exit_date TEXT,
+        exit_price REAL,
+        net_return REAL,
+        max_gain REAL,
+        max_drawdown REAL,
+        execution_status TEXT,
+        execution_policy_version TEXT NOT NULL,
+        evidence_tier TEXT NOT NULL CHECK(evidence_tier IN
+            ('pit_verified', 'forward_approximation')),
+        status TEXT NOT NULL CHECK(status IN ('pending', 'complete', 'invalid')),
+        content_hash TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(
+            signal_id,
+            horizon_sessions,
+            pricing_snapshot_id,
+            execution_policy_version
+        ),
+        FOREIGN KEY(signal_id) REFERENCES factor_signals(signal_id)
+    )
+"""
+
 
 def _json(value: Any) -> str:
     return orjson.dumps(value if value is not None else {}).decode()
@@ -649,6 +750,102 @@ def _migrate_registry_statuses(conn) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
 
 
+def _migrate_factor_outcome_policy_identity(conn) -> None:
+    """让同一信号在成交政策升级后可以重新生成不可变观测。"""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type = 'table' AND name = 'factor_outcome_observations'"
+    ).fetchone()
+    if row is None:
+        return
+    normalized = "".join((row["sql"] or "").lower().split())
+    expected_identity = (
+        "unique(signal_id,horizon_sessions,pricing_snapshot_id,"
+        "execution_policy_version)"
+    )
+    if expected_identity in normalized:
+        return
+
+    conn.execute("DROP TRIGGER IF EXISTS factor_outcome_observations_no_update")
+    conn.execute("DROP TRIGGER IF EXISTS factor_outcome_observations_no_delete")
+    conn.execute("DROP TABLE IF EXISTS factor_outcomes_policy_migration")
+    conn.execute(
+        FACTOR_OUTCOME_OBSERVATIONS_SCHEMA.replace(
+            "factor_outcome_observations",
+            "factor_outcomes_policy_migration",
+            1,
+        )
+    )
+    conn.execute("""
+        INSERT INTO factor_outcomes_policy_migration
+          (observation_id, signal_id, horizon_sessions, observed_as_of,
+           pricing_snapshot_id, entry_date, entry_price, exit_date, exit_price,
+           net_return, max_gain, max_drawdown, execution_status,
+           execution_policy_version, evidence_tier, status, content_hash,
+           payload_json, created_at)
+        SELECT observation_id, signal_id, horizon_sessions, observed_as_of,
+               pricing_snapshot_id, entry_date, entry_price, exit_date, exit_price,
+               net_return, max_gain, max_drawdown, execution_status,
+               execution_policy_version, evidence_tier, status, content_hash,
+               payload_json, created_at
+        FROM factor_outcome_observations
+    """)
+    conn.execute("DROP TABLE factor_outcome_observations")
+    conn.execute(
+        "ALTER TABLE factor_outcomes_policy_migration "
+        "RENAME TO factor_outcome_observations"
+    )
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(f"因子结果账本迁移后外键校验失败: {len(violations)}")
+
+
+def _migrate_factor_signal_registry_identity(conn) -> None:
+    """允许同一市场快照为新的因子源码指纹生成独立前向批次。"""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type = 'table' AND name = 'factor_signal_runs'"
+    ).fetchone()
+    if row is None:
+        return
+    normalized = "".join((row["sql"] or "").lower().split())
+    expected_identity = (
+        "unique(snapshot_id,strategy_version,registry_version,cache_key)"
+    )
+    if expected_identity in normalized:
+        return
+
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("DROP TRIGGER IF EXISTS factor_signal_runs_no_update")
+    conn.execute("DROP TRIGGER IF EXISTS factor_signal_runs_no_delete")
+    conn.execute("DROP TABLE IF EXISTS factor_signal_runs_registry_migration")
+    conn.execute(
+        FACTOR_SIGNAL_RUNS_SCHEMA.replace(
+            "factor_signal_runs",
+            "factor_signal_runs_registry_migration",
+            1,
+        )
+    )
+    conn.execute("""
+        INSERT INTO factor_signal_runs_registry_migration
+          (run_id, trade_date, snapshot_id, strategy_version, registry_version,
+           cache_key, source_artifact_hash, universe_hash, scanned_count,
+           factor_count, status, created_at)
+        SELECT run_id, trade_date, snapshot_id, strategy_version, registry_version,
+               cache_key, source_artifact_hash, universe_hash, scanned_count,
+               factor_count, status, created_at
+        FROM factor_signal_runs
+    """)
+    conn.execute("DROP TABLE factor_signal_runs")
+    conn.execute(
+        "ALTER TABLE factor_signal_runs_registry_migration RENAME TO factor_signal_runs"
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(f"因子信号批次迁移后外键校验失败: {len(violations)}")
+
+
 def init_decision_ledger() -> None:
     with _get_migration_conn() as conn:
         _migrate_append_only_runs(conn)
@@ -656,6 +853,8 @@ def init_decision_ledger() -> None:
         _migrate_append_only_evolution_runs(conn)
         _migrate_append_only_event_evidence(conn)
         _migrate_registry_statuses(conn)
+        _migrate_factor_signal_registry_identity(conn)
+        _migrate_factor_outcome_policy_identity(conn)
         conn.execute(DECISION_RUNS_SCHEMA)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS decision_candidates (
@@ -680,6 +879,11 @@ def init_decision_ledger() -> None:
             )
         """)
         conn.execute(EVENT_EVIDENCE_SCHEMA)
+        conn.execute(FACTOR_SIGNAL_RUNS_SCHEMA)
+        conn.execute(FACTOR_RUN_STATS_SCHEMA)
+        conn.execute(FACTOR_SIGNALS_SCHEMA)
+        conn.execute(FACTOR_OUTCOME_OBSERVATIONS_SCHEMA)
+        conn.execute(STRATEGY_REVIEW_RUNS_SCHEMA)
         conn.execute(MODEL_REGISTRY_SCHEMA)
         conn.execute(POLICY_REGISTRY_SCHEMA)
         conn.execute(POLICY_EVIDENCE_ARTIFACT_SCHEMA)
@@ -810,6 +1014,56 @@ def init_decision_ledger() -> None:
             BEGIN
                 SELECT RAISE(ABORT, 'immutable_ai_decision_run');
             END;
+            CREATE TRIGGER IF NOT EXISTS strategy_review_runs_no_update
+            BEFORE UPDATE ON strategy_review_runs
+            BEGIN
+                SELECT RAISE(ABORT, 'immutable_strategy_review_run');
+            END;
+            CREATE TRIGGER IF NOT EXISTS strategy_review_runs_no_delete
+            BEFORE DELETE ON strategy_review_runs
+            BEGIN
+                SELECT RAISE(ABORT, 'immutable_strategy_review_run');
+            END;
+            CREATE TRIGGER IF NOT EXISTS factor_signal_runs_no_update
+            BEFORE UPDATE ON factor_signal_runs
+            BEGIN
+                SELECT RAISE(ABORT, 'immutable_factor_signal_run');
+            END;
+            CREATE TRIGGER IF NOT EXISTS factor_signal_runs_no_delete
+            BEFORE DELETE ON factor_signal_runs
+            BEGIN
+                SELECT RAISE(ABORT, 'immutable_factor_signal_run');
+            END;
+            CREATE TRIGGER IF NOT EXISTS factor_run_stats_no_update
+            BEFORE UPDATE ON factor_run_stats
+            BEGIN
+                SELECT RAISE(ABORT, 'immutable_factor_run_stats');
+            END;
+            CREATE TRIGGER IF NOT EXISTS factor_run_stats_no_delete
+            BEFORE DELETE ON factor_run_stats
+            BEGIN
+                SELECT RAISE(ABORT, 'immutable_factor_run_stats');
+            END;
+            CREATE TRIGGER IF NOT EXISTS factor_signals_no_update
+            BEFORE UPDATE ON factor_signals
+            BEGIN
+                SELECT RAISE(ABORT, 'immutable_factor_signal');
+            END;
+            CREATE TRIGGER IF NOT EXISTS factor_signals_no_delete
+            BEFORE DELETE ON factor_signals
+            BEGIN
+                SELECT RAISE(ABORT, 'immutable_factor_signal');
+            END;
+            CREATE TRIGGER IF NOT EXISTS factor_outcome_observations_no_update
+            BEFORE UPDATE ON factor_outcome_observations
+            BEGIN
+                SELECT RAISE(ABORT, 'immutable_factor_outcome_observation');
+            END;
+            CREATE TRIGGER IF NOT EXISTS factor_outcome_observations_no_delete
+            BEFORE DELETE ON factor_outcome_observations
+            BEGIN
+                SELECT RAISE(ABORT, 'immutable_factor_outcome_observation');
+            END;
             CREATE TRIGGER IF NOT EXISTS model_registry_immutable_fields
             BEFORE UPDATE OF model_key, version, trained_as_of, train_range,
                 test_range, feature_names_json, params_json, metrics_json,
@@ -875,6 +1129,27 @@ def init_decision_ledger() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_ai_run_date "
             "ON ai_decision_runs(trade_date, created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_strategy_review_date "
+            "ON strategy_review_runs(trade_date, created_at)"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_strategy_review_business "
+            "ON strategy_review_runs(snapshot_id, decision_run_id, model_version)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_factor_signal_date "
+            "ON factor_signals(trade_date, factor_key, code)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_factor_outcome_signal "
+            "ON factor_outcome_observations(signal_id, horizon_sessions, created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_factor_outcome_policy_status "
+            "ON factor_outcome_observations("
+            "execution_policy_version, status, signal_id, horizon_sessions)"
         )
 
 
@@ -1085,6 +1360,111 @@ def get_latest_ai_decision_run() -> dict | None:
     return item
 
 
+def save_strategy_review_run(run: dict) -> str:
+    """落账一次不可变的每日全策略复盘。
+
+    量化评分和 AI 解释在写入前一次生成，避免后续更新破坏证据链。
+    """
+    now = datetime.now().astimezone().isoformat(timespec="microseconds")
+    business_identity = {
+        "snapshot_id": run["snapshot_id"],
+        "decision_run_id": run.get("decision_run_id"),
+        "model_version": run["model_version"],
+    }
+    review_id = hashlib.sha256(
+        orjson.dumps(business_identity, option=orjson.OPT_SORT_KEYS)
+    ).hexdigest()[:24]
+    report_json = _json(run.get("report", {}))
+    ai_payload_json = _json(run.get("ai_payload", {}))
+    reason_codes_json = _json(run.get("reason_codes", []))
+    with _get_conn() as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO strategy_review_runs
+              (review_id, trade_date, snapshot_id, decision_run_id, as_of,
+               status, model_version, primary_horizon, input_hash, report_json,
+               ai_status, ai_model, ai_prompt_version, ai_payload_json,
+               reason_codes_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                review_id,
+                run["trade_date"],
+                run["snapshot_id"],
+                run.get("decision_run_id"),
+                run.get("as_of", now),
+                run["status"],
+                run["model_version"],
+                int(run.get("primary_horizon") or 5),
+                run["input_hash"],
+                report_json,
+                run.get("ai_status", "not_called"),
+                run.get("ai_model"),
+                run.get("ai_prompt_version"),
+                ai_payload_json,
+                reason_codes_json,
+                now,
+            ),
+        )
+        stored = conn.execute(
+            "SELECT * FROM strategy_review_runs WHERE review_id = ?",
+            (review_id,),
+        ).fetchone()
+        if stored is None:
+            raise RuntimeError("strategy_review_insert_failed")
+        expected = {
+            "trade_date": run["trade_date"],
+            "snapshot_id": run["snapshot_id"],
+            "decision_run_id": run.get("decision_run_id"),
+            "status": run["status"],
+            "model_version": run["model_version"],
+            "primary_horizon": int(run.get("primary_horizon") or 5),
+            "input_hash": run["input_hash"],
+            "report_json": report_json,
+            "ai_status": run.get("ai_status", "not_called"),
+            "ai_model": run.get("ai_model"),
+            "ai_prompt_version": run.get("ai_prompt_version"),
+            "ai_payload_json": ai_payload_json,
+            "reason_codes_json": reason_codes_json,
+        }
+        if any(stored[key] != value for key, value in expected.items()):
+            raise RuntimeError("strategy_review_identity_collision")
+    return review_id
+
+
+def get_latest_strategy_review_run(trade_date: str | None = None) -> dict | None:
+    where, params = ("WHERE trade_date = ?", (trade_date,)) if trade_date else ("", ())
+    with _get_read_conn() as conn:
+        row = conn.execute(
+            f"SELECT * FROM strategy_review_runs {where} "
+            "ORDER BY trade_date DESC, created_at DESC, rowid DESC LIMIT 1",
+            params,
+        ).fetchone()
+    if row is None:
+        return None
+    item = dict(row)
+    item["report"] = _loads(item.pop("report_json"), {})
+    item["ai_payload"] = _loads(item.pop("ai_payload_json"), {})
+    item["reason_codes"] = _loads(item.pop("reason_codes_json"), [])
+    return item
+
+
+def get_previous_strategy_review_run(trade_date: str) -> dict | None:
+    with _get_read_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM strategy_review_runs WHERE trade_date < ? "
+            "ORDER BY trade_date DESC, created_at DESC, rowid DESC LIMIT 1",
+            (str(trade_date),),
+        ).fetchone()
+    if row is None:
+        return None
+    item = dict(row)
+    item["report"] = _loads(item.pop("report_json"), {})
+    item["ai_payload"] = _loads(item.pop("ai_payload_json"), {})
+    item["reason_codes"] = _loads(item.pop("reason_codes_json"), [])
+    return item
+
+
 def model_artifact_hash(artifact: dict) -> str:
     return hashlib.sha256(
         orjson.dumps(artifact or {}, option=orjson.OPT_SORT_KEYS)
@@ -1096,6 +1476,16 @@ def register_model(model: dict) -> None:
     requested_status = model.get("status", "shadow")
     # 研究代码无权自称 validated/active；必须由服务器校验记录晋级。
     status = "rejected" if requested_status == "rejected" else "shadow"
+    immutable = {
+        "trained_as_of": str(model["trained_as_of"]),
+        "train_range": model.get("train_range"),
+        "test_range": model.get("test_range"),
+        "feature_names_json": _json(model.get("feature_names", [])),
+        "params_json": _json(model.get("params", {})),
+        "metrics_json": _json(model.get("metrics", {})),
+        "source_refs_json": _json(model.get("source_refs", [])),
+        "artifact_json": _json(model.get("artifact", {})),
+    }
     with _get_conn() as conn:
         conn.execute(
             """
@@ -1109,17 +1499,25 @@ def register_model(model: dict) -> None:
                 model["model_key"],
                 model["version"],
                 status,
-                model["trained_as_of"],
-                model.get("train_range"),
-                model.get("test_range"),
-                _json(model.get("feature_names", [])),
-                _json(model.get("params", {})),
-                _json(model.get("metrics", {})),
-                _json(model.get("source_refs", [])),
-                _json(model.get("artifact", {})),
+                immutable["trained_as_of"],
+                immutable["train_range"],
+                immutable["test_range"],
+                immutable["feature_names_json"],
+                immutable["params_json"],
+                immutable["metrics_json"],
+                immutable["source_refs_json"],
+                immutable["artifact_json"],
                 now,
             ),
         )
+        stored = conn.execute(
+            "SELECT * FROM model_registry WHERE model_key=? AND version=?",
+            (model["model_key"], model["version"]),
+        ).fetchone()
+        if stored is None or any(
+            stored[key] != value for key, value in immutable.items()
+        ):
+            raise RuntimeError("model_registry_identity_collision")
 
 
 def register_policy_candidate(policy: dict) -> None:
@@ -1129,6 +1527,15 @@ def register_policy_candidate(policy: dict) -> None:
     if missing:
         raise ValueError(f"完整策略缺少组件: {sorted(missing)}")
     now = datetime.now().astimezone().isoformat(timespec="seconds")
+    immutable = {
+        "trained_as_of": str(policy["trained_as_of"]),
+        "train_range": policy.get("train_range"),
+        "test_range": policy.get("test_range"),
+        "component_versions_json": _json(components),
+        "metrics_json": _json(policy.get("metrics", {})),
+        "evidence_json": _json(policy.get("evidence", {})),
+        "source_refs_json": _json(policy.get("source_refs", [])),
+    }
     with _get_conn() as conn:
         conn.execute(
             """
@@ -1145,16 +1552,24 @@ def register_policy_candidate(policy: dict) -> None:
                     if policy.get("research_status") == "rejected"
                     else "shadow"
                 ),
-                policy["trained_as_of"],
-                policy.get("train_range"),
-                policy.get("test_range"),
-                _json(components),
-                _json(policy.get("metrics", {})),
-                _json(policy.get("evidence", {})),
-                _json(policy.get("source_refs", [])),
+                immutable["trained_as_of"],
+                immutable["train_range"],
+                immutable["test_range"],
+                immutable["component_versions_json"],
+                immutable["metrics_json"],
+                immutable["evidence_json"],
+                immutable["source_refs_json"],
                 now,
             ),
         )
+        stored = conn.execute(
+            "SELECT * FROM policy_registry WHERE policy_version=?",
+            (policy["policy_version"],),
+        ).fetchone()
+        if stored is None or any(
+            stored[key] != value for key, value in immutable.items()
+        ):
+            raise RuntimeError("policy_registry_identity_collision")
 
 
 def _contains_caller_pass_flag(value: Any) -> bool:
@@ -1349,7 +1764,7 @@ def _atomic_artifact_is_releaseable(payload: dict, runtime_manifest: dict) -> bo
         return False
     return bool(
         payload.get("runtime_policy_manifest") == runtime_manifest
-        and metrics.get("execution_policy_version") == "a-share-eod-open-open-v3"
+        and metrics.get("execution_policy_version") == "a-share-eod-open-open-v5"
         and evaluation_months >= 6
         and ablations == set(POLICY_REQUIRED_COMPONENTS)
         and coverage >= 0.60
@@ -1934,8 +2349,17 @@ def promote_model_bundle(
     return {"promoted": False, "reason": "legacy_layer_promotion_disabled"}
 
 
-def list_pending_outcome_candidates() -> list[dict]:
+def _current_execution_policy_version() -> str:
+    from utils.execution_model import DEFAULT_EXECUTION_POLICY
+
+    return DEFAULT_EXECUTION_POLICY.version
+
+
+def list_pending_outcome_candidates(
+    execution_policy_version: str | None = None,
+) -> list[dict]:
     """返回仍需真实行情回填的全部决策候选，包括 observe/avoid。"""
+    policy_version = execution_policy_version or _current_execution_policy_version()
     with _get_read_conn() as conn:
         candidate_rows = conn.execute("""
             SELECT r.run_id, r.trade_date, r.stage,
@@ -1944,12 +2368,14 @@ def list_pending_outcome_candidates() -> list[dict]:
             JOIN decision_runs r ON r.run_id = c.run_id
             ORDER BY r.trade_date, r.stage, c.rank_no
         """).fetchall()
-        outcome_rows = conn.execute("""
+        outcome_rows = conn.execute(
+            """
             WITH latest AS (
                 SELECT run_id, code, MAX(observation_no) AS observation_no
                 FROM decision_outcomes
                 WHERE source_snapshot_id != 'legacy-unverified'
                   AND length(source_snapshot_id) = 64
+                  AND execution_policy_version = ?
                 GROUP BY run_id, code
             )
             SELECT o.*
@@ -1958,7 +2384,9 @@ def list_pending_outcome_candidates() -> list[dict]:
               ON l.run_id = o.run_id
              AND l.code = o.code
              AND l.observation_no = o.observation_no
-        """).fetchall()
+        """,
+            (policy_version,),
+        ).fetchall()
     latest = {
         (item["run_id"], item["code"]): item
         for row in outcome_rows
@@ -1981,6 +2409,23 @@ def append_decision_outcome(outcome: dict) -> bool:
     now = datetime.now().astimezone().isoformat(timespec="microseconds")
     with _get_conn() as conn:
         conn.execute("BEGIN IMMEDIATE")
+        candidate = conn.execute(
+            """
+            SELECT r.trade_date, r.stage, c.action
+            FROM decision_candidates c
+            JOIN decision_runs r ON r.run_id = c.run_id
+            WHERE c.run_id = ? AND c.code = ?
+            """,
+            (payload["run_id"], payload["code"]),
+        ).fetchone()
+        if candidate is None:
+            raise ValueError("decision_outcome_candidate_missing")
+        if (
+            candidate["trade_date"] != payload["trade_date"]
+            or candidate["stage"] != payload["stage"]
+            or candidate["action"] != payload["action"]
+        ):
+            raise ValueError("decision_outcome_candidate_identity_mismatch")
         existing = conn.execute(
             "SELECT * FROM decision_outcomes WHERE outcome_id = ?", (content_id,)
         ).fetchone()
@@ -2007,15 +2452,126 @@ def append_decision_outcome(outcome: dict) -> bool:
     return True
 
 
-def outcome_summary() -> dict:
-    """同时衡量命中率、错过上涨和躲过下跌，避免只看推荐票。"""
+def _outcome_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """如实披露结果的可评估边界。
+
+    ``win_rate`` 是为了兼容现有消费者保留的字段，但分母只能是
+    有限数值收益样本。成交失败和标的移出不能被静默丢掉，因此同时
+    披露终局样本数、缺失收益数以及收益覆盖率。
+    """
+    terminal = [row for row in rows if row["status"] in {"complete", "invalid"}]
+    numeric = [
+        row
+        for row in terminal
+        if row["status"] == "complete" and row.get("net_ret_5") is not None
+    ]
+    numeric_ids = {id(row) for row in numeric}
+    missing_return = [row for row in terminal if id(row) not in numeric_ids]
+
+    universe_removals = [
+        row
+        for row in missing_return
+        if row.get("execution_status") == "universe_removed_before_label"
+    ]
+    unknown_entry_removals = [
+        row
+        for row in missing_return
+        if row.get("execution_status") == "universe_removed_with_entry_unknown"
+    ]
+    removal_ids = {id(row) for row in universe_removals}
+    unknown_entry_removal_ids = {id(row) for row in unknown_entry_removals}
+    entry_failures = [
+        row
+        for row in missing_return
+        if id(row) not in removal_ids
+        and id(row) not in unknown_entry_removal_ids
+        and (
+            row.get("execution_status") in {"entry_unbuyable", "entry_suspended"}
+            or row.get("entry_feasible") == 0
+        )
+    ]
+    entry_failure_ids = {id(row) for row in entry_failures}
+    exit_failures = [
+        row
+        for row in missing_return
+        if id(row) not in removal_ids
+        and id(row) not in unknown_entry_removal_ids
+        and id(row) not in entry_failure_ids
+        and (
+            row.get("execution_status") == "exit_unsellable"
+            or row.get("exit_feasible") == 0
+        )
+    ]
+    classified_failure_ids = (
+        removal_ids | entry_failure_ids | {id(row) for row in exit_failures}
+    )
+    values = [float(row["net_ret_5"]) for row in numeric]
+    terminal_count = len(terminal)
+    outcome_count = len(rows)
+    missing_count = len(missing_return)
+    numeric_count = len(values)
+    numeric_win_rate = (
+        round(sum(value > 0 for value in values) / numeric_count, 4) if values else None
+    )
+    numeric_avg_return = round(sum(values) / numeric_count, 4) if values else None
+    return {
+        # 兼容旧消费者：count 仍表示能进入收益统计的数值样本数。
+        "count": numeric_count,
+        "numeric_return_count": numeric_count,
+        "outcome_count": outcome_count,
+        "terminal_outcome_count": terminal_count,
+        "complete_count": sum(row["status"] == "complete" for row in rows),
+        "invalid_count": sum(row["status"] == "invalid" for row in rows),
+        "pending_count": sum(row["status"] == "pending" for row in rows),
+        "partial_count": sum(row["status"] == "partial" for row in rows),
+        "entry_failure_count": len(entry_failures),
+        "exit_failure_count": len(exit_failures),
+        "universe_removal_count": len(universe_removals),
+        "universe_removal_with_entry_unknown_count": len(unknown_entry_removals),
+        "exit_failure_or_universe_removal_count": len(exit_failures)
+        + len(universe_removals),
+        "execution_failure_count": len(classified_failure_ids),
+        # missing_return_count 包含上面已分类的成交失败。
+        "missing_return_count": missing_count,
+        "other_missing_return_count": sum(
+            id(row) not in classified_failure_ids for row in missing_return
+        ),
+        "return_coverage_ratio": round(numeric_count / terminal_count, 4)
+        if terminal_count
+        else None,
+        "tracking_completion_ratio": round(terminal_count / outcome_count, 4)
+        if outcome_count
+        else None,
+        "numeric_return_win_rate": numeric_win_rate,
+        "win_rate": numeric_win_rate,
+        "win_rate_scope": "numeric_return_subset_only",
+        "numeric_return_avg_net_ret_5": numeric_avg_return,
+        "avg_net_ret_5": numeric_avg_return,
+    }
+
+
+def outcome_summary(
+    stage: str = "preopen",
+    execution_policy_version: str | None = None,
+) -> dict:
+    """按决策阶段汇总最新可验证结果。
+
+    默认只统计真正会进入模拟下单的盘前最终决策；收盘阶段
+    只是信号诊断，必须由调用方显式指定，不得与盘前结果双计。
+    """
+    if stage not in {"close", "preopen"}:
+        raise ValueError("invalid_decision_stage")
+    policy_version = execution_policy_version or _current_execution_policy_version()
     with _get_read_conn() as conn:
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             WITH latest AS (
                 SELECT run_id, code, MAX(observation_no) AS observation_no
                 FROM decision_outcomes
                 WHERE source_snapshot_id != 'legacy-unverified'
                   AND length(source_snapshot_id) = 64
+                  AND stage = ?
+                  AND execution_policy_version = ?
                 GROUP BY run_id, code
             )
             SELECT o.*
@@ -2024,29 +2580,49 @@ def outcome_summary() -> dict:
               ON l.run_id = o.run_id
              AND l.code = o.code
              AND l.observation_no = o.observation_no
-            WHERE o.status = 'complete' AND o.net_ret_5 IS NOT NULL
-        """).fetchall()
+        """,
+            (stage, policy_version),
+        ).fetchall()
     verified_rows = [_verified_outcome(row) for row in rows]
-    result: dict[str, object] = {}
+    result: dict[str, object] = {
+        "metric_contract_version": "canonical-outcome-summary-v2",
+        "stage": stage,
+        "execution_policy_version": policy_version,
+    }
     for action in ("buy", "observe", "avoid"):
-        values = [row["net_ret_5"] for row in verified_rows if row["action"] == action]
-        result[action] = {
-            "count": len(values),
-            "win_rate": round(sum(value > 0 for value in values) / len(values), 4)
-            if values
-            else None,
-            "avg_net_ret_5": round(sum(values) / len(values), 4) if values else None,
-        }
-    non_buy = [row["net_ret_5"] for row in verified_rows if row["action"] != "buy"]
+        result[action] = _outcome_metrics(
+            [row for row in verified_rows if row["action"] == action]
+        )
+    result["total"] = _outcome_metrics(verified_rows)
+    non_buy_rows = [row for row in verified_rows if row["action"] != "buy"]
+    non_buy = [
+        float(row["net_ret_5"])
+        for row in non_buy_rows
+        if row["status"] == "complete" and row.get("net_ret_5") is not None
+    ]
     result["missed_winner_rate"] = (
         round(sum(value > 0 for value in non_buy) / len(non_buy), 4)
         if non_buy
         else None
     )
+    result["missed_winner_numeric_return_rate"] = result["missed_winner_rate"]
+    result["missed_winner_rate_scope"] = "numeric_return_subset_only"
+    result["missed_winner_numeric_return_count"] = len(non_buy)
+    non_buy_metrics = _outcome_metrics(non_buy_rows)
+    result["missed_winner_return_coverage_ratio"] = non_buy_metrics[
+        "return_coverage_ratio"
+    ]
     return result
 
 
-def list_decision_outcomes(limit: int = 100) -> list[dict]:
+def list_decision_outcomes(
+    limit: int = 100,
+    stage: str = "preopen",
+    execution_policy_version: str | None = None,
+) -> list[dict]:
+    if stage not in {"close", "preopen"}:
+        raise ValueError("invalid_decision_stage")
+    policy_version = execution_policy_version or _current_execution_policy_version()
     bounded = min(max(int(limit), 1), 200)
     with _get_read_conn() as conn:
         rows = conn.execute(
@@ -2056,6 +2632,8 @@ def list_decision_outcomes(limit: int = 100) -> list[dict]:
                 FROM decision_outcomes
                 WHERE source_snapshot_id != 'legacy-unverified'
                   AND length(source_snapshot_id) = 64
+                  AND stage = ?
+                  AND execution_policy_version = ?
                 GROUP BY run_id, code
             )
             SELECT o.*
@@ -2067,18 +2645,36 @@ def list_decision_outcomes(limit: int = 100) -> list[dict]:
             ORDER BY o.trade_date DESC, o.updated_at DESC, o.run_id DESC, o.code
             LIMIT ?
             """,
-            (bounded,),
+            (stage, policy_version, bounded),
         ).fetchall()
     return [_verified_outcome(row) for row in rows]
 
 
 def save_evolution_run(run: dict) -> str:
+    payload = {
+        "trade_date": str(run["trade_date"]),
+        "status": str(run["status"]),
+        "data_version": str(run["data_version"]),
+        "universe_count": int(run["universe_count"]),
+        "covered_count": int(run["covered_count"]),
+        "coverage_ratio": float(run["coverage_ratio"]),
+        "labels_updated": int(run.get("labels_updated", 0)),
+        "dataset_rows": int(run.get("dataset_rows", 0)),
+        "challenger_version": run.get("challenger_version"),
+        "promotion_status": str(run.get("promotion_status", "not_evaluated")),
+        "reason_codes": list(run.get("reason_codes") or []),
+        "metrics": dict(run.get("metrics") or {}),
+    }
+    canonical = orjson.dumps(payload, option=orjson.OPT_SORT_KEYS)
+    evolution_id = f"evolution-{hashlib.sha256(canonical).hexdigest()[:32]}"
+    requested_id = run.get("evolution_id")
+    if requested_id is not None and str(requested_id) != evolution_id:
+        raise ValueError("evolution_id_must_match_content")
     now = datetime.now().astimezone().isoformat(timespec="seconds")
-    evolution_id = run.get("evolution_id") or uuid4().hex[:24]
     with _get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO evolution_runs
+            INSERT OR IGNORE INTO evolution_runs
               (evolution_id, trade_date, status, data_version, universe_count,
                covered_count, coverage_ratio, labels_updated, dataset_rows,
                challenger_version, promotion_status, reason_codes_json,
@@ -2087,36 +2683,94 @@ def save_evolution_run(run: dict) -> str:
         """,
             (
                 evolution_id,
-                run["trade_date"],
-                run["status"],
-                run["data_version"],
-                run["universe_count"],
-                run["covered_count"],
-                run["coverage_ratio"],
-                run.get("labels_updated", 0),
-                run.get("dataset_rows", 0),
-                run.get("challenger_version"),
-                run.get("promotion_status", "not_evaluated"),
-                _json(run.get("reason_codes", [])),
-                _json(run.get("metrics", {})),
+                payload["trade_date"],
+                payload["status"],
+                payload["data_version"],
+                payload["universe_count"],
+                payload["covered_count"],
+                payload["coverage_ratio"],
+                payload["labels_updated"],
+                payload["dataset_rows"],
+                payload["challenger_version"],
+                payload["promotion_status"],
+                _json(payload["reason_codes"]),
+                _json(payload["metrics"]),
                 now,
                 now,
             ),
         )
+        stored = conn.execute(
+            "SELECT * FROM evolution_runs WHERE evolution_id = ?",
+            (evolution_id,),
+        ).fetchone()
+        if stored is None:
+            raise RuntimeError("evolution_run_not_persisted")
+        stored_payload = {
+            "trade_date": stored["trade_date"],
+            "status": stored["status"],
+            "data_version": stored["data_version"],
+            "universe_count": stored["universe_count"],
+            "covered_count": stored["covered_count"],
+            "coverage_ratio": stored["coverage_ratio"],
+            "labels_updated": stored["labels_updated"],
+            "dataset_rows": stored["dataset_rows"],
+            "challenger_version": stored["challenger_version"],
+            "promotion_status": stored["promotion_status"],
+            "reason_codes": _loads(stored["reason_codes_json"], []),
+            "metrics": _loads(stored["metrics_json"], {}),
+        }
+        if orjson.dumps(stored_payload, option=orjson.OPT_SORT_KEYS) != canonical:
+            raise RuntimeError("evolution_run_content_mismatch")
     return evolution_id
 
 
-def get_latest_evolution() -> dict | None:
-    with _get_read_conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM evolution_runs "
-            "ORDER BY trade_date DESC, created_at DESC, rowid DESC LIMIT 1"
-        ).fetchone()
+def _decode_evolution_run(row) -> dict | None:
     if row is None:
         return None
     item = dict(row)
     item["reason_codes"] = _loads(item.pop("reason_codes_json"), [])
     item["metrics"] = _loads(item.pop("metrics_json"), {})
+    return item
+
+
+def get_latest_evolution_run() -> dict | None:
+    """读取最新演进批次，不聚合全量决策结果。"""
+    with _get_read_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM evolution_runs "
+            "ORDER BY trade_date DESC, created_at DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+    return _decode_evolution_run(row)
+
+
+def get_current_evolution_run(
+    trade_date: str,
+    data_version: str,
+    pipeline_version: str,
+) -> dict | None:
+    """返回指定行情快照与进化版本已完成的批次。"""
+    with _get_read_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM evolution_runs
+            WHERE trade_date = ? AND data_version = ? AND status = 'complete'
+            ORDER BY created_at DESC, rowid DESC
+            """,
+            (str(trade_date), str(data_version)),
+        ).fetchall()
+    for row in rows:
+        item = _decode_evolution_run(row)
+        if item is not None and (item.get("metrics") or {}).get(
+            "evolution_pipeline_version"
+        ) == str(pipeline_version):
+            return item
+    return None
+
+
+def get_latest_evolution() -> dict | None:
+    item = get_latest_evolution_run()
+    if item is None:
+        return None
     item["outcomes"] = outcome_summary()
     return item
 

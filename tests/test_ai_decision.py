@@ -160,6 +160,7 @@ class AiDecisionTest(unittest.TestCase):
             "run_id": "run-4",
             "trade_date": "2026-07-14",
             "market": {"snapshot_id": "a" * 64},
+            "candidates": [{"code": "600000", "action": "buy"}],
         }
         manager = MagicMock(snapshot_id="a" * 64)
 

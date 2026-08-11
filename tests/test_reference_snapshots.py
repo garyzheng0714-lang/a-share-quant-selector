@@ -1,5 +1,6 @@
 import json
 import hashlib
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,12 +9,18 @@ from unittest.mock import patch
 from utils.reference_snapshots import (
     capture_reference_snapshot,
     load_reference_snapshots,
+    validated_snapshot_payload,
 )
 
 
 class ReferenceSnapshotsTest(unittest.TestCase):
     @staticmethod
     def _snapshot(payload: Path, *, trade_date="2026-07-14", snapshot_id="a" * 64):
+        metadata_files = {
+            path.name: {"path": path.name, "content_hash": "test-only"}
+            for path in payload.iterdir()
+            if path.is_file()
+        }
         return {
             "available": True,
             "snapshot_id": snapshot_id,
@@ -21,12 +28,17 @@ class ReferenceSnapshotsTest(unittest.TestCase):
             "manifest": {
                 "trade_date": trade_date,
                 "captured_at": f"{trade_date}T16:00:00+08:00",
+                "metadata_files": metadata_files,
             },
         }
 
     @staticmethod
     def _write_metadata(payload: Path):
         payload.mkdir(parents=True, exist_ok=True)
+        (payload / "trade_calendar.json").write_text(
+            json.dumps(["2026-07-14", "2026-07-15"]),
+            encoding="utf-8",
+        )
         (payload / "stock_names.json").write_text(
             json.dumps({"600000": "浦发银行"}),
             encoding="utf-8",
@@ -99,6 +111,24 @@ class ReferenceSnapshotsTest(unittest.TestCase):
             self.assertFalse(result["available"])
             self.assertEqual(result["reason"], "historical_backdating_forbidden")
 
+    def test_snapshot_captured_after_next_open_is_not_forward_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = root / "payload"
+            self._write_metadata(payload)
+            snapshot = self._snapshot(payload)
+            snapshot["manifest"]["captured_at"] = "2026-07-15T10:00:00+08:00"
+            with patch(
+                "utils.reference_snapshots.load_current_market_snapshot",
+                return_value=snapshot,
+            ):
+                result = capture_reference_snapshot(root, "2026-07-14")
+
+            self.assertFalse(result["available"])
+            self.assertEqual(
+                result["reason"], "reference_snapshot_not_forward_eligible"
+            )
+
     def test_pinned_snapshot_is_loaded_directly_instead_of_following_pointer(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -163,6 +193,60 @@ class ReferenceSnapshotsTest(unittest.TestCase):
                 snapshots = load_reference_snapshots(root)
 
             self.assertEqual(snapshots, {})
+
+    def test_verified_snapshot_cache_reuses_hashes_and_invalidates_on_metadata_change(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot_id = "e" * 64
+            snapshot_root = root / "market_snapshots" / snapshot_id
+            payload = snapshot_root / "payload"
+            self._write_metadata(payload)
+            metadata_names = sorted(path.name for path in payload.iterdir())
+            snapshot = self._snapshot(payload, snapshot_id=snapshot_id)
+            snapshot["manifest"]["metadata_files"] = {
+                name: {"path": name, "content_hash": "test-only"}
+                for name in metadata_names
+            }
+            (snapshot_root / "manifest.json").write_text(
+                json.dumps(snapshot["manifest"]), encoding="utf-8"
+            )
+
+            with patch(
+                "utils.reference_snapshots.load_market_snapshot",
+                return_value=snapshot,
+            ) as load_snapshot:
+                first = load_reference_snapshots(root)
+                second = load_reference_snapshots(root)
+
+                full_verifications = [
+                    call
+                    for call in load_snapshot.call_args_list
+                    if call.kwargs.get("verify_files") is True
+                ]
+                self.assertEqual(len(full_verifications), 1)
+                self.assertEqual(
+                    validated_snapshot_payload(second["2026-07-14"], root, snapshot_id),
+                    payload.resolve(),
+                )
+
+                names_path = payload / "stock_names.json"
+                metadata = names_path.stat()
+                os.utime(
+                    names_path,
+                    ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 1_000_000_000),
+                )
+                third = load_reference_snapshots(root)
+
+            self.assertIn("2026-07-14", first)
+            self.assertIn("2026-07-14", third)
+            full_verifications = [
+                call
+                for call in load_snapshot.call_args_list
+                if call.kwargs.get("verify_files") is True
+            ]
+            self.assertEqual(len(full_verifications), 2)
 
 
 if __name__ == "__main__":

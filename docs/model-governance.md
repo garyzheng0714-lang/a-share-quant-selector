@@ -1,6 +1,6 @@
 # 模型治理与研究口径
 
-更新时间：2026-07-23。
+更新时间：2026-08-11。
 
 ## 目标
 
@@ -12,7 +12,8 @@
 2. T+1 08:45 盘前复核可以加入 T 收盘后至该时点公开的公告，但不得回填到 T 日模型。
 3. 决策的 `trade_date`、snapshot trade date、data version、snapshot ID 和预期已完成交易日必须一致；任一不一致都拒绝生成或展示。
 4. 历史回放只能按顺序加载当时已发布的市场/参考快照，并复验 manifest 和文件哈希。不允许把当前股票池、行业、市值、证券状态倒填到历史日期。
-5. 每个训练样本必须同时记录 `feature_snapshot_id` 和 `reference_snapshot_id`，二者必须是同一个信号日快照。当前快照中的前复权历史不能倒充历史 PIT 特征；缺少逐日可信快照时，日常进化记录 `pit_feature_history_unavailable` 并保留冠军。
+5. 每个训练样本必须同时记录 `feature_snapshot_id`、`reference_snapshot_id` 和 `label_snapshot_id`。特征与参考 ID 必须是同一个信号日快照；标签 ID 必须是之后真实封存、足以观察到成熟结果的快照。系统从每个不可变日快照只计算当日 Super B1 特征，追加到 `super-b1-pit-feature-ledger-v2`；分片版本还绑定特征源码、股票宇宙配置和依赖锁。每个分片以原子 generation 目录发布 `features.csv` 和 seal manifest；seal 绑定 schema、快照身份、行数、排序股票集合哈希和规范内容 SHA-256。已发布的完整 pair 任何改值或清空都失败关闭；仅掉电留下的单边产物可在与不可变快照重算内容完全一致时恢复。不得用今天的前复权历史替代过去特征或股票池。
+6. 当前模型窗口只取最新一段“每个交易所会话都有当日不可变快照”的连续后缀。最新缺日之前的快照仍保留审计，但不参与当前特征、标签或训练；后缀如从月中起步，还要剪掉该残缺月，直到某个自然月的第一个交易所会话就有快照才开始计算。仅跨足 21 个月份不等于连续前向证据，末端月份仍必须通过标签窗口已闭合的 closed-month 门槛。信号股后来退市或移出股票池时不得删掉样本，必须保留为不可成交风险证据。
 
 ## 候选、组件和唯一 policy
 
@@ -25,8 +26,19 @@
 
 ## 训练和统计门禁
 
+### 每日全策略影子复盘
+
+- 28 个策略都必须从当日已封存的因子缓存固化到信号账本；信号记录绑定不可变 snapshot、策略版本、因子注册表版本和缓存产物 hash。Web GET 只读 worker 的物化产物，不补种账本或临时重算排名。
+- 统一使用 `a-share-eod-open-open-v5`：T 日收盘命中、T+1 可执行开盘入场、持有 n 个完成会话后的可执行开盘退出，报告 T+1/T+5/T+10/T+20；T+5 是唯一主评分窗口。v5 使用与行情同一不可变快照的交易所日历推进 T+1、持有期和最大卖出延迟；个股停牌缺 bar 会被记为当日不可成交，不跳到复牌日。只在延迟卖出观察窗口完整后才判定无法卖出，且路径风险不使用开盘退出后的盘中价格。
+- 先对同一信号日内的全部命中等权，再对信号日等权，避免宽因子靠单日大量股票抬高票级胜率。胜率使用 Beta(1,1) 收缩，并同时报告 Wilson 95% 下界、日均净收益、中位数、最差日、CVaR10 和平均最大回撤。
+- 评分窗口是最近 60 个原始信号日，不允许跳过缺证据的坏样本后再用更早样本补位。至少 20 个成熟信号日且 60 条成熟记录，且不存在无法估值的终局买不到/卖不掉证据，也不存在已超过最晚评估日却仍未解决的证据缺口，才允许进入影子排名。退市或移出当前股票池的代码必须从最后一个仍包含它的已校验不可变快照水合历史；入场未知不得伪造为入场失败。未达到门槛一律标记“预热中”，权重为 0，不宣称当前冠军。
+- 影子评分和权重只能反馈为研究建议，不能自动修改生产选股动作。生产动作继续由 canonical decision ledger 唯一给出；任何自动提升都必须另走完整 policy 的验证和发布流程。
+
+Super B1 质量层使用 `after-cost-open-open-vs-cash-v1`：个股标签是同一 v5 成交模型算出的扣费后开盘到开盘收益，与现金零收益比较。不再用信号日到退出日的收盘指数作为基准，避免把入场前和退出后才发生的行情混入训练标签。
+
 - 评估使用按时间顺序的 purged walk-forward，不做随机切分，不让标签窗口穿越折叠边界。
 - 每个折叠的阈值仅来自当时可见的验证数据。最终模型另外保留最后 3 个月作为 purge 后的独立校准窗，不使用最后一个折叠的阈值。
+- 满足 21 个信号月仍不代表可训练。写产物前必须用与训练器同一套门槛检查每折 train/validation/test 行数、market/sector 独立单元、五层标签覆盖，以及最终校准窗。无法形成有效折或校准窗时记为 typed `warming_up` 并保留原冠军，不记为演化异常，也不阻断当日收盘主链路。
 - 优化不收敛、数值异常或单一类别数据不得静默退化成零系数模型；该产物必须标记为不可发布。
 - 独立校准窗必须报告 Brier score、ECE 和分箱校准曲线；样本不足、Brier > 0.30、ECE > 0.20 或校准曲线无法形成时不可发布。
 - 训练到校准窗的特征漂移使用包含缺失桶的 PSI，系数稳定性使用按时间扩展的重训窗口检查符号一致性和离散度。这些是发布门禁，不只是展示指标。
@@ -39,7 +51,7 @@
 
 - policy 五个组件全部存在，模型诊断可发布；
 - 数据集、代码和模型产物哈希符合格式并与证据一致；
-- source refs 至少包含 `super-b1-original`、`immutable-market-snapshots-v2`、`point-in-time-reference-snapshots-v4`、`point-in-time-feature-snapshots-v1`、`pit-security-state-and-listing-regime-v2`、`a-share-eod-open-open-v3`、`purged-walk-forward-v2` 和 `independent-final-calibration-v1`；
+- source refs 至少包含 `super-b1-original`、`immutable-market-snapshots-v2`、`point-in-time-reference-snapshots-v4`、`point-in-time-feature-snapshots-v1`、`super-b1-pit-feature-ledger-v2`、`pit-security-state-and-listing-regime-v2`、`a-share-eod-open-open-v5`、`purged-walk-forward-v2` 和 `independent-final-calibration-v1`；
 - 至少 6 个月独立前向观察，观察窗已真实结束；
 - 统计功效和完整 policy 原子评估证据已验证；
 - reviewer 和变更工单存在。
@@ -50,7 +62,7 @@
 
 ## 交易口径
 
-回放、T+1/T+5 标签、performance 和模拟盘共用 `a-share-eod-open-open-v3`：
+回放、T+1/T+5 标签、performance 和模拟盘共用 `a-share-eod-open-open-v5`：
 
 - T 日收盘后产生信号，最早 T+1 开盘买入；持有 5 个完成会话后的可执行开盘卖出；
 - 100 股整数手、T+1、停牌/零成交量、方向性涨跌停和上市初期无涨跌幅制度；
@@ -59,7 +71,7 @@
 - 无法证明证券状态、上市会话或成交价时，保留 unbuyable/unsellable 结果并延期，不伪造成交。
 - 标签从 pending/partial 发展到 complete 时只能追加新观测，不能覆盖历史。每条观测必须绑定 64 位不可变快照 ID；内容相同的重试幂等，performance 只消费每个决策候选的最新且哈希/快照校验通过的观测。
 
-模拟账户的现金从 cash events 重建，持仓从 fills/lots/closures 重建，NAV 用当日价格独立重算并对账。每次 fill 和 NAV 都必须记录实际定价快照与 `execution_policy_version`；存在无快照来源的旧模拟事件时，生产只读预检会阻止启动。同一快照上重复日结和两个 worker 竞争不得创建重复 NAV。
+模拟账户的现金从 cash events 重建，持仓从 fills/lots/closures 重建，NAV 用当日价格独立重算并对账。每次 fill 和 NAV 都必须记录实际定价快照与 `execution_policy_version`；存在无快照来源的旧模拟事件时，生产只读预检会阻止启动。v5 使用新默认账户 `paper-main-v5`，旧规则账户只保留为历史证据，不允许继续写成 v5 结果。同一快照上重复日结和两个 worker 竞争不得创建重复 NAV。
 
 ## LLM 权限
 
@@ -71,6 +83,8 @@ LLM 只能对已经落账的候选和动作生成结构化解释，并记录 inp
 - 把无引用的新闻、业绩或事件当作事实。
 
 未配置 LLM 时记录 `not_called`；输出不合规或调用失败时记录失败原因，不影响规则决策。
+
+每日全策略复盘始终先生成确定性结论。LLM 只接收已经固定的指标、排名和证据状态，不能改分、改权重、改动作；LLM 不可用时页面仍展示同一份量化日报，并明确标记 `llm_unconfigured` 或失败原因。
 
 ## 最低报告内容
 

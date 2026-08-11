@@ -16,12 +16,16 @@ perf_bp = Blueprint("performance", __name__)
 def api_performance_summary():
     """只汇总版本化 decision ledger，不混入旧 views/results 战绩。"""
     try:
+        stage = request.args.get("stage", "preopen")
+        if stage not in {"close", "preopen"}:
+            return jsonify({"available": False, "reason": "invalid_stage"}), 400
         return jsonify(
             {
                 "available": True,
                 "strategy": "super-b1-canonical",
                 "execution_policy_version": DEFAULT_EXECUTION_POLICY.version,
-                "summary": outcome_summary(),
+                "stage": stage,
+                "summary": outcome_summary(stage),
                 "legacy_results_included": False,
             }
         )
@@ -34,11 +38,15 @@ def api_performance_summary():
 def api_performance_records():
     limit = min(max(request.args.get("limit", default=100, type=int) or 100, 1), 200)
     try:
-        records = list_decision_outcomes(limit=limit)
+        stage = request.args.get("stage", "preopen")
+        if stage not in {"close", "preopen"}:
+            return jsonify({"available": False, "reason": "invalid_stage"}), 400
+        records = list_decision_outcomes(limit=limit, stage=stage)
         return jsonify(
             {
                 "available": True,
                 "execution_policy_version": DEFAULT_EXECUTION_POLICY.version,
+                "stage": stage,
                 "total": len(records),
                 "records": records,
                 "legacy_results_included": False,

@@ -13,7 +13,7 @@ from utils.decision_ledger import (
     get_decision,
     get_latest_ai_decision_run,
     get_latest_decision,
-    get_latest_evolution,
+    get_current_evolution_run,
     list_models,
 )
 
@@ -70,6 +70,22 @@ def _with_models(run: dict | None) -> dict:
     }
 
 
+def _current_evolution(freshness: dict) -> dict | None:
+    if freshness.get("fresh") is not True:
+        return None
+    trade_date = str(freshness.get("local_date") or "")
+    snapshot_id = str(freshness.get("snapshot_id") or "")
+    if not trade_date or len(snapshot_id) != 64:
+        return None
+    from utils.self_evolution import evolution_pipeline_version
+
+    return get_current_evolution_run(
+        trade_date,
+        f"snapshot-{snapshot_id}",
+        evolution_pipeline_version(),
+    )
+
+
 @decision_bp.route("/api/decision/latest", methods=["GET"])
 def api_latest_decision():
     stage = request.args.get("stage")
@@ -104,11 +120,18 @@ def api_run_close_decision():
 
 @decision_bp.route("/api/decision/evolution", methods=["GET"])
 def api_evolution_status():
-    latest = get_latest_evolution()
-    current = bool(
-        latest and (latest.get("metrics") or {}).get("strategy") == "super-b1-original"
+    from utils.data_freshness import local_data_status
+
+    freshness = local_data_status()
+    current = _current_evolution(freshness)
+    return jsonify(
+        {
+            "available": current is not None,
+            "data": current,
+            "reason": None if current else "evolution_not_ready",
+            "freshness": freshness,
+        }
     )
-    return jsonify({"available": current, "data": latest if current else None})
 
 
 @decision_bp.route("/api/decision/system-status", methods=["GET"])
@@ -128,7 +151,7 @@ def api_system_status():
             if _matches_current_snapshot(latest_decision, freshness)
             else None
         )
-        evolution = get_latest_evolution()
+        evolution = _current_evolution(freshness)
         latest_ai = get_latest_ai_decision_run()
         ai = (
             latest_ai
@@ -175,12 +198,16 @@ def api_system_status():
                     "status": "not_called",
                     "reason_codes": ["ai_run_not_current"],
                 },
-                "evolution": evolution
-                or {
-                    "status": "not_started",
-                    "promotion_status": "not_evaluated",
-                    "reason_codes": ["evolution_run_not_recorded"],
-                },
+                "evolution": (
+                    {"current": True, **evolution}
+                    if evolution
+                    else {
+                        "current": False,
+                        "status": "not_started",
+                        "promotion_status": "not_evaluated",
+                        "reason_codes": ["evolution_run_not_current"],
+                    }
+                ),
                 "paper": paper,
                 "policy": {
                     "active_policy_version": (policy or {}).get(

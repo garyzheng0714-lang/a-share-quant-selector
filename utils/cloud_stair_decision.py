@@ -20,9 +20,9 @@ def _industry_map(csv_manager) -> dict:
 
 
 def _sector_rotation(csv_manager) -> dict:
-    from utils.sector_rotation import get_sector_rotation
+    from utils.sector_rotation import read_cached_sector_rotation
 
-    result = get_sector_rotation(csv_manager)
+    result = read_cached_sector_rotation(csv_manager)
     if not result.get("available"):
         return {"available": False, "heat_map": {}, "hot": []}
     return result
@@ -156,11 +156,10 @@ def load_cloud_stair_decision(csv_manager) -> dict:
             "industry": industry or "行业待补全",
             "industry_available": bool(industry),
             "sector": heat_map.get(industry) or None,
-            # compute_cloud_stair 已完成最后一步突破确认。
-            # 与 utils.quant_pick 既有发布口径一致：today_buy = 今天可买。
-            "action": "buy",
-            "action_label": "值得买入",
-            "action_detail": "云阶买点已确认",
+            # 这里只证明云阶结构命中。最终动作必须由 canonical
+            # decision ledger 投影，不能由单一因子在读模型里自称 buy。
+            "signal_status": "confirmed",
+            "signal_label": "云阶结构已确认",
         }
         reason, evidence = _candidate_reason(row)
         row["reason"] = reason
@@ -181,7 +180,7 @@ def load_cloud_stair_decision(csv_manager) -> dict:
         "signal_count": total,
         "has_signal": total > 0,
         "summary": (
-            f"今日云阶选出 {total} 只，突破买点均已确认"
+            f"今日云阶选出 {total} 只，突破结构均已确认"
             if total
             else "今日云阶未选出股票"
         ),
@@ -189,7 +188,7 @@ def load_cloud_stair_decision(csv_manager) -> dict:
             "key": CORE_FACTOR,
             "name": "云阶",
             "plain": "第一波大涨 → 缩量横盘不破位 → 再次突破前高",
-            "decision_rule": "只有完成突破确认才进入今日买入名单",
+            "decision_rule": "完成突破确认只代表因子命中；最终动作由正式决策账本统一给出",
             "track": CORE_TRACK,
             "steps": [
                 {"key": "first_wave", "label": "第一波大涨"},
@@ -200,7 +199,7 @@ def load_cloud_stair_decision(csv_manager) -> dict:
         "sector_leader": _sector_leader(rotation),
         "candidates": candidates,
         "ranking_note": (
-            "云阶决定是否入选；行业热度只决定多只候选的查看顺序，"
-            "不会把已确认的云阶买点降级成“观察”。"
+            "云阶决定因子是否命中；行业热度只决定查看顺序；"
+            "买入、观察或回避必须以正式决策账本为准。"
         ),
     }

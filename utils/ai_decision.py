@@ -12,7 +12,7 @@ from utils.decision_ledger import save_ai_decision_run
 
 
 TZ = ZoneInfo("Asia/Shanghai")
-PROMPT_VERSION = "cloud-stair-explainer-v3"
+PROMPT_VERSION = "cloud-stair-explainer-v6"
 
 
 def _input_hash(
@@ -64,7 +64,33 @@ def run_ai_decision(decision: dict | None, *, csv_manager=None) -> dict:
 
         cloud_result = load_cloud_stair_decision(csv_manager)
         if cloud_result.get("available"):
-            cloud_candidates = cloud_result.get("candidates") or []
+            decision_by_code = {
+                str(row.get("code") or ""): row
+                for row in (decision.get("candidates") or [])
+            }
+            cloud_candidates = [
+                {
+                    **row,
+                    "action": (
+                        decision_by_code.get(str(row.get("code") or ""), {}).get(
+                            "action"
+                        )
+                        if decision_by_code.get(str(row.get("code") or ""), {}).get(
+                            "action"
+                        )
+                        in {"buy", "observe", "avoid", "none"}
+                        else None
+                    ),
+                    "decision_evaluated": str(row.get("code") or "")
+                    in decision_by_code,
+                    "action_source": (
+                        "canonical_candidate"
+                        if str(row.get("code") or "") in decision_by_code
+                        else "not_evaluated"
+                    ),
+                }
+                for row in (cloud_result.get("candidates") or [])
+            ]
             try:
                 from utils.cloud_stair_intelligence import (
                     build_cloud_stair_intelligence,
@@ -129,7 +155,17 @@ def run_ai_decision(decision: dict | None, *, csv_manager=None) -> dict:
     else:
         from utils.daily_pick import generate_quant_comment, get_api_key
 
-        if not get_api_key():
+        explainable_candidates = [
+            item for item in cloud_candidates if item.get("decision_evaluated") is True
+        ]
+        if not explainable_candidates:
+            run = {
+                **base,
+                "status": "shadow_ranked",
+                "payload": {"intelligence": intelligence},
+                "reason_codes": ["no_canonical_cloud_candidates"],
+            }
+        elif not get_api_key():
             run = {
                 **base,
                 "status": "not_called",
@@ -138,7 +174,7 @@ def run_ai_decision(decision: dict | None, *, csv_manager=None) -> dict:
             }
         else:
             stocks = []
-            for item in cloud_candidates:
+            for item in explainable_candidates:
                 stocks.append(
                     {
                         "code": item["code"],
@@ -152,6 +188,8 @@ def run_ai_decision(decision: dict | None, *, csv_manager=None) -> dict:
                         "peak_date": item.get("peak_date"),
                         "wave_gain_pct": item.get("wave_gain_pct"),
                         "action": item.get("action"),
+                        "decision_evaluated": item.get("decision_evaluated") is True,
+                        "action_source": item.get("action_source"),
                         "intelligence": intelligence_by_code.get(str(item["code"]))
                         or {},
                     }

@@ -14,13 +14,15 @@ logger = logging.getLogger(__name__)
 quant_pick_bp = Blueprint("quant_pick", __name__)
 
 
-def _current_close_decision() -> tuple[dict | None, dict, str | None]:
+def _current_close_decision(
+    freshness: dict | None = None,
+) -> tuple[dict | None, dict, str | None]:
     """读取与当前不可变快照严格绑定的收盘决策。"""
     from utils.data_freshness import local_data_status
     from utils.decision_ledger import get_latest_decision
     from utils.decision_versions import strategy_version
 
-    freshness = local_data_status()
+    freshness = freshness or local_data_status()
     if not freshness.get("fresh"):
         return None, freshness, "stale_market_data"
 
@@ -127,21 +129,41 @@ def api_quant_pick():
 
 @quant_pick_bp.route("/api/recommend", methods=["GET"])
 def api_recommend():
-    """云阶唯一决策首屏：信号、行业、买入结论与已固化 AI 解释。"""
+    """云阶信号工作台：因子证据与正式决策账本的唯一动作。"""
     try:
         from utils.ai_decision import PROMPT_VERSION
         from utils.cloud_stair_decision import load_cloud_stair_decision
         from utils.cloud_stair_intelligence import METHODOLOGY
         from utils.csv_manager import CSVManager
+        from utils.data_freshness import local_data_status
         from utils.daily_pick import COMMENT_PROMPT_VERSION, get_quant_comment
         from utils.decision_ledger import get_latest_ai_decision_run
 
         manager = CSVManager("data", writable=False)
+        freshness = local_data_status(manager)
+        if freshness.get("fresh") is not True:
+            return jsonify(
+                {
+                    "available": False,
+                    "reason": "stale_market_data",
+                    "freshness": freshness,
+                }
+            ), 503
         result = load_cloud_stair_decision(manager)
         if not result.get("available"):
             return jsonify(result), 503
+        if result.get("snapshot_id") != freshness.get("snapshot_id") or result.get(
+            "trade_date"
+        ) != freshness.get("local_date"):
+            return jsonify(
+                {
+                    "available": False,
+                    "reason": "cloud_signal_snapshot_mismatch",
+                    "freshness": freshness,
+                }
+            ), 503
 
-        decision, freshness, decision_reason = _current_close_decision()
+        decision, freshness, decision_reason = _current_close_decision(freshness)
         comment = None
         ai_run = None
         if decision:
@@ -180,11 +202,47 @@ def api_recommend():
         rows = []
         for candidate in result.get("candidates") or []:
             code = str(candidate.get("code") or "")
-            decision_row = decision_by_code.get(code) or {}
+            decision_row = decision_by_code.get(code)
+            candidate_decision_available = bool(decision_row)
+            decision_row = decision_row or {}
             candidate_intelligence = intelligence_by_code.get(code) or {}
+            raw_action = decision_row.get("action")
+            action = (
+                raw_action
+                if raw_action in {"buy", "observe", "avoid", "none"}
+                else "none"
+            )
+            action_label = (
+                {
+                    "buy": "允许买入",
+                    "avoid": "回避",
+                    "observe": "观察",
+                    "none": "无正式动作",
+                }.get(str(action), "观察")
+                if candidate_decision_available
+                else "未纳入正式模型"
+            )
             rows.append(
                 {
                     **candidate,
+                    "action": action,
+                    "action_label": action_label,
+                    "candidate_decision_available": candidate_decision_available,
+                    "action_source": (
+                        "canonical_candidate"
+                        if candidate_decision_available
+                        else "not_evaluated"
+                    ),
+                    "action_detail": (
+                        decision_row.get("explanation")
+                        or (
+                            "该云阶信号不在本轮 canonical 候选集中，没有正式动作"
+                            if not candidate_decision_available
+                            else "因子已命中，但正式模型尚未允许买入"
+                            if action == "observe"
+                            else "以正式决策账本为准"
+                        )
+                    ),
                     **{
                         key: candidate_intelligence.get(key)
                         for key in (
@@ -200,6 +258,7 @@ def api_recommend():
                     },
                     "ai_analysis": by_code.get(code),
                     "decision_evidence": {
+                        "available": candidate_decision_available,
                         "reason_codes": decision_row.get("reason_codes") or [],
                         "explanation": decision_row.get("explanation"),
                         "baseline": decision_row.get("baseline") or {},
@@ -235,9 +294,18 @@ def api_recommend():
         return jsonify(
             {
                 **result,
+                "summary": (
+                    f"今日云阶命中 {len(rows)} 只，正式决策允许买入 "
+                    f"{sum(row.get('candidate_decision_available') and row.get('action') == 'buy' for row in rows)} 只"
+                ),
                 "candidates": rows,
-                # 保留旧字段，让已打开的旧客户端不会突然空白。
-                "today_buy": rows,
+                # 保留旧字段，但只能包含 canonical buy。
+                "today_buy": [
+                    row
+                    for row in rows
+                    if row.get("candidate_decision_available")
+                    and row.get("action") == "buy"
+                ],
                 "honest_note": result.get("ranking_note"),
                 "freshness": freshness,
                 "market_context": market_context,
@@ -258,6 +326,20 @@ def api_recommend():
                     ),
                 },
                 "decision_run_id": (decision or {}).get("run_id"),
+                "canonical_decision": {
+                    "available": bool(decision),
+                    "status": (decision or {}).get("status"),
+                    "final_action": (
+                        (decision or {}).get("final_action")
+                        if (decision or {}).get("final_action")
+                        in {"buy", "observe", "avoid", "none"}
+                        else None
+                    ),
+                    "model_version": (decision or {}).get("model_version")
+                    or "baseline-only",
+                    "reason_codes": (decision or {}).get("reason_codes")
+                    or [decision_reason or "decision_not_ready"],
+                },
                 "ai": {
                     "available": bool(comment),
                     "status": ai_status,

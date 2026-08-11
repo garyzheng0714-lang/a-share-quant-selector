@@ -1,4 +1,5 @@
 import json
+import hashlib
 import sqlite3
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ from utils.paper_trading import (
     get_paper_status,
     init_paper_ledger,
     mark_paper_nav,
+    queue_due_exit_orders,
     reconcile_paper_account,
     run_daily_paper_cycle,
 )
@@ -66,6 +68,36 @@ class PaperTradingTest(unittest.TestCase):
             values = [*prior, *values]
         self.manager.write_stock("600000", pd.DataFrame(values))
 
+    def _write_security_status(self, trade_date: str, status: str) -> None:
+        securities = {
+            "600000": {
+                "status": status,
+                "verified": True,
+                "as_of": trade_date,
+                "source_id": "akshare:stock_tfp_em",
+                "is_st": False,
+            }
+        }
+        canonical = json.dumps(
+            securities,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        (self.manager.data_dir / "security_status.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "security-status-v1",
+                    "as_of": trade_date,
+                    "source_id": "akshare:stock_tfp_em",
+                    "count": 1,
+                    "content_hash": hashlib.sha256(canonical).hexdigest(),
+                    "securities": securities,
+                }
+            ),
+            encoding="utf-8",
+        )
+
     def test_empty_account_still_records_daily_nav_and_reconciles(self):
         ensure_default_account()
         result = run_daily_paper_cycle("2026-01-05", self.manager)
@@ -112,7 +144,7 @@ class PaperTradingTest(unittest.TestCase):
             "2026-01-06", self.manager, account["account_id"]
         )
 
-        self.assertEqual(result[0]["outcome"], "deferred")
+        self.assertEqual(result[0]["outcome"], "rejected")
         self.assertEqual(result[0]["reason_code"], "trading_calendar_unavailable")
 
     def test_buy_uses_board_lot_and_same_day_sell_is_t1_locked(self):
@@ -172,7 +204,7 @@ class PaperTradingTest(unittest.TestCase):
         self.assertEqual(stored_fill["snapshot_id"], "unpublished-test-data")
         self.assertEqual(
             stored_fill["execution_policy_version"],
-            "a-share-eod-open-open-v3",
+            "a-share-eod-open-open-v5",
         )
         self.assertEqual(
             json.loads(stored_fill["evidence_json"])["snapshot_id"],
@@ -210,6 +242,24 @@ class PaperTradingTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "paper_market_snapshot_unpinned"):
             mark_paper_nav("2026-01-05", unpinned)
+
+    def test_old_policy_account_cannot_write_v5_fills(self):
+        with view_manager._get_conn() as connection:
+            connection.execute(
+                """
+                INSERT INTO paper_accounts
+                  (account_id, name, initial_cash, benchmark_code, rule_version,
+                   rule_json, created_at)
+                VALUES ('paper-main-v4', '旧模拟账户', 100000, NULL,
+                        'a-share-eod-open-open-v4', '{}',
+                        '2026-01-05T15:00:00+08:00')
+                """
+            )
+
+        with self.assertRaisesRegex(
+            RuntimeError, "paper_account_rule_version_mismatch"
+        ):
+            execute_pending_orders("2026-01-06", self.manager, "paper-main-v4")
 
     def test_one_word_limit_up_never_creates_fake_fill(self):
         self._write_prices(
@@ -287,8 +337,149 @@ class PaperTradingTest(unittest.TestCase):
             "2026-01-06", self.manager, account["account_id"]
         )[0]
 
-        self.assertEqual(fill["outcome"], "deferred")
+        self.assertEqual(fill["outcome"], "rejected")
         self.assertEqual(fill["reason_code"], "security_suspended")
+        self.assertEqual(
+            execute_pending_orders("2026-01-07", self.manager, account["account_id"]),
+            [],
+        )
+
+    def test_authoritative_suspension_overrides_positive_volume_bar(self):
+        self._write_prices(
+            [
+                {
+                    "date": "2026-01-05",
+                    "open": 10,
+                    "high": 10.1,
+                    "low": 9.9,
+                    "close": 10,
+                    "volume": 1000,
+                },
+                {
+                    "date": "2026-01-06",
+                    "open": 10,
+                    "high": 10.2,
+                    "low": 9.8,
+                    "close": 10,
+                    "volume": 1000,
+                },
+            ]
+        )
+        self._write_security_status("2026-01-06", "suspended")
+        account = ensure_default_account(initial_cash=100_000)
+        create_paper_order(
+            account["account_id"],
+            "600000",
+            "buy",
+            "2026-01-05",
+            "2026-01-06",
+            target_weight=0.2,
+        )
+
+        fill = execute_pending_orders(
+            "2026-01-06", self.manager, account["account_id"]
+        )[0]
+
+        self.assertEqual(fill["outcome"], "rejected")
+        self.assertEqual(fill["reason_code"], "security_suspended")
+
+    def test_sell_market_data_gap_is_terminal_on_max_delay_session(self):
+        self._write_prices(
+            [
+                {
+                    "date": "2026-01-05",
+                    "open": 10,
+                    "high": 10.1,
+                    "low": 9.9,
+                    "close": 10,
+                    "volume": 1000,
+                },
+                {
+                    "date": "2026-01-06",
+                    "open": 10,
+                    "high": 10.2,
+                    "low": 9.9,
+                    "close": 10.1,
+                    "volume": 1000,
+                },
+            ]
+        )
+        account = ensure_default_account(initial_cash=100_000)
+        create_paper_order(
+            account["account_id"],
+            "600000",
+            "buy",
+            "2026-01-05",
+            "2026-01-06",
+            target_weight=0.2,
+        )
+        buy = execute_pending_orders("2026-01-06", self.manager, account["account_id"])[
+            0
+        ]
+        create_paper_order(
+            account["account_id"],
+            "600000",
+            "sell",
+            "2026-01-06",
+            "2026-01-07",
+            requested_quantity=buy["quantity"],
+        )
+
+        final_attempt = execute_pending_orders(
+            "2026-01-14", self.manager, account["account_id"]
+        )[0]
+
+        self.assertEqual(final_attempt["outcome"], "rejected")
+        self.assertEqual(final_attempt["reason_code"], "market_data_missing")
+
+    def test_fixed_holding_window_counts_exchange_sessions_without_stock_bars(self):
+        self._write_prices(
+            [
+                {
+                    "date": "2026-01-05",
+                    "open": 10,
+                    "high": 10.1,
+                    "low": 9.9,
+                    "close": 10,
+                    "volume": 1000,
+                },
+                {
+                    "date": "2026-01-06",
+                    "open": 10,
+                    "high": 10.2,
+                    "low": 9.9,
+                    "close": 10.1,
+                    "volume": 1000,
+                },
+                {
+                    "date": "2026-01-13",
+                    "open": 10.3,
+                    "high": 10.5,
+                    "low": 10.2,
+                    "close": 10.4,
+                    "volume": 1000,
+                },
+            ]
+        )
+        account = ensure_default_account(initial_cash=100_000)
+        create_paper_order(
+            account["account_id"],
+            "600000",
+            "buy",
+            "2026-01-05",
+            "2026-01-06",
+            target_weight=0.2,
+        )
+        buy = execute_pending_orders("2026-01-06", self.manager, account["account_id"])[
+            0
+        ]
+
+        queued = queue_due_exit_orders(
+            "2026-01-13", self.manager, account["account_id"]
+        )
+
+        self.assertEqual(buy["outcome"], "filled")
+        self.assertEqual(len(queued), 1)
 
     def test_st_stock_uses_five_percent_limit(self):
         (self.manager.data_dir / "stock_names.json").write_bytes(
@@ -449,7 +640,7 @@ class PaperTradingTest(unittest.TestCase):
             account["account_id"],
         )[0]
 
-        self.assertEqual(fill["outcome"], "deferred")
+        self.assertEqual(fill["outcome"], "rejected")
         self.assertEqual(fill["reason_code"], "pit_security_state_missing")
 
     def test_existing_position_is_subtracted_from_single_stock_cap(self):

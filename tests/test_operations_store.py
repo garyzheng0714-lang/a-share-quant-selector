@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import tempfile
@@ -16,15 +17,19 @@ from utils.operations_store import (
     cancel_task,
     claim_job_run,
     claim_next_task,
+    enqueue_scheduled_task,
     enqueue_task,
+    execution_lease_is_current,
     finish_job_run,
     finish_task,
+    get_latest_task,
     get_task,
     init_operations_db,
     list_alerts,
     record_audit,
     release_scheduler_lease,
     scheduler_status,
+    task_execution_token,
 )
 
 
@@ -159,6 +164,187 @@ class OperationsStoreTest(unittest.TestCase):
                     (alerts[0]["alert_id"],),
                 )
 
+    def test_scheduler_reopens_terminal_failure_as_new_execution_generation(self):
+        owner = "scheduler-worker"
+        self.assertTrue(acquire_scheduler_lease("production-scheduler", owner))
+        first, first_created = enqueue_scheduled_task(
+            "daily_close_pipeline",
+            "scheduled-close:2026-07-15",
+            payload={"trade_date": "2026-07-15"},
+            scheduler_owner=owner,
+            requested_by=f"scheduler:{owner}",
+            change_reason="scheduled close pipeline",
+            max_attempts=1,
+            recovery_cooldown_seconds=0,
+        )
+        first_claim = claim_next_task("worker-a", lease_seconds=60)
+        first_token = task_execution_token(
+            first["task_id"], first_claim["attempt_count"], "worker-a"
+        )
+        self.assertTrue(
+            finish_task(
+                first["task_id"],
+                "worker-a",
+                error_code="upstream_unavailable",
+            )
+        )
+
+        second, second_created = enqueue_scheduled_task(
+            "daily_close_pipeline",
+            "scheduled-close:2026-07-15",
+            payload={"trade_date": "2026-07-15"},
+            scheduler_owner=owner,
+            requested_by=f"scheduler:{owner}",
+            change_reason="scheduled close pipeline",
+            max_attempts=1,
+            recovery_cooldown_seconds=0,
+        )
+        repeated, repeated_created = enqueue_scheduled_task(
+            "daily_close_pipeline",
+            "scheduled-close:2026-07-15",
+            payload={"trade_date": "2026-07-15"},
+            scheduler_owner=owner,
+            requested_by=f"scheduler:{owner}",
+            change_reason="scheduled close pipeline",
+            max_attempts=1,
+            recovery_cooldown_seconds=0,
+        )
+
+        self.assertTrue(first_created)
+        self.assertTrue(second_created)
+        self.assertFalse(repeated_created)
+        self.assertNotEqual(second["task_id"], first["task_id"])
+        self.assertEqual(repeated["task_id"], second["task_id"])
+        self.assertEqual(
+            get_latest_task("daily_close_pipeline")["task_id"], second["task_id"]
+        )
+        self.assertEqual(second["scheduler_execution"]["generation"], 2)
+        self.assertEqual(
+            second["scheduler_execution"]["parent_task_id"], first["task_id"]
+        )
+        first_persisted = get_task(first["task_id"])
+        self.assertEqual(first_persisted["status"], "failed")
+        self.assertEqual(len(first_persisted["attempts"]), 1)
+        self.assertFalse(execution_lease_is_current(first["task_id"], first_token))
+
+        second_claim = claim_next_task("worker-b", lease_seconds=60)
+        second_token = task_execution_token(
+            second["task_id"], second_claim["attempt_count"], "worker-b"
+        )
+        self.assertNotEqual(second_token, first_token)
+        self.assertTrue(execution_lease_is_current(second["task_id"], second_token))
+
+        alerts = list_alerts()
+        recovery_alert = next(
+            alert
+            for alert in alerts
+            if alert["alert_type"] == "task_execution_generation_reopened"
+        )
+        self.assertEqual(recovery_alert["details"]["generation"], 2)
+        self.assertEqual(recovery_alert["details"]["parent_task_id"], first["task_id"])
+        database = Path(os.environ["QUANT_OPERATIONS_DB"])
+        with sqlite3.connect(database) as connection:
+            audit = connection.execute(
+                """SELECT action, metadata_json FROM audit_events
+                   WHERE action='scheduler_task_generation_reopened'"""
+            ).fetchone()
+        self.assertIsNotNone(audit)
+        self.assertEqual(audit[0], "scheduler_task_generation_reopened")
+        self.assertEqual(json.loads(audit[1])["new_task_id"], second["task_id"])
+
+    def test_scheduler_recovery_respects_cooldown_and_cancelled_is_reopenable(self):
+        owner = "scheduler-worker"
+        self.assertTrue(acquire_scheduler_lease("production-scheduler", owner))
+        failed, _ = enqueue_scheduled_task(
+            "daily_close_pipeline",
+            "scheduled-close:2026-07-16",
+            scheduler_owner=owner,
+            requested_by=f"scheduler:{owner}",
+            change_reason="scheduled close pipeline",
+            max_attempts=1,
+        )
+        claim_next_task("worker-a")
+        finish_task(
+            failed["task_id"],
+            "worker-a",
+            error_code="upstream_unavailable",
+            retryable=False,
+        )
+        cooling, cooling_created = enqueue_scheduled_task(
+            "daily_close_pipeline",
+            "scheduled-close:2026-07-16",
+            scheduler_owner=owner,
+            requested_by=f"scheduler:{owner}",
+            change_reason="scheduled close pipeline",
+            max_attempts=1,
+            recovery_cooldown_seconds=300,
+        )
+        self.assertFalse(cooling_created)
+        self.assertEqual(cooling["task_id"], failed["task_id"])
+        self.assertEqual(cooling["scheduler_recovery"]["reason"], "recovery_cooldown")
+
+        cancelled, _ = enqueue_scheduled_task(
+            "preopen_decision",
+            "scheduled-preopen:2026-07-17",
+            scheduler_owner=owner,
+            requested_by=f"scheduler:{owner}",
+            change_reason="scheduled preopen review",
+        )
+        cancel_task(
+            cancelled["task_id"],
+            requested_by="admin:test",
+            change_reason="operator cancelled obsolete generation",
+        )
+        reopened, reopened_created = enqueue_scheduled_task(
+            "preopen_decision",
+            "scheduled-preopen:2026-07-17",
+            scheduler_owner=owner,
+            requested_by=f"scheduler:{owner}",
+            change_reason="scheduled preopen review",
+            recovery_cooldown_seconds=0,
+        )
+        self.assertTrue(reopened_created)
+        self.assertEqual(reopened["scheduler_execution"]["generation"], 2)
+        self.assertEqual(
+            reopened["scheduler_execution"]["parent_task_id"],
+            cancelled["task_id"],
+        )
+
+    def test_scheduler_generation_requires_current_leader_and_never_reopens_success(
+        self,
+    ):
+        owner = "scheduler-worker"
+        with self.assertRaisesRegex(RuntimeError, "scheduler_lease_not_current"):
+            enqueue_scheduled_task(
+                "daily_close_pipeline",
+                "scheduled-close:2026-07-18",
+                scheduler_owner=owner,
+                requested_by=f"scheduler:{owner}",
+                change_reason="scheduled close pipeline",
+            )
+
+        self.assertTrue(acquire_scheduler_lease("production-scheduler", owner))
+        first, _ = enqueue_scheduled_task(
+            "daily_close_pipeline",
+            "scheduled-close:2026-07-18",
+            scheduler_owner=owner,
+            requested_by=f"scheduler:{owner}",
+            change_reason="scheduled close pipeline",
+        )
+        claim_next_task("worker-a")
+        finish_task(first["task_id"], "worker-a", result={"ok": True})
+        replay, created = enqueue_scheduled_task(
+            "daily_close_pipeline",
+            "scheduled-close:2026-07-18",
+            scheduler_owner=owner,
+            requested_by=f"scheduler:{owner}",
+            change_reason="scheduled close pipeline",
+            recovery_cooldown_seconds=0,
+        )
+        self.assertFalse(created)
+        self.assertEqual(replay["task_id"], first["task_id"])
+        self.assertEqual(replay["status"], "succeeded")
+
     def test_expired_lease_records_failed_attempt_before_takeover(self):
         task, _ = enqueue_task(
             "daily_market_ingestion",
@@ -279,6 +465,14 @@ class OperationsStoreTest(unittest.TestCase):
         )
         claimed = claim_next_task("worker-a", lease_seconds=60)
         self.assertEqual(claimed["task_id"], first["task_id"])
+        claimed_second = claim_next_task("worker-b", lease_seconds=60)
+        self.assertEqual(claimed_second["task_id"], second["task_id"])
+        first_token = task_execution_token(
+            first["task_id"], claimed["attempt_count"], "worker-a"
+        )
+        second_token = task_execution_token(
+            second["task_id"], claimed_second["attempt_count"], "worker-b"
+        )
 
         business = claim_job_run(
             "daily_close_pipeline",
@@ -286,6 +480,7 @@ class OperationsStoreTest(unittest.TestCase):
             "a" * 64,
             "policy-1",
             first["task_id"],
+            first_token,
         )
         blocked = claim_job_run(
             "daily_close_pipeline",
@@ -293,6 +488,7 @@ class OperationsStoreTest(unittest.TestCase):
             "a" * 64,
             "policy-1",
             second["task_id"],
+            second_token,
         )
         self.assertTrue(business["claimed"])
         self.assertEqual(blocked["status"], "running")
@@ -305,6 +501,7 @@ class OperationsStoreTest(unittest.TestCase):
                 "policy-1",
                 first["task_id"],
                 succeeded=True,
+                execution_token=first_token,
             )
         )
         replay = claim_job_run(
@@ -313,6 +510,7 @@ class OperationsStoreTest(unittest.TestCase):
             "a" * 64,
             "policy-1",
             second["task_id"],
+            second_token,
         )
         self.assertFalse(replay["claimed"])
         self.assertEqual(replay["status"], "succeeded")
@@ -324,12 +522,21 @@ class OperationsStoreTest(unittest.TestCase):
         second, _ = enqueue_task(
             "daily_close_pipeline", "retry-close-2", requested_by="test"
         )
+        claimed_first = claim_next_task("worker-a", lease_seconds=60)
+        claimed_second = claim_next_task("worker-b", lease_seconds=60)
+        first_token = task_execution_token(
+            first["task_id"], claimed_first["attempt_count"], "worker-a"
+        )
+        second_token = task_execution_token(
+            second["task_id"], claimed_second["attempt_count"], "worker-b"
+        )
         claim_job_run(
             "daily_close_pipeline",
             "2026-07-15",
             "b" * 64,
             "policy-1",
             first["task_id"],
+            first_token,
         )
         finish_job_run(
             "daily_close_pipeline",
@@ -338,6 +545,7 @@ class OperationsStoreTest(unittest.TestCase):
             "policy-1",
             first["task_id"],
             succeeded=False,
+            execution_token=first_token,
         )
 
         resumed = claim_job_run(
@@ -346,6 +554,7 @@ class OperationsStoreTest(unittest.TestCase):
             "b" * 64,
             "policy-1",
             second["task_id"],
+            second_token,
         )
 
         self.assertTrue(resumed["claimed"])
@@ -436,6 +645,20 @@ class OperationsStoreTest(unittest.TestCase):
             patch(
                 "utils.decision_ledger.get_latest_decision", return_value=old_decision
             ),
+            patch(
+                "utils.decision_ledger.get_latest_strategy_review_run",
+                return_value=None,
+            ),
+            patch("utils.decision_ledger.get_latest_evolution_run", return_value=None),
+            patch(
+                "utils.daily_strategy_review.review_pipeline_version",
+                return_value="review-new",
+            ),
+            patch(
+                "utils.self_evolution.evolution_pipeline_version",
+                return_value="evolution-new",
+            ),
+            patch("worker._learning_pipeline_version", return_value="learning-new"),
         ):
             first = worker.reconcile_scheduled_tasks(current)
             repeated = worker.reconcile_scheduled_tasks(current)
@@ -451,6 +674,9 @@ class OperationsStoreTest(unittest.TestCase):
                 "trade_date": "2026-07-15",
                 "snapshot_id": snapshot_id,
                 "strategy_version": "policy-new",
+                "review_version": "review-new",
+                "evolution_version": "evolution-new",
+                "learning_version": "learning-new",
             },
         )
 

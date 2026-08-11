@@ -1,6 +1,6 @@
 # 运维手册
 
-更新时间：2026-08-08。
+更新时间：2026-08-11。
 
 ## 运行前提
 
@@ -70,6 +70,7 @@ CI 使用带 hash 的 Python 锁文件，生产与开发/CI 两份 lock 都执�
 - `GET /api/version`：核对完整 Git SHA、strategy version 和 snapshot ID。
 - `GET /api/stats`：常数级返回快照、决策和 scheduler 摘要。
 - `GET /api/decision/system-status`：查看 freshness、当前 policy、模拟盘、AI 和演进状态。
+- `GET /api/review/daily/latest`：读取 worker 已物化、与当前 snapshot 严格一致的 28 策略日报、T+5 影子评分、样本门槛、AI 状态和确定性结论；返回 `daily_strategy_review_not_ready` 时不能用旧日报顶替。
 - `GET /api/data-pipeline/status`：查看采集来源、最近任务路径、正式快照、本地目录和保留状态。
 - `GET /api/scheduler/status` 和 `GET /api/tasks/<task_id>`：需要 viewer token。
 - `GET /api/alerts`：需要 viewer token，返回最近的不可变运行告警事件和 24 小时 warning/critical 汇总；可用 `limit=1..200`、`severity=warning|critical` 过滤。
@@ -98,9 +99,9 @@ python tools/signed_request.py \
   --reason "operator approved daily ingestion"
 ```
 
-收盘 DAG 的任何上游阶段失败都会阻断下游决策。不允许手工修改任务状态、决策账本或 NAV 来伪造恢复。
+收盘 DAG 的任何上游阶段失败都会阻断下游决策。不允许手工修改任务状态、决策账本或 NAV 来伪造恢复。一次成功的收盘任务还应在详情中看到 `factor_outcome_refresh`、`strategy_review_materialization` 和 `model_evolution`；复盘为 `warming_up` 或 AI 为 `llm_unconfigured` 会标记 attention，但不会伪装成模型已成熟。
 
-调度 leader 每 30 秒对账任务，不依赖某个 cron 瞬间：收盘任务在 16:00 后或翌日可按原交易日补齐；盘前复核只能在当日 08:45–09:25 执行。请求的交易日与当前/快照日期不同时会失败关闭。
+调度 leader 每 30 秒对账任务，不依赖某个 cron 瞬间：收盘任务在 16:00 后或翌日可按原交易日补齐；盘前复核只能在当日 08:45–09:25 执行。请求的交易日与当前/快照日期不同时会失败关闭。同一固定调度键耗尽重试后不再永久卡死：最新代次为 failed/cancelled 且已过 5 分钟冷却期时，持有生产调度租约的 leader 会创建新代次。可在 `/api/alerts` 查看 `task_execution_generation_reopened`，并通过新任务的 `scheduler_execution.parent_task_id` 追溯上一代；禁止手工修改旧任务或 attempt 来解锁。
 
 任务详情中的 `attempts` 是不可用新任务覆盖的尝试历史。可重试失败指数退避（上限 15 分钟）；非可重试错误或达到 `max_attempts` 后终止。租约过期会把未完成 attempt 记为 `lease_expired` 后才由新 worker 接管。
 每次可重试失败或租约接管会在 `alert_events` 追加 warning；不可重试失败、重试耗尽或最终租约耗尽会追加 critical。任务状态与告警在同一事务提交，告警表由 trigger 禁止更新和删除。

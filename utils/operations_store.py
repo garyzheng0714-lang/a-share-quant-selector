@@ -13,8 +13,10 @@ from pathlib import Path
 from utils.runtime_paths import operations_db_path
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 ALERT_SEVERITIES = {"warning", "critical"}
+SCHEDULER_GENERATION_SEPARATOR = "::execution-generation:"
+SCHEDULER_EXECUTION_METADATA_KEY = "__scheduler_execution_generation__"
 
 
 class TaskQueueCapacityExceeded(RuntimeError):
@@ -210,6 +212,7 @@ def init_operations_db() -> None:
                 snapshot_id TEXT NOT NULL,
                 policy_version TEXT NOT NULL,
                 task_id TEXT NOT NULL REFERENCES tasks(task_id),
+                execution_token TEXT NOT NULL,
                 status TEXT NOT NULL CHECK(status IN ('running','succeeded','failed')),
                 started_at TEXT NOT NULL,
                 finished_at TEXT,
@@ -303,6 +306,52 @@ def init_operations_db() -> None:
         if "finished_at" not in job_run_columns:
             conn.execute("ALTER TABLE job_runs ADD COLUMN finished_at TEXT")
             conn.execute("UPDATE job_runs SET finished_at=created_at")
+        if "execution_token" not in job_run_columns:
+            conn.execute(
+                "ALTER TABLE job_runs ADD COLUMN execution_token "
+                "TEXT NOT NULL DEFAULT ''"
+            )
+            conn.execute(
+                "UPDATE job_runs SET execution_token=task_id WHERE execution_token=''"
+            )
+        execution_token_column = next(
+            row
+            for row in conn.execute("PRAGMA table_info(job_runs)").fetchall()
+            if row[1] == "execution_token"
+        )
+        if execution_token_column[4] is not None:
+            conn.execute("DROP TABLE IF EXISTS job_runs_v7_migration")
+            conn.execute(
+                """
+                CREATE TABLE job_runs_v7_migration (
+                    job_name TEXT NOT NULL,
+                    trade_date TEXT NOT NULL,
+                    snapshot_id TEXT NOT NULL,
+                    policy_version TEXT NOT NULL,
+                    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+                    execution_token TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('running','succeeded','failed')),
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(job_name, trade_date, snapshot_id, policy_version)
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO job_runs_v7_migration(
+                    job_name, trade_date, snapshot_id, policy_version, task_id,
+                    execution_token, status, started_at, finished_at, created_at
+                )
+                SELECT job_name, trade_date, snapshot_id, policy_version, task_id,
+                       CASE WHEN execution_token='' THEN task_id ELSE execution_token END,
+                       status, started_at, finished_at, created_at
+                FROM job_runs
+                """
+            )
+            conn.execute("DROP TABLE job_runs")
+            conn.execute("ALTER TABLE job_runs_v7_migration RENAME TO job_runs")
         task_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
         }
@@ -411,6 +460,218 @@ def enqueue_task(
     return _task_dict(row), True
 
 
+def enqueue_scheduled_task(
+    task_type: str,
+    schedule_key: str,
+    *,
+    payload: dict | None = None,
+    scheduler_owner: str,
+    requested_by: str,
+    change_reason: str,
+    max_attempts: int = 3,
+    recovery_cooldown_seconds: int = 300,
+    scheduler_lease_name: str = "production-scheduler",
+) -> tuple[dict, bool]:
+    """Create one scheduler execution generation, reopening terminal work safely.
+
+    A stable schedule key remains idempotent while its latest generation is queued,
+    running, or succeeded. Only a failed/cancelled terminal generation may produce a
+    new task after the explicit cooldown, and only for the current scheduler leader.
+    The previous task and all of its attempts stay untouched.
+    """
+    normalized_type = str(task_type).strip()
+    normalized_key = str(schedule_key).strip()
+    owner = str(scheduler_owner).strip()
+    actor = str(requested_by).strip()
+    reason = str(change_reason).strip()
+    lease_name = str(scheduler_lease_name).strip()
+    if not normalized_type or not normalized_key:
+        raise ValueError("task_type_and_schedule_key_required")
+    if SCHEDULER_GENERATION_SEPARATOR in normalized_key:
+        raise ValueError("reserved_scheduler_generation_separator")
+    if not owner or actor != f"scheduler:{owner}":
+        raise ValueError("scheduler_identity_mismatch")
+    if not lease_name:
+        raise ValueError("scheduler_lease_name_required")
+    if not 3 <= len(reason) <= 500:
+        raise ValueError("scheduler_change_reason_required")
+    if not 1 <= int(max_attempts) <= 100:
+        raise ValueError("max_attempts_out_of_range")
+    if not 0 <= int(recovery_cooldown_seconds) <= 86_400:
+        raise ValueError("recovery_cooldown_out_of_range")
+
+    now_text = _now()
+    now = datetime.fromisoformat(now_text)
+    body_payload = dict(payload or {})
+    if SCHEDULER_EXECUTION_METADATA_KEY in body_payload:
+        raise ValueError("reserved_scheduler_execution_metadata")
+    capacity_error: TaskQueueCapacityExceeded | None = None
+    created_row: sqlite3.Row | None = None
+    with _connection(immediate=True) as conn:
+        lease = conn.execute(
+            "SELECT owner_id, expires_at FROM scheduler_leases WHERE lease_name=?",
+            (lease_name,),
+        ).fetchone()
+        if (
+            lease is None
+            or lease["owner_id"] != owner
+            or (lease["expires_at"] or "") < now_text
+        ):
+            raise RuntimeError("scheduler_lease_not_current")
+
+        generation_prefix = normalized_key + SCHEDULER_GENERATION_SEPARATOR
+        rows = conn.execute(
+            """SELECT * FROM tasks
+               WHERE task_type=?
+                 AND (idempotency_key=? OR instr(idempotency_key, ?)=1)""",
+            (normalized_type, normalized_key, generation_prefix),
+        ).fetchall()
+        generations: list[tuple[int, sqlite3.Row]] = []
+        for row in rows:
+            internal_key = str(row["idempotency_key"])
+            if internal_key == normalized_key:
+                generations.append((1, row))
+                continue
+            suffix = internal_key.removeprefix(generation_prefix)
+            if suffix.isdigit() and int(suffix) >= 2:
+                generations.append((int(suffix), row))
+        latest_generation, latest = max(
+            generations, default=(0, None), key=lambda x: x[0]
+        )
+
+        parent_task_id: str | None = None
+        recovery_reason: str | None = None
+        if latest is not None:
+            if latest["status"] in {"queued", "running", "succeeded"}:
+                return _task_dict(latest), False
+            if latest["status"] not in {"failed", "cancelled"}:
+                raise RuntimeError("scheduler_task_terminal_state_invalid")
+            finished_at_text = str(latest["finished_at"] or "")
+            try:
+                finished_at = datetime.fromisoformat(finished_at_text)
+                if finished_at.tzinfo is None:
+                    finished_at = finished_at.replace(tzinfo=timezone.utc)
+                finished_at = finished_at.astimezone(timezone.utc)
+            except ValueError:
+                return _task_dict(latest), False
+            eligible_at = finished_at + timedelta(
+                seconds=int(recovery_cooldown_seconds)
+            )
+            if now < eligible_at:
+                task = _task_dict(latest)
+                task["scheduler_recovery"] = {
+                    "reason": "recovery_cooldown",
+                    "eligible_at": eligible_at.isoformat(timespec="seconds"),
+                }
+                return task, False
+            parent_task_id = str(latest["task_id"])
+            recovery_reason = str(latest["error_code"] or latest["status"])
+
+        generation = latest_generation + 1
+        internal_key = (
+            normalized_key if generation == 1 else f"{generation_prefix}{generation}"
+        )
+        canonical = f"{normalized_type}\0{internal_key}".encode()
+        task_id = hashlib.sha256(canonical).hexdigest()[:32]
+        pending = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE status IN ('queued','running')"
+            ).fetchone()[0]
+        )
+        limit = _max_pending_tasks()
+        if pending >= limit:
+            _insert_alert_event(
+                conn,
+                severity="critical",
+                alert_type="task_queue_capacity_exceeded",
+                source="task_queue",
+                subject_id=task_id,
+                message="持久任务队列已达到容量上限",
+                details={
+                    "limit": limit,
+                    "pending": pending,
+                    "task_type": normalized_type,
+                },
+                dedup_key=f"{task_id}:{pending}:{limit}",
+            )
+            capacity_error = TaskQueueCapacityExceeded(pending, limit)
+        else:
+            scheduler_metadata = {
+                "schedule_key": normalized_key,
+                "generation": generation,
+                "parent_task_id": parent_task_id,
+                "scheduler_owner": owner,
+                "recovery_reason": recovery_reason,
+            }
+            stored_payload = {
+                **body_payload,
+                SCHEDULER_EXECUTION_METADATA_KEY: scheduler_metadata,
+            }
+            conn.execute(
+                """INSERT INTO tasks(
+                       task_id, task_type, idempotency_key, status, payload_json,
+                       requested_by, change_reason, created_at, max_attempts
+                   ) VALUES(?,?,?,'queued',?,?,?,?,?)""",
+                (
+                    task_id,
+                    normalized_type,
+                    internal_key,
+                    json.dumps(
+                        stored_payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    actor,
+                    reason,
+                    now_text,
+                    int(max_attempts),
+                ),
+            )
+            created_row = conn.execute(
+                "SELECT * FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if parent_task_id is not None:
+                audit_metadata = {
+                    **scheduler_metadata,
+                    "new_task_id": task_id,
+                    "recovery_cooldown_seconds": int(recovery_cooldown_seconds),
+                    "task_type": normalized_type,
+                }
+                conn.execute(
+                    """INSERT INTO audit_events(
+                           occurred_at, actor, role, action, outcome,
+                           change_reason, metadata_json
+                       ) VALUES(?,?,'scheduler',?,'accepted',?,?)""",
+                    (
+                        now_text,
+                        actor,
+                        "scheduler_task_generation_reopened",
+                        reason,
+                        json.dumps(
+                            audit_metadata,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                    ),
+                )
+                _insert_alert_event(
+                    conn,
+                    severity="warning",
+                    alert_type="task_execution_generation_reopened",
+                    source="scheduler",
+                    subject_id=task_id,
+                    message="调度任务终态失败后已创建新的执行代次",
+                    details=audit_metadata,
+                    dedup_key=f"{parent_task_id}:{task_id}:{generation}",
+                )
+    if capacity_error is not None:
+        raise capacity_error
+    assert created_row is not None
+    return _task_dict(created_row), True
+
+
 def get_task(task_id: str) -> dict | None:
     try:
         with _read_connection() as conn:
@@ -438,7 +699,7 @@ def get_latest_task(task_type: str) -> dict | None:
         with _read_connection() as conn:
             row = conn.execute(
                 """SELECT * FROM tasks WHERE task_type=?
-                   ORDER BY created_at DESC, task_id DESC LIMIT 1""",
+                   ORDER BY created_at DESC, rowid DESC LIMIT 1""",
                 (str(task_type),),
             ).fetchone()
             attempts = (
@@ -816,19 +1077,27 @@ def register_job_run(
     snapshot_id: str,
     policy_version: str,
     task_id: str,
+    execution_token: str,
 ) -> bool:
+    token = str(execution_token or "")
+    if not token:
+        raise ValueError("execution_token_required")
     with _connection(immediate=True) as conn:
+        if not _execution_token_is_current(conn, task_id, token, _now()):
+            raise RuntimeError("task_execution_lease_lost")
         cursor = conn.execute(
             """INSERT OR IGNORE INTO job_runs(
                    job_name, trade_date, snapshot_id, policy_version, task_id,
+                   execution_token,
                    status, started_at, finished_at, created_at
-               ) VALUES(?,?,?,?,?,'succeeded',?,?,?)""",
+               ) VALUES(?,?,?,?,?,?,'succeeded',?,?,?)""",
             (
                 job_name,
                 trade_date,
                 snapshot_id,
                 policy_version,
                 task_id,
+                token,
                 _now(),
                 _now(),
                 _now(),
@@ -837,17 +1106,64 @@ def register_job_run(
     return cursor.rowcount == 1
 
 
+def task_execution_token(task_id: str, attempt_no: int, owner_id: str) -> str:
+    raw = f"{task_id}\0{int(attempt_no)}\0{owner_id}".encode()
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _execution_token_is_current(
+    conn: sqlite3.Connection,
+    task_id: str,
+    execution_token: str,
+    now: str,
+) -> bool:
+    row = conn.execute(
+        "SELECT status, lease_owner, lease_expires_at, attempt_count "
+        "FROM tasks WHERE task_id=?",
+        (task_id,),
+    ).fetchone()
+    if row is None or row["status"] != "running" or not row["lease_owner"]:
+        return False
+    expected = task_execution_token(
+        task_id, int(row["attempt_count"]), str(row["lease_owner"])
+    )
+    return bool(expected == execution_token and (row["lease_expires_at"] or "") >= now)
+
+
+def execution_lease_is_current(task_id: str, execution_token: str) -> bool:
+    with _read_connection() as conn:
+        row = conn.execute(
+            "SELECT status, lease_owner, lease_expires_at, attempt_count "
+            "FROM tasks WHERE task_id=?",
+            (task_id,),
+        ).fetchone()
+    if row is None or row["status"] != "running" or not row["lease_owner"]:
+        return False
+    expected = task_execution_token(
+        task_id, int(row["attempt_count"]), str(row["lease_owner"])
+    )
+    return bool(
+        expected == execution_token and (row["lease_expires_at"] or "") >= _now()
+    )
+
+
 def claim_job_run(
     job_name: str,
     trade_date: str,
     snapshot_id: str,
     policy_version: str,
     task_id: str,
+    execution_token: str,
 ) -> dict:
     """在任何下游副作用前原子占用交易日级业务键。"""
-    now = _now()
+    token = str(execution_token or "")
+    if not token:
+        raise ValueError("execution_token_required")
     key = (job_name, trade_date, snapshot_id, policy_version)
     with _connection(immediate=True) as conn:
+        now = _now()
+        if not _execution_token_is_current(conn, task_id, token, now):
+            raise RuntimeError("task_execution_lease_lost")
         row = conn.execute(
             """
             SELECT * FROM job_runs
@@ -860,10 +1176,11 @@ def claim_job_run(
                 """
                 INSERT INTO job_runs(
                     job_name, trade_date, snapshot_id, policy_version, task_id,
+                    execution_token,
                     status, started_at, finished_at, created_at
-                ) VALUES(?,?,?,?,?,'running',?,NULL,?)
+                ) VALUES(?,?,?,?,?,?,'running',?,NULL,?)
                 """,
-                (*key, task_id, now, now),
+                (*key, task_id, token, now, now),
             )
             return {"claimed": True, "status": "running", "resumed": False}
         if row["status"] == "succeeded":
@@ -874,12 +1191,23 @@ def claim_job_run(
             }
 
         previous_task = conn.execute(
-            "SELECT status, lease_expires_at FROM tasks WHERE task_id=?",
+            "SELECT status, lease_expires_at, lease_owner, attempt_count "
+            "FROM tasks WHERE task_id=?",
             (row["task_id"],),
         ).fetchone()
+        previous_token = (
+            task_execution_token(
+                str(row["task_id"]),
+                int(previous_task["attempt_count"]),
+                str(previous_task["lease_owner"]),
+            )
+            if previous_task is not None and previous_task["lease_owner"]
+            else None
+        )
         previous_still_live = bool(
             row["status"] == "running"
-            and row["task_id"] != task_id
+            and row["execution_token"] == previous_token
+            and row["execution_token"] != token
             and previous_task is not None
             and previous_task["status"] == "running"
             and (previous_task["lease_expires_at"] or "") >= now
@@ -893,10 +1221,11 @@ def claim_job_run(
         conn.execute(
             """
             UPDATE job_runs
-            SET task_id=?, status='running', started_at=?, finished_at=NULL
+            SET task_id=?, execution_token=?, status='running',
+                started_at=?, finished_at=NULL
             WHERE job_name=? AND trade_date=? AND snapshot_id=? AND policy_version=?
             """,
-            (task_id, now, *key),
+            (task_id, token, now, *key),
         )
     return {"claimed": True, "status": "running", "resumed": True}
 
@@ -909,14 +1238,20 @@ def finish_job_run(
     task_id: str,
     *,
     succeeded: bool,
+    execution_token: str,
 ) -> bool:
+    token = str(execution_token or "")
+    if not token:
+        raise ValueError("execution_token_required")
     status = "succeeded" if succeeded else "failed"
     with _connection(immediate=True) as conn:
+        if not _execution_token_is_current(conn, task_id, token, _now()):
+            return False
         cursor = conn.execute(
             """
             UPDATE job_runs SET status=?, finished_at=?
             WHERE job_name=? AND trade_date=? AND snapshot_id=? AND policy_version=?
-              AND task_id=? AND status='running'
+              AND task_id=? AND execution_token=? AND status='running'
             """,
             (
                 status,
@@ -926,6 +1261,7 @@ def finish_job_run(
                 snapshot_id,
                 policy_version,
                 task_id,
+                token,
             ),
         )
     return cursor.rowcount == 1
@@ -1075,7 +1411,11 @@ def scheduler_status(lease_name: str = "production-scheduler") -> dict:
 
 def _task_dict(row: sqlite3.Row) -> dict:
     value = dict(row)
-    value["payload"] = json.loads(value.pop("payload_json") or "{}")
+    payload = json.loads(value.pop("payload_json") or "{}")
+    scheduler_execution = payload.pop(SCHEDULER_EXECUTION_METADATA_KEY, None)
+    value["payload"] = payload
+    if scheduler_execution is not None:
+        value["scheduler_execution"] = scheduler_execution
     value["result"] = json.loads(value.pop("result_json") or "{}")
     return value
 

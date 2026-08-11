@@ -1,4 +1,7 @@
 import unittest
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pandas as pd
 
@@ -6,6 +9,7 @@ from utils.execution_model import (
     CostModel,
     enrich_security_state_with_history,
     evaluate_trade,
+    load_exchange_sessions,
     limit_price,
     resolve_price_limit_regime,
     security_state_from_name,
@@ -41,7 +45,12 @@ class ExecutionModelTest(unittest.TestCase):
                 },
             ]
         )
-        result = evaluate_trade(daily, "2026-01-05", hold_days=1)
+        result = evaluate_trade(
+            daily,
+            "2026-01-05",
+            hold_days=1,
+            trading_sessions=["2026-01-05", "2026-01-06"],
+        )
         self.assertFalse(result["entry_feasible"])
         self.assertEqual(result["reason"], "entry_unbuyable")
 
@@ -86,6 +95,12 @@ class ExecutionModelTest(unittest.TestCase):
             daily,
             "2026-01-05",
             hold_days=1,
+            trading_sessions=[
+                "2026-01-05",
+                "2026-01-06",
+                "2026-01-07",
+                "2026-01-08",
+            ],
             costs=CostModel(
                 commission_rate=0,
                 stamp_duty_sell_rate=0,
@@ -171,11 +186,271 @@ class ExecutionModelTest(unittest.TestCase):
             "2026-01-05",
             hold_days=1,
             code="600000",
+            trading_sessions=["2026-01-05", "2026-01-06"],
             require_pit_status=True,
         )
 
         self.assertFalse(result["available"])
         self.assertEqual(result["reason"], "pit_security_state_missing")
+
+    def test_missing_entry_bar_does_not_buy_on_reopen(self):
+        daily = self._daily(
+            [
+                {
+                    "date": "2026-01-05",
+                    "open": 10,
+                    "high": 10.2,
+                    "low": 9.9,
+                    "close": 10,
+                    "volume": 100,
+                },
+                {
+                    "date": "2026-01-07",
+                    "open": 10.5,
+                    "high": 10.7,
+                    "low": 10.4,
+                    "close": 10.6,
+                    "volume": 100,
+                },
+            ]
+        )
+
+        result = evaluate_trade(
+            daily,
+            "2026-01-05",
+            hold_days=1,
+            trading_sessions=["2026-01-05", "2026-01-06", "2026-01-07"],
+            security_states={
+                "2026-01-06": {
+                    "as_of": "2026-01-06",
+                    "is_st": False,
+                    "trading_status": "suspended",
+                    "source": "test-pit-status",
+                    "listing_rule_verified": True,
+                    "listing_session_number": 100,
+                }
+            },
+        )
+
+        self.assertTrue(result["available"])
+        self.assertEqual(result["entry_date"], "2026-01-06")
+        self.assertFalse(result["entry_bar_available"])
+        self.assertIsNone(result["entry_price"])
+        self.assertEqual(result["reason"], "entry_suspended")
+
+    def test_active_security_with_missing_entry_bar_is_pending_data_gap(self):
+        daily = self._daily(
+            [
+                {
+                    "date": "2026-01-05",
+                    "open": 10,
+                    "high": 10.2,
+                    "low": 9.9,
+                    "close": 10,
+                    "volume": 100,
+                },
+                {
+                    "date": "2026-01-07",
+                    "open": 10.5,
+                    "high": 10.7,
+                    "low": 10.4,
+                    "close": 10.6,
+                    "volume": 100,
+                },
+            ]
+        )
+        active_state = {
+            "as_of": "2026-01-06",
+            "is_st": False,
+            "trading_status": "active",
+            "source": "test-pit-status",
+            "listing_rule_verified": True,
+            "listing_session_number": 100,
+        }
+
+        result = evaluate_trade(
+            daily,
+            "2026-01-05",
+            hold_days=1,
+            trading_sessions=["2026-01-05", "2026-01-06", "2026-01-07"],
+            security_states={"2026-01-06": active_state},
+        )
+
+        self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "market_bar_missing")
+        self.assertFalse(result["entry_label_mature"])
+
+    def test_missing_exit_bars_consume_exchange_session_delay(self):
+        daily = self._daily(
+            [
+                {
+                    "date": "2026-01-05",
+                    "open": 10,
+                    "high": 10.2,
+                    "low": 9.9,
+                    "close": 10,
+                    "volume": 100,
+                },
+                {
+                    "date": "2026-01-06",
+                    "open": 10,
+                    "high": 10.3,
+                    "low": 9.9,
+                    "close": 10.1,
+                    "volume": 100,
+                },
+                {
+                    "date": "2026-01-09",
+                    "open": 10.4,
+                    "high": 10.6,
+                    "low": 10.3,
+                    "close": 10.5,
+                    "volume": 100,
+                },
+            ]
+        )
+        sessions = [
+            "2026-01-05",
+            "2026-01-06",
+            "2026-01-07",
+            "2026-01-08",
+            "2026-01-09",
+        ]
+        suspended_states = {
+            date: {
+                "as_of": date,
+                "is_st": False,
+                "trading_status": "suspended",
+                "source": "test-pit-status",
+                "listing_rule_verified": True,
+                "listing_session_number": 100,
+            }
+            for date in ("2026-01-07", "2026-01-08")
+        }
+
+        expired = evaluate_trade(
+            daily,
+            "2026-01-05",
+            hold_days=1,
+            max_exit_delay=1,
+            trading_sessions=sessions,
+            security_states=suspended_states,
+        )
+        resumed = evaluate_trade(
+            daily,
+            "2026-01-05",
+            hold_days=1,
+            max_exit_delay=2,
+            trading_sessions=sessions,
+            security_states=suspended_states,
+        )
+
+        self.assertEqual(expired["reason"], "exit_unsellable")
+        self.assertEqual(expired["exit_delay_sessions"], 1)
+        self.assertIsNone(expired["net_return"])
+        self.assertEqual(resumed["exit_date"], "2026-01-09")
+        self.assertEqual(resumed["exit_delay_sessions"], 2)
+
+    def test_active_security_with_missing_exit_bar_is_pending_data_gap(self):
+        daily = self._daily(
+            [
+                {
+                    "date": "2026-01-05",
+                    "open": 10,
+                    "high": 10.2,
+                    "low": 9.9,
+                    "close": 10,
+                    "volume": 100,
+                },
+                {
+                    "date": "2026-01-06",
+                    "open": 10,
+                    "high": 10.3,
+                    "low": 9.9,
+                    "close": 10.1,
+                    "volume": 100,
+                },
+                {
+                    "date": "2026-01-08",
+                    "open": 10.4,
+                    "high": 10.6,
+                    "low": 10.3,
+                    "close": 10.5,
+                    "volume": 100,
+                },
+            ]
+        )
+        active_state = {
+            "as_of": "2026-01-07",
+            "is_st": False,
+            "trading_status": "active",
+            "source": "test-pit-status",
+            "listing_rule_verified": True,
+            "listing_session_number": 100,
+        }
+
+        result = evaluate_trade(
+            daily,
+            "2026-01-05",
+            hold_days=1,
+            trading_sessions=[
+                "2026-01-05",
+                "2026-01-06",
+                "2026-01-07",
+                "2026-01-08",
+            ],
+            security_states={"2026-01-07": active_state},
+        )
+
+        self.assertEqual(result["reason"], "market_bar_missing")
+        self.assertFalse(result["exit_label_mature"])
+        self.assertEqual(result["exit_delay_sessions"], 0)
+
+    def test_missing_trading_calendar_fails_closed(self):
+        daily = self._daily(
+            [
+                {
+                    "date": "2026-01-05",
+                    "open": 10,
+                    "high": 10,
+                    "low": 10,
+                    "close": 10,
+                    "volume": 100,
+                },
+                {
+                    "date": "2026-01-06",
+                    "open": 10,
+                    "high": 10,
+                    "low": 10,
+                    "close": 10,
+                    "volume": 100,
+                },
+            ]
+        )
+
+        result = evaluate_trade(daily, "2026-01-05", hold_days=1)
+
+        self.assertFalse(result["available"])
+        self.assertEqual(result["reason"], "trading_calendar_missing")
+        self.assertFalse(result["session_axis_verified"])
+
+    def test_snapshot_calendar_is_capped_at_manifest_trade_date(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = root / "payload"
+            payload.mkdir()
+            (payload / "trade_calendar.json").write_text(
+                json.dumps(["2026-01-05", "2026-01-06", "2026-01-07"]),
+                encoding="utf-8",
+            )
+            (root / "manifest.json").write_text(
+                json.dumps({"trade_date": "2026-01-06"}),
+                encoding="utf-8",
+            )
+
+            sessions = load_exchange_sessions(payload)
+
+        self.assertEqual(sessions, ["2026-01-05", "2026-01-06"])
 
 
 if __name__ == "__main__":

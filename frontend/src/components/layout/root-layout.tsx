@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Outlet, useLocation } from "@/lib/spa-router";
+import { Outlet, useLocation } from "react-router";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { NavBar } from "./nav-bar";
 import { ToastContainer } from "@/components/ui/toast";

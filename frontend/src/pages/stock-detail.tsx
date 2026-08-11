@@ -1,16 +1,14 @@
-import { useState, useCallback, useEffect, useRef } from "react";
-import { useParams, useNavigate } from "@/lib/spa-router";
+import { useState, useCallback } from "react";
+import { useLocation, useNavigate, useParams } from "react-router";
 import { Button } from "@astryxdesign/core/Button";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { Icon } from "@astryxdesign/core/Icon";
-import { List, ListItem } from "@astryxdesign/core/List";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
 import { Text } from "@astryxdesign/core/Text";
 import { PageTransition } from "@/components/layout/page-transition";
 import { KlineChart, type KlineOverlay } from "@/components/charts/kline-chart";
 import { CopyButton } from "@/components/ui";
 import { useKline, useStockProfile } from "@/lib/hooks";
-import { useAppStore } from "@/lib/store";
 import { chartColors } from "@/lib/tokens";
 
 type Period = "daily" | "weekly";
@@ -25,28 +23,16 @@ function formatVolume(v: number): string {
 export function Component() {
   const { code } = useParams<{ code: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const [period, setPeriod] = useState<Period>("daily");
   const [weeklyLineMode, setWeeklyLineMode] = useState<WeeklyLineMode>("ma");
   const [overlay, setOverlay] = useState<KlineOverlay | null>(null);
 
-  const stockNavList = useAppStore((s) => s.stockNavList);
-  const stockNavIndex = useAppStore((s) => s.stockNavIndex);
-  const setStockNavIndex = useAppStore((s) => s.setStockNavIndex);
-
   const [profileOpen, setProfileOpen] = useState(false);
-  // 联动列表当前项：只在切换股票时滚动到可见——内联 callback ref 会在每次
-  // 重渲染（如鼠标划过K线触发 overlay 更新）都执行 scrollIntoView，
-  // 用户手动滚列表会被不停拽回（review 确认的交互缺陷）
-  const activeNavItemRef = useRef<HTMLLIElement | null>(null);
-  useEffect(() => {
-    activeNavItemRef.current?.scrollIntoView({ block: "nearest" });
-  }, [stockNavIndex]);
   const { data: klineData, isLoading } = useKline(code ?? null, period);
   const { data: profile, isLoading: profileLoading } = useStockProfile(code ?? null);
 
-  const currentStock = stockNavList[stockNavIndex];
-  const stockName = klineData?.name ?? currentStock?.name ?? "";
-  const hasNav = stockNavList.length > 1;
+  const stockName = klineData?.name ?? "";
 
   const handleCrosshairMove = useCallback((data: KlineOverlay | null) => {
     setOverlay(data);
@@ -63,11 +49,18 @@ export function Component() {
     setOverlay(null);
   };
 
-  const goToStock = (direction: -1 | 1) => {
-    const newIdx = stockNavIndex + direction;
-    if (newIdx < 0 || newIdx >= stockNavList.length) return;
-    setStockNavIndex(newIdx);
-    navigate(`/stock/${stockNavList[newIdx].code}`, { replace: true });
+  const returnToPreviousPage = () => {
+    const state = location.state as { from?: string } | null;
+    if (state?.from?.startsWith("/")) {
+      navigate(state.from);
+      return;
+    }
+    const historyIndex = Number(window.history.state?.idx ?? 0);
+    if (historyIndex > 0) {
+      navigate(-1);
+      return;
+    }
+    navigate("/stocks", { replace: true });
   };
 
   const lastCandle = klineData?.data?.length
@@ -171,58 +164,14 @@ export function Component() {
   return (
     <PageTransition>
       <div className="flex h-[calc(100dvh-56px-4rem-env(safe-area-inset-bottom))] sm:h-[calc(100dvh-56px)]">
-        {/* 桌面联动列表：从候选/因子/超级B1列表进来时，左侧保留整份名单，
-            点一只切一只（知弈策行"翻牌式复盘"），不用回退页面 */}
-        {hasNav && (
-          <aside className="hidden lg:flex w-56 shrink-0 flex-col border-r border-border bg-surface">
-            <div className="px-3 py-2 border-b border-border/60 text-[11px] text-ink-muted">
-              候选名单 · {stockNavList.length}只
-            </div>
-            <div className="flex-1 overflow-y-auto py-1">
-              <List density="compact" aria-label="候选名单">
-                {stockNavList.map((s, i) => (
-                  <ListItem
-                    key={s.code}
-                    ref={i === stockNavIndex ? activeNavItemRef : undefined}
-                    isSelected={i === stockNavIndex}
-                    label={
-                      <span className={`truncate text-xs font-medium ${i === stockNavIndex ? "text-accent" : "text-ink"}`}>
-                        {s.name || s.code}
-                      </span>
-                    }
-                    description={
-                      <span className="flex items-center gap-1.5">
-                        <span className="font-mono text-[10px] text-ink-muted">{s.code}</span>
-                        {s.industry && (
-                          <span className="min-w-0 truncate text-[10px] text-ink-muted/70">
-                            {s.industry}
-                          </span>
-                        )}
-                      </span>
-                    }
-                    endContent={
-                      <span className="text-[11px] tabular-nums text-ink-secondary">
-                        {s.close ? s.close.toFixed(2) : ""}
-                      </span>
-                    }
-                    onClick={() => {
-                      setStockNavIndex(i);
-                      navigate(`/stock/${s.code}`, { replace: true });
-                    }}
-                  />
-                ))}
-              </List>
-            </div>
-          </aside>
-        )}
-
         <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         <div className="px-3 sm:px-6 py-2 sm:py-3 border-b border-border bg-surface">
+          <h1 className="sr-only">{stockName ? `${stockName}（${code}）K 线详情` : `${code} K 线详情`}</h1>
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
               <Button
-                onClick={() => navigate(-1)}
+                onClick={returnToPreviousPage}
                 label="返回上一页"
                 variant="ghost"
                 size="sm"
@@ -263,11 +212,6 @@ export function Component() {
                     )}
                   </div>
                 ) : null}
-                {hasNav && (
-                  <span className="text-[10px] text-ink-muted tabular-nums shrink-0">
-                    {stockNavIndex + 1}/{stockNavList.length}
-                  </span>
-                )}
               </div>
 
               {!isLoading && (
@@ -459,34 +403,6 @@ export function Component() {
                   <span className="text-accent">●</span> 系统历史信号{" "}
                   {klineData.signals!.length} 次
                 </div>
-              )}
-
-              {/* Floating side nav buttons */}
-              {hasNav && (
-                <>
-                  <Button
-                    onClick={() => goToStock(-1)}
-                    isDisabled={stockNavIndex <= 0}
-                    label="查看上一只候选股票"
-                    variant="ghost"
-                    size="sm"
-                    isIconOnly
-                    icon={<Icon icon="chevronLeft" size="sm" />}
-                    aria-label="查看上一只候选股票"
-                    className="absolute left-0 top-1/2 z-10 -translate-y-1/2 rounded-r-xl border border-l-0 border-border/30 bg-surface/80"
-                  />
-                  <Button
-                    onClick={() => goToStock(1)}
-                    isDisabled={stockNavIndex >= stockNavList.length - 1}
-                    label="查看下一只候选股票"
-                    variant="ghost"
-                    size="sm"
-                    isIconOnly
-                    icon={<Icon icon="chevronRight" size="sm" />}
-                    aria-label="查看下一只候选股票"
-                    className="absolute right-0 top-1/2 z-10 -translate-y-1/2 rounded-l-xl border border-r-0 border-border/30 bg-surface/80"
-                  />
-                </>
               )}
 
               {/* Data overlay */}

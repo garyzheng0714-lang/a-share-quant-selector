@@ -1,28 +1,3 @@
-export const ease = {
-  default: [0.25, 0.1, 0.25, 1],
-  spring: { type: "spring" as const, damping: 25, stiffness: 300 },
-  springGentle: { type: "spring" as const, damping: 30, stiffness: 200 },
-} as const;
-
-export const duration = {
-  fast: 0.15,
-  normal: 0.2,
-  slow: 0.3,
-  count: 0.8,
-} as const;
-
-export const typography = {
-  heading: { letterSpacing: "-0.03em", fontWeight: 700 },
-  subheading: { letterSpacing: "-0.02em", fontWeight: 600 },
-  body: { letterSpacing: "-0.02em", fontWeight: 400 },
-} as const;
-
-export const stagger = {
-  fast: 0.03,
-  normal: 0.05,
-  list: 0.04,
-} as const;
-
 export const chartColors = {
   bull: "#ef4444",
   bear: "#16a34a",
@@ -46,15 +21,3 @@ export const chartColors = {
   dataBackgroundLine: "rgba(100,116,139,0.22)",
   dataBackgroundArea: "rgba(100,116,139,0.07)",
 } as const;
-
-export const CATEGORY_LABELS: Record<string, string> = {
-  bowl_center: "回落碗中",
-  near_duokong: "靠近多空线",
-  near_short_trend: "靠近趋势线",
-};
-
-export const CATEGORY_BADGE_VARIANT: Record<string, "bowl" | "duokong" | "short"> = {
-  bowl_center: "bowl",
-  near_duokong: "duokong",
-  near_short_trend: "short",
-};

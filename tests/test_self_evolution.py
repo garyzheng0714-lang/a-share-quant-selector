@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from contextlib import ExitStack
@@ -31,8 +32,27 @@ class SelfEvolutionTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_observe_is_labeled_to_measure_missed_winners(self):
-        manager = CSVManager(Path(self.tmp.name) / "data")
+        payload = Path(self.tmp.name) / "snapshot" / "payload"
+        manager = CSVManager(payload, resolve_snapshot=False)
         manager.snapshot_id = self.SNAPSHOT_ID
+        (payload.parent / "manifest.json").write_text(
+            json.dumps({"trade_date": "2026-01-13"}),
+            encoding="utf-8",
+        )
+        (manager.data_dir / "trade_calendar.json").write_text(
+            json.dumps(
+                [
+                    "2026-01-05",
+                    "2026-01-06",
+                    "2026-01-07",
+                    "2026-01-08",
+                    "2026-01-09",
+                    "2026-01-12",
+                    "2026-01-13",
+                ]
+            ),
+            encoding="utf-8",
+        )
         manager.write_stock(
             "600000",
             pd.DataFrame(
@@ -137,8 +157,8 @@ class SelfEvolutionTest(unittest.TestCase):
             "utils.reference_snapshots.load_reference_snapshots", return_value=states
         ):
             result = update_decision_outcomes(manager)
-        summary = outcome_summary()
-        outcomes = list_decision_outcomes()
+        summary = outcome_summary("close")
+        outcomes = list_decision_outcomes(stage="close")
         self.assertEqual(result["complete"], 1)
         self.assertEqual(summary["observe"]["count"], 1)
         self.assertEqual(summary["missed_winner_rate"], 1.0)
@@ -146,7 +166,7 @@ class SelfEvolutionTest(unittest.TestCase):
         self.assertNotEqual(outcomes[0]["ret_1"], 5.0)
         self.assertEqual(
             outcomes[0]["execution_policy_version"],
-            "a-share-eod-open-open-v3",
+            "a-share-eod-open-open-v5",
         )
         self.assertEqual(outcomes[0]["source_snapshot_id"], self.SNAPSHOT_ID)
 
@@ -285,6 +305,12 @@ class SelfEvolutionTest(unittest.TestCase):
                     return_value={"2026-07-14": {"as_of": "2026-07-14"}},
                 )
             )
+            stack.enter_context(
+                patch(
+                    "tools.hierarchical_walk_forward.materialize_pit_feature_ledger",
+                    return_value={"complete": True},
+                )
+            )
             build_dataset = stack.enter_context(
                 patch("tools.hierarchical_walk_forward.build_dataset")
             )
@@ -299,6 +325,10 @@ class SelfEvolutionTest(unittest.TestCase):
     def test_unverified_historical_features_keep_champion(self):
         manager = CSVManager(Path(self.tmp.name) / "data")
         manager.snapshot_id = self.SNAPSHOT_ID
+        sessions = [
+            value.strftime("%Y-%m-%d")
+            for value in pd.bdate_range("2024-01-01", "2025-12-31")
+        ]
         frame = pd.DataFrame()
         frame.attrs.update(
             {
@@ -351,6 +381,12 @@ class SelfEvolutionTest(unittest.TestCase):
                 patch("utils.self_evolution.data_version", return_value="d1")
             )
             stack.enter_context(
+                patch(
+                    "utils.self_evolution.load_exchange_sessions",
+                    return_value=sessions,
+                )
+            )
+            stack.enter_context(
                 patch("utils.self_evolution.save_evolution_run", return_value="e1")
             )
             stack.enter_context(
@@ -366,11 +402,13 @@ class SelfEvolutionTest(unittest.TestCase):
             stack.enter_context(
                 patch(
                     "utils.reference_snapshots.load_reference_snapshots",
-                    return_value={
-                        f"202{year}-{month:02d}-01": {}
-                        for year in (4, 5)
-                        for month in range(1, 13)
-                    },
+                    return_value={date: {} for date in sessions},
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "tools.hierarchical_walk_forward.materialize_pit_feature_ledger",
+                    return_value={"complete": True},
                 )
             )
             stack.enter_context(
@@ -386,19 +424,165 @@ class SelfEvolutionTest(unittest.TestCase):
             result = run_daily_evolution(manager)
 
         train.assert_not_called()
-        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["status"], "failed")
         self.assertEqual(result["promotion_status"], "kept_champion")
         self.assertEqual(result["reason_codes"], ["pit_feature_history_unavailable"])
-        self.assertEqual(
-            result["metrics"]["training_status"], "skipped_pit_feature_history"
-        )
+        self.assertEqual(result["metrics"]["training_status"], "pit_evidence_failed")
         self.assertEqual(
             result["metrics"]["dataset_gate"]["mismatched_snapshot_count"], 24
         )
 
+    def test_training_readiness_gap_is_warming_up_not_evolution_failure(self):
+        manager = CSVManager(Path(self.tmp.name) / "data")
+        manager.snapshot_id = self.SNAPSHOT_ID
+        sessions = [
+            value.strftime("%Y-%m-%d")
+            for value in pd.bdate_range("2024-01-01", "2026-07-14")
+        ]
+        months = pd.date_range("2024-01-01", periods=21, freq="MS")
+        frame = pd.DataFrame(
+            {
+                "date": [
+                    (month + pd.Timedelta(days=4)).strftime("%Y-%m-%d")
+                    for month in months
+                ],
+                "label_end_date": [
+                    (month + pd.Timedelta(days=11)).strftime("%Y-%m-%d")
+                    for month in months
+                ],
+                "label_snapshot_date": [
+                    (month + pd.Timedelta(days=11)).strftime("%Y-%m-%d")
+                    for month in months
+                ],
+                "code": ["600000"] * len(months),
+                "return_label_mature": [1] * len(months),
+                "net_return_5": [1.0] * len(months),
+                "excess_5": [1.0] * len(months),
+                "y_quality": [1] * len(months),
+                "entry_label_mature": [1] * len(months),
+                "entry_feasible": [1] * len(months),
+                "y_entry_risk": [0] * len(months),
+                "exit_label_mature": [1] * len(months),
+                "y_exit_risk": [0] * len(months),
+            }
+        )
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch(
+                    "utils.self_evolution.local_data_status",
+                    return_value={
+                        "fresh": True,
+                        "local_date": "2026-07-14",
+                        "expected_date": "2026-07-14",
+                    },
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "utils.self_evolution.read_snapshot_metadata",
+                    side_effect=[
+                        ({"600000": "浦发银行"}, self.SNAPSHOT_ID),
+                        ({"600000": "银行"}, self.SNAPSHOT_ID),
+                    ],
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "utils.self_evolution._coverage",
+                    return_value={
+                        "universe_count": 100,
+                        "covered_count": 80,
+                        "coverage_ratio": 0.8,
+                    },
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "utils.self_evolution.update_decision_outcomes",
+                    return_value={
+                        "updated": 0,
+                        "complete": 0,
+                        "pending": 0,
+                        "missing_data": 0,
+                    },
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "utils.paper_trading.get_paper_status",
+                    return_value={"established": False},
+                )
+            )
+            stack.enter_context(
+                patch("utils.self_evolution.data_version", return_value="d1")
+            )
+            stack.enter_context(
+                patch(
+                    "utils.self_evolution.load_exchange_sessions",
+                    return_value=sessions,
+                )
+            )
+            stack.enter_context(
+                patch("utils.self_evolution.save_evolution_run", return_value="e1")
+            )
+            stack.enter_context(
+                patch(
+                    "utils.reference_snapshots.capture_reference_snapshot",
+                    return_value={
+                        "available": True,
+                        "as_of": "2026-07-14",
+                        "market_snapshot_id": self.SNAPSHOT_ID,
+                    },
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "utils.reference_snapshots.load_reference_snapshots",
+                    return_value={date: {} for date in sessions},
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "tools.hierarchical_walk_forward.materialize_pit_feature_ledger",
+                    return_value={"complete": True},
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "tools.hierarchical_walk_forward.build_dataset",
+                    return_value=frame,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "tools.hierarchical_walk_forward.training_readiness",
+                    return_value={
+                        "ready": False,
+                        "reason": "walk_forward_sample_insufficient",
+                        "eligible_folds": 0,
+                    },
+                )
+            )
+            train = stack.enter_context(
+                patch("tools.hierarchical_walk_forward.train_and_register")
+            )
+
+            result = run_daily_evolution(manager)
+
+        train.assert_not_called()
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["promotion_status"], "kept_champion")
+        self.assertEqual(result["reason_codes"], ["walk_forward_sample_insufficient"])
+        self.assertEqual(result["metrics"]["model_state"], "warming_up")
+        self.assertFalse(result["metrics"]["trained"])
+
     def test_daily_training_registers_shadow_but_never_promotes(self):
         manager = CSVManager(Path(self.tmp.name) / "data")
         manager.snapshot_id = self.SNAPSHOT_ID
+        sessions = [
+            value.strftime("%Y-%m-%d")
+            for value in pd.bdate_range("2024-01-01", "2026-07-14")
+        ]
         frame = pd.DataFrame(
             {
                 "date": [
@@ -406,7 +590,26 @@ class SelfEvolutionTest(unittest.TestCase):
                     for year in (4, 5)
                     for month in range(1, 13)
                 ],
+                "label_end_date": [
+                    f"202{year}-{month:02d}-10"
+                    for year in (4, 5)
+                    for month in range(1, 13)
+                ],
+                "label_snapshot_date": [
+                    f"202{year}-{month:02d}-11"
+                    for year in (4, 5)
+                    for month in range(1, 13)
+                ],
                 "code": ["600000"] * 24,
+                "return_label_mature": [1] * 24,
+                "net_return_5": [1.0] * 24,
+                "excess_5": [1.0] * 24,
+                "y_quality": [1] * 24,
+                "entry_label_mature": [1] * 24,
+                "entry_feasible": [1] * 24,
+                "y_entry_risk": [0] * 24,
+                "exit_label_mature": [1] * 24,
+                "y_exit_risk": [0] * 24,
             }
         )
         report = {
@@ -477,6 +680,12 @@ class SelfEvolutionTest(unittest.TestCase):
                 patch("utils.self_evolution.data_version", return_value="d1")
             )
             stack.enter_context(
+                patch(
+                    "utils.self_evolution.load_exchange_sessions",
+                    return_value=sessions,
+                )
+            )
+            stack.enter_context(
                 patch("utils.self_evolution.save_evolution_run", return_value="e1")
             )
             stack.enter_context(
@@ -492,14 +701,16 @@ class SelfEvolutionTest(unittest.TestCase):
             stack.enter_context(
                 patch(
                     "utils.reference_snapshots.load_reference_snapshots",
-                    return_value={
-                        f"202{year}-{month:02d}-01": {}
-                        for year in (4, 5)
-                        for month in range(1, 13)
-                    },
+                    return_value={date: {} for date in sessions},
                 )
             )
-            stack.enter_context(
+            materialize_ledger = stack.enter_context(
+                patch(
+                    "tools.hierarchical_walk_forward.materialize_pit_feature_ledger",
+                    return_value={"complete": True},
+                )
+            )
+            build_dataset = stack.enter_context(
                 patch(
                     "tools.hierarchical_walk_forward.build_dataset",
                     return_value=frame,
@@ -507,12 +718,25 @@ class SelfEvolutionTest(unittest.TestCase):
             )
             stack.enter_context(
                 patch(
-                    "tools.hierarchical_walk_forward.train_and_register",
-                    return_value=report,
+                    "tools.hierarchical_walk_forward.training_readiness",
+                    return_value={"ready": True, "reason": None},
                 )
             )
-            stack.enter_context(patch("pandas.DataFrame.to_csv"))
-            stack.enter_context(patch("pathlib.Path.write_text"))
+
+            def train_and_write(_frame, output_path, **_kwargs):
+                self.assertEqual(
+                    _kwargs["trained_as_of"],
+                    "2025-12-11T16:00:00+08:00",
+                )
+                Path(output_path).write_text("{}", encoding="utf-8")
+                return report
+
+            stack.enter_context(
+                patch(
+                    "tools.hierarchical_walk_forward.train_and_register",
+                    side_effect=train_and_write,
+                )
+            )
             promote = stack.enter_context(
                 patch("utils.decision_ledger.promote_model_bundle")
             )
@@ -520,6 +744,14 @@ class SelfEvolutionTest(unittest.TestCase):
             result = run_daily_evolution(manager)
 
         promote.assert_not_called()
+        self.assertEqual(
+            list(materialize_ledger.call_args.kwargs["snapshots"]),
+            sessions,
+        )
+        self.assertIs(
+            materialize_ledger.call_args.kwargs["snapshots"],
+            build_dataset.call_args.kwargs["snapshots"],
+        )
         self.assertEqual(result["promotion_status"], "shadow_registered")
         self.assertIn("release_review_required", result["reason_codes"])
 

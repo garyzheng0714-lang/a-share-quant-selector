@@ -5,7 +5,7 @@ import { Stack } from "@astryxdesign/core/Stack";
 
 /**
  * 全站内容页统一壳：工作台档，max-width 1440，页边与块间距一把尺子。
- * 全宽三栏工作台（FactorWorkbench / stock-detail）不要包这层。
+ * 全宽的 stock-detail 工作区不要包这层。
  */
 export function PageShell({
   children,

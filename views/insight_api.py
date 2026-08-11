@@ -174,7 +174,7 @@ def api_sector_detail(sector_name):
                 hit = b1_map.get(code)
                 aux = confirmations.get(code, [])
                 decision_item = actions.get(code, {})
-                action = decision_item.get("action", "observe" if hit else "none")
+                action = decision_item.get("action", "none")
                 baseline = decision_item.get("baseline") or {}
                 stocks.append(
                     {

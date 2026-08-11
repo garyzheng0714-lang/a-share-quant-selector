@@ -23,7 +23,9 @@ from utils.runtime_paths import market_data_dir
 logger = logging.getLogger(__name__)
 DATA_DIR = market_data_dir()
 CACHE_FILE = DATA_DIR / "market_thermometer_cache.json"
-CACHE_SCHEMA_VERSION = 3
+CACHE_SCHEMA_VERSION = 4
+MIN_NUMERIC_RETURN_COVERAGE = 0.8
+MIN_TRACKING_COMPLETION_RATIO = 0.8
 
 
 def _strategy_fitness() -> dict:
@@ -31,22 +33,62 @@ def _strategy_fitness() -> dict:
     from utils.decision_ledger import outcome_summary
 
     buy = outcome_summary().get("buy") or {}
-    samples = int(buy.get("count") or 0)
-    if samples < 20 or buy.get("win_rate") is None:
+    samples = int(buy.get("numeric_return_count") or buy.get("count") or 0)
+    terminal_samples = int(buy.get("terminal_outcome_count") or samples)
+    coverage = buy.get("return_coverage_ratio")
+    tracking_completion = buy.get("tracking_completion_ratio")
+    evidence = {
+        "samples": samples,
+        "numeric_return_samples": samples,
+        "terminal_samples": terminal_samples,
+        "return_coverage_ratio": coverage,
+        "tracking_completion_ratio": tracking_completion,
+        "entry_failure_count": int(buy.get("entry_failure_count") or 0),
+        "exit_failure_count": int(buy.get("exit_failure_count") or 0),
+        "universe_removal_count": int(buy.get("universe_removal_count") or 0),
+        "universe_removal_with_entry_unknown_count": int(
+            buy.get("universe_removal_with_entry_unknown_count") or 0
+        ),
+        "missing_return_count": int(buy.get("missing_return_count") or 0),
+        "win_rate_scope": "numeric_return_subset_only",
+    }
+    numeric_win_rate = buy.get("numeric_return_win_rate", buy.get("win_rate"))
+    if samples < 20 or numeric_win_rate is None:
         return {
             "available": False,
             "reason": f"canonical_samples_insufficient:{samples}<20",
-            "samples": samples,
             "source": "decision_outcomes",
+            **evidence,
         }
-    win_rate = round(float(buy["win_rate"]) * 100, 1)
+    if coverage is None or float(coverage) < MIN_NUMERIC_RETURN_COVERAGE:
+        return {
+            "available": False,
+            "reason": "canonical_return_coverage_insufficient",
+            "minimum_return_coverage_ratio": MIN_NUMERIC_RETURN_COVERAGE,
+            "source": "decision_outcomes",
+            **evidence,
+        }
+    if (
+        tracking_completion is None
+        or float(tracking_completion) < MIN_TRACKING_COMPLETION_RATIO
+    ):
+        return {
+            "available": False,
+            "reason": "canonical_tracking_completion_insufficient",
+            "minimum_tracking_completion_ratio": MIN_TRACKING_COMPLETION_RATIO,
+            "source": "decision_outcomes",
+            **evidence,
+        }
+    win_rate = round(float(numeric_win_rate) * 100, 1)
     return {
         "available": True,
         "source": "decision_outcomes",
         "execution_policy_version": DEFAULT_EXECUTION_POLICY.version,
-        "samples": samples,
+        **evidence,
         "win_rate_t5": win_rate,
-        "avg_net_ret_5": buy.get("avg_net_ret_5"),
+        "avg_net_ret_5": buy.get(
+            "numeric_return_avg_net_ret_5", buy.get("avg_net_ret_5")
+        ),
         "status": (
             "failing" if win_rate < 40 else "weak" if win_rate < 50 else "healthy"
         ),
@@ -106,10 +148,18 @@ def _market_heat(sectors: dict) -> dict:
 
 def _conclusion(heat: dict, fitness: dict) -> tuple[str, str]:
     if fitness.get("available") and fitness.get("status") == "failing":
+        coverage = fitness.get("return_coverage_ratio")
+        coverage_text = (
+            f"，数值收益覆盖率为 {float(coverage) * 100:.1f}%"
+            if coverage is not None
+            else ""
+        )
         return (
             "caution",
-            f"策略近期失效：统一成交口径下最近 {fitness['samples']} 个买入样本，"
-            f"T+5 胜率为 {fitness['win_rate_t5']}%。当前应轻仓或观望。",
+            f"策略近期偏弱：统一成交口径下 "
+            f"{fitness['terminal_samples']} 个已终局买入结果中，"
+            f"{fitness['numeric_return_samples']} 个可评估数值收益{coverage_text}；"
+            f"该子集 T+5 胜率为 {fitness['win_rate_t5']}%。当前应轻仓或观望。",
         )
     if heat["level"] == "hot":
         return (
@@ -127,6 +177,29 @@ def _conclusion(heat: dict, fitness: dict) -> tuple[str, str]:
             f"市场广度正常，但策略 T+5 胜率仅 {fitness['win_rate_t5']}%，需控制仓位。",
         )
     if not fitness.get("available"):
+        if fitness.get("terminal_samples"):
+            coverage = fitness.get("return_coverage_ratio")
+            coverage_text = (
+                f"，覆盖率 {float(coverage) * 100:.1f}%" if coverage is not None else ""
+            )
+            failures = (
+                int(fitness.get("entry_failure_count") or 0)
+                + int(fitness.get("exit_failure_count") or 0)
+                + int(fitness.get("universe_removal_count") or 0)
+            )
+            tracking = fitness.get("tracking_completion_ratio")
+            tracking_text = (
+                f"，跟踪完成率 {float(tracking) * 100:.1f}%"
+                if tracking is not None
+                else ""
+            )
+            return (
+                "neutral",
+                f"canonical 实盘已有 {fitness['terminal_samples']} 个终局结果，"
+                f"其中 {fitness['numeric_return_samples']} 个具备数值收益"
+                f"{coverage_text}{tracking_text}，另有 {failures} 个成交或移除失败；"
+                "证据覆盖不足，暂不输出策略健康结论。",
+            )
         return (
             "neutral",
             "市场广度正常；canonical 实盘样本尚不足，暂不把历史胜率当作放行证据。",

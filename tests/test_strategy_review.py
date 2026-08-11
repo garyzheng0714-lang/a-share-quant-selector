@@ -13,6 +13,7 @@ from utils.strategy_review import (
     iter_strategy_hits,
     list_strategy_catalog,
     record_strategy_hits,
+    seed_strategy_from_cache,
     summarize_picks,
 )
 
@@ -63,6 +64,7 @@ def test_ledger_survives_cache_delete(tmp_path: Path, monkeypatch):
         ),
         encoding="utf-8",
     )
+    assert seed_strategy_from_cache("cloud_stair") == 1
     picks = iter_strategy_hits("cloud_stair")
     assert len(picks) == 1
     for path in cache_dir.glob("*.json"):
@@ -95,6 +97,7 @@ def test_enrich_includes_path_and_windows():
         },
         strategy="cloud_stair",
         strategy_name="云阶",
+        trading_sessions=daily["date"].tolist(),
     )
     assert pick["next_day_chg"] == 5.0
     assert pick["entry_gap_pct"] is not None

@@ -11,9 +11,13 @@ import hashlib
 import json
 import logging
 import sys
+from collections import OrderedDict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
@@ -32,6 +36,7 @@ from utils.execution_model import (  # noqa: E402
     DEFAULT_EXECUTION_POLICY,
     evaluate_trade,
     execution_policy_manifest,
+    load_exchange_sessions,
 )
 from utils.market_filter import is_main_board, main_board_only  # noqa: E402
 from utils.policy_engine import evaluate_policy, policy_manifest  # noqa: E402
@@ -41,7 +46,10 @@ from utils.probability_model import (  # noqa: E402
     population_stability_index,
     probability_metrics,
 )
-from utils.reference_snapshots import load_reference_snapshots  # noqa: E402
+from utils.reference_snapshots import (  # noqa: E402
+    load_reference_snapshots,
+    validated_snapshot_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +82,12 @@ STOCK_FEATURES = [
     "stock_position20",
     "stock_amplitude",
 ]
-DATASET_SCHEMA_VERSION = 6
+DATASET_SCHEMA_VERSION = 8
 MIN_REFERENCE_COVERAGE = 0.60
+MIN_DAILY_SNAPSHOT_COVERAGE = 1.0
 BOOTSTRAP_ITERATIONS = 10_000
 FAMILYWISE_POSITIVE_PROBABILITY = 0.9875
+QUALITY_TARGET_VERSION = "after-cost-open-open-vs-cash-v1"
 REQUIRED_DATASET_COLUMNS = (
     {
         "dataset_schema_version",
@@ -88,6 +98,9 @@ REQUIRED_DATASET_COLUMNS = (
         "reference_snapshot_date",
         "reference_snapshot_id",
         "feature_snapshot_id",
+        "label_snapshot_id",
+        "label_snapshot_date",
+        "quality_target_version",
         "universe_coverage",
         "weekly_passed",
         "execution_status",
@@ -110,7 +123,62 @@ REQUIRED_DATASET_COLUMNS = (
 )
 MIN_REFERENCE_MONTHS = 21
 FINAL_CALIBRATION_MONTHS = 3
+DEFAULT_MIN_TRAIN_MONTHS = 12
+DEFAULT_VALIDATION_MONTHS = 3
+MIN_WALK_FORWARD_TRAIN_ROWS = 80
+MIN_WALK_FORWARD_VALIDATION_ROWS = 20
+MIN_WALK_FORWARD_TEST_ROWS = 3
+MIN_MARKET_TRAINING_UNITS = 40
+MIN_SECTOR_TRAINING_UNITS = 40
+MIN_FINAL_TRAIN_ROWS = 80
+MIN_FINAL_CALIBRATION_ROWS = 20
 MODEL_KEYS = ("market", "sector", "entry_risk", "exit_risk", "quality")
+PIT_FEATURE_LEDGER_SCHEMA_VERSION = "super-b1-pit-feature-ledger-v2"
+PIT_FEATURE_SHARD_SEAL_SCHEMA_VERSION = "super-b1-pit-feature-shard-seal-v1"
+PIT_SNAPSHOT_COHORT_VERSION = "latest-contiguous-full-month-suffix-v1"
+
+
+@lru_cache(maxsize=1)
+def pit_feature_ledger_version() -> str:
+    """绑定所有会改变 PIT 特征或扫描宇宙的源码、配置与依赖。"""
+    project_root = Path(__file__).resolve().parents[1]
+    paths = [
+        Path(__file__).resolve(),
+        project_root / "utils" / "technical.py",
+        project_root / "utils" / "market_filter.py",
+        project_root / "utils" / "csv_manager.py",
+        project_root / "config" / "strategy_params.yaml",
+        project_root / "requirements.lock",
+        *sorted((project_root / "strategy").rglob("*.py")),
+    ]
+    digest = hashlib.sha256(PIT_FEATURE_LEDGER_SCHEMA_VERSION.encode())
+    for path in sorted(set(paths)):
+        digest.update(path.relative_to(project_root).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return f"{PIT_FEATURE_LEDGER_SCHEMA_VERSION}-{digest.hexdigest()[:20]}"
+
+
+PIT_FEATURE_COLUMNS = [
+    "dataset_schema_version",
+    "date",
+    "code",
+    "name",
+    "industry",
+    "reference_snapshot_date",
+    "reference_snapshot_id",
+    "feature_snapshot_id",
+    "feature_ledger_version",
+    "universe_coverage",
+    "weekly_passed",
+    "weekly_aligned",
+    "weekly_rising_count",
+    "b1_signals",
+    *MARKET_FEATURES,
+    *SECTOR_FEATURES,
+    *STOCK_FEATURES,
+]
 
 
 def _read_stock(cm: CSVManager, code: str, industry: str) -> pd.DataFrame | None:
@@ -254,142 +322,857 @@ def _stock_features(ctx: FactorContext) -> dict:
     }
 
 
-def _signals_one(args) -> list[dict]:
-    code, name, frame, market, sector, snapshots, feature_snapshot_id = args
+def _features_one(args) -> list[dict]:
+    """只固化当日可见特征，不在这一步读取未来成交结果。"""
+    code, name, frame, market, sector, snapshot, feature_snapshot_id, date = args
     from strategy.super_b1 import compute_super_b1
     from utils.technical import weekly_four_ma_bullish
 
-    rows = []
-    cap_by_date = {}
-    security_states_by_date = {}
-    for date, snapshot in snapshots.items():
-        if code not in (
-            snapshot.get("_universe_set") or snapshot.get("universe") or []
-        ):
-            continue
-        cap = (snapshot.get("market_caps") or {}).get(code)
-        if isinstance(cap, (int, float)) and cap > 0:
-            cap_by_date[date] = float(cap)
-        state = (snapshot.get("security_states") or {}).get(code)
-        if isinstance(state, dict):
-            security_states_by_date[date] = state
-    hits = compute_super_b1(
-        frame,
-        code,
-        return_history=True,
-        market_cap_by_date=cap_by_date,
+    cap = (snapshot.get("market_caps") or {}).get(code)
+    if not isinstance(cap, (int, float)) or cap <= 0:
+        return []
+    sub = frame[frame["date"] <= date].copy()
+    if sub.empty or str(sub.iloc[-1]["date"])[:10] != date:
+        return []
+    hit = compute_super_b1(sub, code, market_cap=float(cap))
+    if not isinstance(hit, dict) or not hit.get("signals") or hit.get("date") != date:
+        return []
+    industry = (snapshot.get("industries") or {}).get(code) or "未知"
+    if date not in market.index or (date, industry) not in sector.index:
+        return []
+    ctx = FactorContext(sub)
+    weekly_passed, weekly_detail = weekly_four_ma_bullish(sub)
+    m = market.loc[date]
+    s = sector.loc[(date, industry)]
+    record = {
+        "date": date,
+        "code": code,
+        "name": name,
+        "industry": industry,
+        "dataset_schema_version": DATASET_SCHEMA_VERSION,
+        "reference_snapshot_date": date,
+        "reference_snapshot_id": snapshot.get("market_snapshot_id"),
+        "feature_snapshot_id": feature_snapshot_id,
+        "feature_ledger_version": pit_feature_ledger_version(),
+        "universe_coverage": float(market.loc[date, "market_universe_coverage"]),
+        "weekly_passed": int(weekly_passed),
+        "weekly_aligned": int(bool(weekly_detail.get("aligned"))),
+        "weekly_rising_count": int(weekly_detail.get("rising_count", 0)),
+        "b1_signals": "|".join(hit.get("signals") or []),
+    }
+    record.update({key: float(m.get(key, np.nan)) for key in MARKET_FEATURES})
+    record.update({key: float(s.get(key, np.nan)) for key in SECTOR_FEATURES})
+    record.update(_stock_features(ctx))
+    return [record]
+
+
+def _feature_shard_path(
+    data_root: Path, date: str, snapshot_id: str, *, limit: int = 0
+) -> Path:
+    ledger_root = pit_feature_ledger_version()
+    if limit:
+        ledger_root = f"{ledger_root}-debug-limit-{int(limit)}"
+    return (
+        data_root
+        / "research_artifacts"
+        / "model_evolution"
+        / "pit_feature_ledger"
+        / ledger_root
+        / date
+        / snapshot_id
+        / "features.csv"
     )
-    date_to_index = {date: i for i, date in enumerate(frame["date"])}
-    for hit in hits if isinstance(hits, list) else []:
-        date = hit["date"]
-        i = date_to_index.get(date)
-        if i is None or i >= len(frame) - 1:
-            continue
-        snapshot = snapshots.get(date)
-        if not snapshot:
-            continue
-        sub = frame.iloc[: i + 1]
-        ctx = FactorContext(sub)
-        industry = (snapshot.get("industries") or {}).get(code) or "未知"
-        if date not in market.index or (date, industry) not in sector.index:
-            continue
-        execution = evaluate_trade(
-            frame,
-            date,
-            hold_days=5,
-            code=code,
-            security_states=security_states_by_date,
-            require_pit_status=True,
+
+
+def _feature_shard_seal_path(path: Path) -> Path:
+    return path.parent / "manifest.json"
+
+
+def _read_feature_shard_content(
+    path: Path, date: str, snapshot_id: str
+) -> pd.DataFrame:
+    try:
+        frame = pd.read_csv(path, dtype={"code": str})
+    except (OSError, pd.errors.EmptyDataError) as exc:
+        raise ValueError(f"PIT 特征分片不可读: {path}") from exc
+    missing = set(PIT_FEATURE_COLUMNS) - set(frame.columns)
+    if missing:
+        raise ValueError(f"PIT 特征分片缺列: {sorted(missing)}")
+    if list(frame.columns) != PIT_FEATURE_COLUMNS:
+        raise ValueError(f"PIT 特征分片 schema 冲突: {path}")
+    if frame.empty:
+        return frame[PIT_FEATURE_COLUMNS]
+    if not (
+        (frame["date"].astype(str).str[:10] == date).all()
+        and (frame["reference_snapshot_date"].astype(str).str[:10] == date).all()
+        and (
+            frame["reference_snapshot_id"].astype(str).str.lower() == snapshot_id
+        ).all()
+        and (frame["feature_snapshot_id"].astype(str).str.lower() == snapshot_id).all()
+        and (
+            frame["feature_ledger_version"].astype(str) == pit_feature_ledger_version()
+        ).all()
+        and (
+            pd.to_numeric(frame["dataset_schema_version"], errors="coerce")
+            == DATASET_SCHEMA_VERSION
+        ).all()
+    ):
+        raise ValueError(f"PIT 特征分片身份冲突: {path}")
+    return frame[PIT_FEATURE_COLUMNS]
+
+
+def _canonical_feature_shard_bytes(frame: pd.DataFrame) -> bytes:
+    canonical = frame[PIT_FEATURE_COLUMNS].copy()
+    if not canonical.empty:
+        canonical = canonical.sort_values(["date", "code"], kind="stable").reset_index(
+            drop=True
         )
-        if not execution.get("available"):
-            continue
-        label_end_date = execution.get("label_end_date")
-        if not label_end_date:
-            continue
-        weekly_passed, weekly_detail = weekly_four_ma_bullish(sub)
-        future_date = execution.get("exit_date")
-        net_return = execution.get("net_return")
-        return_mature = bool(
-            execution.get("return_label_mature")
-            and net_return is not None
-            and future_date in market.index
+    return canonical.to_csv(
+        index=False,
+        float_format="%.17g",
+        lineterminator="\n",
+        na_rep="",
+    ).encode("utf-8")
+
+
+def _feature_shard_seal(frame: pd.DataFrame, date: str, snapshot_id: str) -> dict:
+    canonical = _canonical_feature_shard_bytes(frame)
+    sorted_codes = "\n".join(sorted(frame["code"].astype(str).tolist())).encode("utf-8")
+    return {
+        "schema_version": PIT_FEATURE_SHARD_SEAL_SCHEMA_VERSION,
+        "ledger_schema_version": PIT_FEATURE_LEDGER_SCHEMA_VERSION,
+        "dataset_schema_version": DATASET_SCHEMA_VERSION,
+        "feature_ledger_version": pit_feature_ledger_version(),
+        "date": date,
+        "reference_snapshot_id": snapshot_id,
+        "feature_snapshot_id": snapshot_id,
+        "row_count": int(len(frame)),
+        "sorted_codes_sha256": hashlib.sha256(sorted_codes).hexdigest(),
+        "canonical_content_sha256": hashlib.sha256(canonical).hexdigest(),
+    }
+
+
+def _read_feature_shard(path: Path, date: str, snapshot_id: str) -> pd.DataFrame:
+    """读取并验证不可变 PIT 特征分片。
+
+    身份字段只能证明“这是哪天的分片”；seal 还要证明行数、
+    股票集合与每个特征值都未在落盘后变化。零信号日也必须有 seal。
+    """
+    frame = _read_feature_shard_content(path, date, snapshot_id)
+    seal_path = _feature_shard_seal_path(path)
+    try:
+        seal = json.loads(seal_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"PIT 特征分片缺少可验证 seal: {path}") from exc
+    expected = _feature_shard_seal(frame, date, snapshot_id)
+    mismatched = sorted(
+        key for key, value in expected.items() if seal.get(key) != value
+    )
+    if mismatched:
+        raise ValueError(f"PIT 特征分片 seal 冲突: {path}; fields={mismatched}")
+    return frame
+
+
+def _commit_feature_shard(
+    frame: pd.DataFrame,
+    target: Path,
+    date: str,
+    snapshot_id: str,
+    guard: Callable[[], None],
+) -> tuple[pd.DataFrame, str]:
+    """在隐藏 generation 目录生成 CSV+seal，再一次原子发布目录。"""
+    generation_dir = target.parent
+    generation_parent = generation_dir.parent
+    generation_parent.mkdir(parents=True, exist_ok=True)
+    seal_path = _feature_shard_seal_path(target)
+    temporary_dir = generation_parent / (
+        f".{generation_dir.name}.{uuid4().hex}.generation"
+    )
+    temporary_dir.mkdir()
+    temporary = temporary_dir / target.name
+    temporary_seal = temporary_dir / seal_path.name
+    try:
+        frame.to_csv(temporary, index=False)
+        staged = _read_feature_shard_content(temporary, date, snapshot_id)
+        staged_seal = _feature_shard_seal(staged, date, snapshot_id)
+        temporary_seal.write_text(
+            json.dumps(staged_seal, ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
-        market_forward = (
-            (
-                market.loc[future_date, "market_index"]
-                / market.loc[date, "market_index"]
-                - 1
+        guard()
+        target_exists = target.exists()
+        seal_exists = seal_path.exists()
+        if target_exists and seal_exists:
+            existing = _read_feature_shard(target, date, snapshot_id)
+            if _feature_shard_seal(existing, date, snapshot_id) != staged_seal:
+                raise ValueError(f"PIT 特征分片并发冲突: {target}")
+            return existing, "existing"
+        if target_exists:
+            partial_frame = _read_feature_shard_content(target, date, snapshot_id)
+            if _feature_shard_seal(partial_frame, date, snapshot_id) != staged_seal:
+                raise ValueError(f"PIT 特征分片单边内容冲突: {target}")
+        elif seal_exists:
+            try:
+                partial_seal = json.loads(seal_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(f"PIT 特征分片单边 seal 不可验证: {target}") from exc
+            if partial_seal != staged_seal:
+                raise ValueError(f"PIT 特征分片单边 seal 冲突: {target}")
+        elif generation_dir.exists():
+            raise ValueError(f"PIT 特征 generation 为空: {target}")
+        if generation_dir.exists():
+            # 兼容修复旧实现在 CSV/seal 两步提交间掉电留下的单边产物。
+            # 完整 pair 已在上面校验；只有不完整 generation 才允许隔离重建。
+            partial_dir = generation_parent / (
+                f".{generation_dir.name}.{uuid4().hex}.partial"
             )
-            * 100
-            if return_mature
-            else np.nan
+            guard()
+            generation_dir.replace(partial_dir)
+        guard()
+        temporary_dir.replace(generation_dir)
+        return _read_feature_shard(target, date, snapshot_id), "materialized"
+    finally:
+        temporary.unlink(missing_ok=True)
+        temporary_seal.unlink(missing_ok=True)
+        try:
+            temporary_dir.rmdir()
+        except OSError:
+            pass
+
+
+def _snapshot_manager(
+    data_root: Path,
+    snapshot_id: str,
+    *,
+    reference: dict | None = None,
+) -> CSVManager | None:
+    from utils.market_snapshot import load_market_snapshot
+
+    payload = validated_snapshot_payload(reference, data_root, snapshot_id)
+    if payload is None:
+        loaded = load_market_snapshot(data_root, snapshot_id, verify_files=True)
+        if not loaded.get("available"):
+            return None
+        payload = Path(loaded["payload_dir"])
+    manager = CSVManager(data_root, resolve_snapshot=False, writable=False)
+    manager.data_dir = payload
+    manager.snapshot_id = snapshot_id
+    manager.read_only = True
+    return manager
+
+
+def _materialize_feature_shard(
+    data_root: Path,
+    date: str,
+    snapshot: dict,
+    *,
+    limit: int = 0,
+    commit_guard: Callable[[], None] | None = None,
+) -> tuple[pd.DataFrame | None, str]:
+    guard = commit_guard or (lambda: None)
+    snapshot_id = str(snapshot.get("market_snapshot_id") or "").lower()
+    if not snapshot_id or len(snapshot_id) != 64:
+        return None, "invalid_snapshot_id"
+    target = _feature_shard_path(data_root, date, snapshot_id, limit=limit)
+    if target.exists() and _feature_shard_seal_path(target).exists():
+        return _read_feature_shard(target, date, snapshot_id), "existing"
+
+    manager = _snapshot_manager(data_root, snapshot_id, reference=snapshot)
+    if manager is None:
+        return None, "market_snapshot_unavailable"
+    from utils.market_snapshot import read_snapshot_metadata
+
+    names, names_snapshot_id = read_snapshot_metadata(
+        "stock_names.json", data_root, snapshot_id=snapshot_id
+    )
+    if not isinstance(names, dict) or names_snapshot_id != snapshot_id:
+        return None, "snapshot_names_unavailable"
+    industries = snapshot.get("industries") or {}
+    universe = snapshot.get("_universe_set") or set(snapshot.get("universe") or [])
+    codes = [code for code in manager.list_all_stocks() if code in universe]
+    if main_board_only():
+        codes = [code for code in codes if is_main_board(code)]
+    if limit:
+        codes = codes[:limit]
+    market, sector, stock_frames = build_panels(
+        manager,
+        codes,
+        industries,
+        reference_snapshots=None,
+    )
+    if market.empty or sector.empty:
+        return None, "snapshot_panel_unavailable"
+    tasks = [
+        (
+            code,
+            names.get(code, code),
+            frame,
+            market,
+            sector,
+            snapshot,
+            snapshot_id,
+            date,
         )
-        excess = float(net_return - market_forward) if return_mature else np.nan
-        entry_feasible = bool(execution.get("entry_feasible"))
-        exit_feasible = execution.get("exit_feasible")
+        for code, frame in stock_frames.items()
+    ]
+    rows: list[dict] = []
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(tasks)))) as pool:
+        for result in pool.map(_features_one, tasks):
+            rows.extend(result)
+    shard = pd.DataFrame(rows, columns=PIT_FEATURE_COLUMNS)
+    if not shard.empty:
+        shard = shard.sort_values(["date", "code"]).reset_index(drop=True)
+    guard()
+    return _commit_feature_shard(shard, target, date, snapshot_id, guard)
+
+
+def latest_complete_snapshot_cohort(
+    snapshots: dict[str, dict],
+    trading_sessions: list[str],
+) -> tuple[dict[str, dict], dict]:
+    """选取最新连续快照后缀，并从第一个完整自然交易月开始。
+
+    缺失日之前的快照仍留在不可变目录中供审计，但不参与当前训练。
+    如果连续后缀从月中开始，该月剩余会话也不参与训练；
+    只有从交易所日历中该月第一个会话就有快照的自然月才能成为起点。
+    """
+    normalized = {str(date)[:10]: snapshot for date, snapshot in snapshots.items()}
+    sessions = sorted(set(str(date)[:10] for date in trading_sessions))
+    session_indexes = {date: index for index, date in enumerate(sessions)}
+    observed_sessions = sorted(
+        (date for date in normalized if date in session_indexes),
+        key=session_indexes.__getitem__,
+    )
+    unexpected = sorted(set(normalized) - set(session_indexes))
+
+    def evidence(
+        *,
+        reason: str,
+        raw_suffix: list[str] | None = None,
+        cohort_dates: list[str] | None = None,
+        last_gap_session: str | None = None,
+    ) -> dict:
+        raw_suffix = raw_suffix or []
+        cohort_dates = cohort_dates or []
+        cohort_set = set(cohort_dates)
+        excluded_dates = sorted(set(normalized) - cohort_set)
+        return {
+            "version": PIT_SNAPSHOT_COHORT_VERSION,
+            "complete": bool(cohort_dates),
+            "reason": reason,
+            "catalog_snapshot_count": len(normalized),
+            "eligible_session_snapshot_count": len(observed_sessions),
+            "cohort_snapshot_count": len(cohort_dates),
+            "cohort_months": len({date[:7] for date in cohort_dates}),
+            "cohort_first_session": cohort_dates[0] if cohort_dates else None,
+            "cohort_last_session": cohort_dates[-1] if cohort_dates else None,
+            "raw_suffix_first_session": raw_suffix[0] if raw_suffix else None,
+            "raw_suffix_last_session": raw_suffix[-1] if raw_suffix else None,
+            "raw_suffix_session_count": len(raw_suffix),
+            "trimmed_partial_month_sessions": len(raw_suffix) - len(cohort_dates),
+            "last_gap_session": last_gap_session,
+            "excluded_catalog_snapshot_count": len(excluded_dates),
+            "excluded_catalog_first_date": (
+                excluded_dates[0] if excluded_dates else None
+            ),
+            "excluded_catalog_last_date": excluded_dates[-1]
+            if excluded_dates
+            else None,
+            "unexpected_snapshot_dates": unexpected,
+        }
+
+    if not observed_sessions or not sessions:
+        return {}, evidence(reason="snapshot_or_calendar_unavailable")
+
+    latest_index = session_indexes[observed_sessions[-1]]
+    raw_start_index = latest_index
+    while raw_start_index > 0 and sessions[raw_start_index - 1] in normalized:
+        raw_start_index -= 1
+    raw_suffix = sessions[raw_start_index : latest_index + 1]
+    last_gap_session = sessions[raw_start_index - 1] if raw_start_index > 0 else None
+
+    first_session_by_month: dict[str, str] = {}
+    for session in sessions:
+        first_session_by_month.setdefault(session[:7], session)
+    cohort_start = next(
+        (
+            session
+            for session in raw_suffix
+            if first_session_by_month.get(session[:7]) == session
+        ),
+        None,
+    )
+    if cohort_start is None:
+        return {}, evidence(
+            reason="complete_natural_month_not_started",
+            raw_suffix=raw_suffix,
+            last_gap_session=last_gap_session,
+        )
+
+    cohort_start_index = session_indexes[cohort_start]
+    cohort_dates = sessions[cohort_start_index : latest_index + 1]
+    cohort = {date: normalized[date] for date in cohort_dates}
+    return cohort, evidence(
+        reason="latest_contiguous_suffix_selected",
+        raw_suffix=raw_suffix,
+        cohort_dates=cohort_dates,
+        last_gap_session=last_gap_session,
+    )
+
+
+def materialize_pit_feature_ledger(
+    cm: CSVManager,
+    *,
+    snapshots: dict[str, dict] | None = None,
+    limit: int = 0,
+    commit_guard: Callable[[], None] | None = None,
+) -> dict:
+    """从每个不可变日快照中只计算该日特征，形成可追加的 forward ledger。"""
+    data_root = Path(getattr(cm, "base_data_dir", cm.data_dir))
+    catalog = (
+        snapshots if snapshots is not None else load_reference_snapshots(data_root)
+    )
+    snapshots, snapshot_cohort = latest_complete_snapshot_cohort(
+        catalog,
+        load_exchange_sessions(cm.data_dir),
+    )
+    summary: dict = {
+        "schema_version": PIT_FEATURE_LEDGER_SCHEMA_VERSION,
+        "shard_seal_schema_version": PIT_FEATURE_SHARD_SEAL_SCHEMA_VERSION,
+        "version": pit_feature_ledger_version(),
+        "snapshots": len(snapshots),
+        "snapshot_cohort": snapshot_cohort,
+        "materialized": 0,
+        "existing": 0,
+        "failed": [],
+    }
+    for date, snapshot in sorted(snapshots.items()):
+        try:
+            _frame, status = _materialize_feature_shard(
+                data_root,
+                str(date)[:10],
+                snapshot,
+                limit=limit,
+                commit_guard=commit_guard,
+            )
+        except Exception as exc:
+            logger.warning("PIT 特征分片失败 %s: %s", date, exc)
+            summary["failed"].append({"date": date, "reason": str(exc)})
+            continue
+        if status in {"materialized", "existing"}:
+            summary[status] += 1
+        else:
+            summary["failed"].append({"date": date, "reason": status})
+    summary["complete"] = not summary["failed"]
+    return summary
+
+
+def _hydrate_outcomes(
+    features: pd.DataFrame,
+    cm: CSVManager,
+    _industry_map: dict,
+    snapshots: dict[str, dict],
+) -> pd.DataFrame:
+    if features.empty:
+        return pd.DataFrame()
+    data_root = Path(getattr(cm, "base_data_dir", cm.data_dir))
+    ordered_snapshots = sorted(
+        (str(date)[:10], snapshot) for date, snapshot in snapshots.items()
+    )
+    manager_cache: dict[str, CSVManager] = {}
+    frame_cache: OrderedDict[tuple[str, str], pd.DataFrame] = OrderedDict()
+    session_cache: dict[str, list[str]] = {}
+    state_cache: dict[str, dict[str, dict]] = {}
+    references_by_id = {
+        str(snapshot.get("market_snapshot_id") or "").lower(): snapshot
+        for _date, snapshot in ordered_snapshots
+    }
+
+    def unavailable(reason: str, **details) -> pd.DataFrame:
+        result = pd.DataFrame()
+        result.attrs.update({"reason": reason, **details})
+        return result
+
+    def snapshot_manager(snapshot_id: str) -> CSVManager | None:
+        if snapshot_id not in manager_cache:
+            manager = _snapshot_manager(
+                data_root,
+                snapshot_id,
+                reference=references_by_id.get(snapshot_id),
+            )
+            if manager is not None:
+                manager_cache[snapshot_id] = manager
+        return manager_cache.get(snapshot_id)
+
+    def security_states(code: str) -> dict[str, dict]:
+        if code not in state_cache:
+            state_cache[code] = {
+                snapshot_date: state
+                for snapshot_date, snapshot in ordered_snapshots
+                if isinstance(
+                    state := (snapshot.get("security_states") or {}).get(code), dict
+                )
+            }
+        return state_cache[code]
+
+    def stock_frame(manager: CSVManager, snapshot_id: str, code: str) -> pd.DataFrame:
+        cache_key = (snapshot_id, code)
+        cached = frame_cache.get(cache_key)
+        if cached is not None:
+            frame_cache.move_to_end(cache_key)
+            return cached
+        frame = manager.read_stock(code)
+        frame_cache[cache_key] = frame
+        if len(frame_cache) > 256:
+            frame_cache.popitem(last=False)
+        return frame
+
+    def finite_number(value: object) -> float | None:
+        if value is None:
+            return None
+        try:
+            number = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        return number if np.isfinite(number) else None
+
+    def is_terminal(execution: dict) -> bool:
+        if (
+            execution.get("entry_label_mature")
+            and execution.get("entry_feasible") is False
+        ):
+            return True
+        if execution.get("return_label_mature"):
+            if finite_number(execution.get("net_return")) is not None:
+                return True
+        return bool(
+            execution.get("entry_feasible") is True
+            and execution.get("exit_label_mature")
+            and execution.get("exit_feasible") is False
+        )
+
+    def removal_execution(previous: dict | None, removal_date: str) -> dict:
+        entry_mature = bool(previous and previous.get("entry_label_mature") is True)
+        entry_feasible = (
+            previous.get("entry_feasible") if entry_mature and previous else None
+        )
+        entered = entry_feasible is True
+        entry_known = entry_feasible is not None
+        return {
+            **(previous or {}),
+            "available": True,
+            "reason": (
+                "universe_removed_before_label"
+                if entry_known
+                else "universe_removed_with_entry_unknown"
+            ),
+            "execution_status": (
+                "universe_removed_before_label"
+                if entry_known
+                else "universe_removed_with_entry_unknown"
+            ),
+            "execution_policy_version": DEFAULT_EXECUTION_POLICY.version,
+            "entry_label_mature": entry_mature,
+            "entry_feasible": entry_feasible,
+            "exit_label_mature": entered,
+            "exit_feasible": False if entered else None,
+            "return_label_mature": False,
+            "net_return": None,
+            "label_end_date": removal_date,
+        }
+
+    def training_row(
+        item: dict,
+        code: str,
+        execution: dict,
+        label_snapshot_id: str,
+        label_snapshot_date: str,
+    ) -> dict:
+        net_return = finite_number(execution.get("net_return"))
+        return_mature = bool(
+            execution.get("return_label_mature") and net_return is not None
+        )
         entry_mature = bool(execution.get("entry_label_mature"))
+        entry_feasible_raw = execution.get("entry_feasible")
+        entry_feasible = entry_feasible_raw is True
         exit_mature = bool(execution.get("exit_label_mature"))
-        y_entry_risk = int(not entry_feasible) if entry_mature else np.nan
-        y_exit_risk = (
-            int(exit_feasible is False) if entry_feasible and exit_mature else np.nan
-        )
-        y_risk: int | float
-        if entry_mature and not entry_feasible:
-            y_risk = 1
+        exit_feasible = execution.get("exit_feasible")
+        if entry_mature and entry_feasible_raw is False:
+            y_risk: int | float = 1
         elif entry_feasible and exit_mature and exit_feasible is False:
             y_risk = 1
         elif return_mature:
             y_risk = int(
                 execution.get("one_word_limit_down_next_open", False)
                 or (execution.get("next_open_gap_pct") or 0) <= -7
-                or float(net_return) <= -10
+                or (net_return is not None and net_return <= -10)
             )
         else:
             y_risk = np.nan
-        m = market.loc[date]
-        s = sector.loc[(date, industry)]
-        record = {
-            "date": date,
+        # 质量层使用与个股完全一致的扣费后 open-open 收益，相对现金零收益。
+        # 这避免把信号日/退出日收盘后才知道的指数走势混入标签。
+        excess = net_return if return_mature and net_return is not None else np.nan
+        return {
+            **item,
             "code": code,
-            "name": name,
-            "industry": industry,
-            "dataset_schema_version": DATASET_SCHEMA_VERSION,
-            "label_end_date": label_end_date,
-            "reference_snapshot_date": date,
-            "reference_snapshot_id": snapshot.get("market_snapshot_id"),
-            "feature_snapshot_id": feature_snapshot_id,
-            "universe_coverage": float(market.loc[date, "market_universe_coverage"]),
-            "weekly_passed": int(weekly_passed),
-            "weekly_aligned": int(bool(weekly_detail.get("aligned"))),
-            "weekly_rising_count": int(weekly_detail.get("rising_count", 0)),
+            "label_end_date": execution.get("label_end_date") or label_snapshot_date,
+            "label_snapshot_id": label_snapshot_id,
+            "label_snapshot_date": label_snapshot_date,
+            "quality_target_version": QUALITY_TARGET_VERSION,
             "execution_status": execution.get("execution_status")
             or execution.get("reason"),
-            "execution_policy_version": execution.get("execution_policy_version"),
+            "execution_policy_version": execution.get("execution_policy_version")
+            or DEFAULT_EXECUTION_POLICY.version,
             "entry_label_mature": int(entry_mature),
             "exit_label_mature": int(exit_mature),
             "return_label_mature": int(return_mature),
-            "entry_feasible": int(entry_feasible),
+            "entry_feasible": (
+                int(entry_feasible) if entry_feasible_raw is not None else np.nan
+            ),
             "exit_feasible": (
                 int(bool(exit_feasible)) if exit_feasible is not None else np.nan
             ),
-            "b1_signals": "|".join(hit.get("signals") or []),
-            "net_return_5": float(net_return) if return_mature else np.nan,
-            "market_forward_5": float(market_forward) if return_mature else np.nan,
+            "net_return_5": net_return if return_mature else np.nan,
+            "market_forward_5": 0.0 if return_mature else np.nan,
             "excess_5": excess,
             "y_quality": int(excess > 0) if return_mature else np.nan,
-            "y_entry_risk": y_entry_risk,
-            "y_exit_risk": y_exit_risk,
+            "y_entry_risk": (
+                int(entry_feasible_raw is False) if entry_mature else np.nan
+            ),
+            "y_exit_risk": (
+                int(exit_feasible is False)
+                if entry_feasible and exit_mature
+                else np.nan
+            ),
             "y_risk": y_risk,
         }
-        record.update({key: float(m.get(key, np.nan)) for key in MARKET_FEATURES})
-        record.update({key: float(s.get(key, np.nan)) for key in SECTOR_FEATURES})
-        record.update(_stock_features(ctx))
-        rows.append(record)
-    return rows
+
+    rows: list[dict] = []
+    unresolved_mature: list[dict] = []
+    global_sessions = load_exchange_sessions(cm.data_dir)
+    snapshot_by_date = dict(ordered_snapshots)
+    for item in features.to_dict("records"):
+        date = str(item["date"])[:10]
+        code = str(item["code"]).zfill(6)
+        signal_snapshot = snapshots.get(date)
+        expected_feature_snapshot = str(
+            (signal_snapshot or {}).get("market_snapshot_id") or ""
+        ).lower()
+        if (
+            signal_snapshot is None
+            or code not in set(signal_snapshot.get("universe") or [])
+            or str(item.get("feature_snapshot_id") or "").lower()
+            != expected_feature_snapshot
+        ):
+            return unavailable(
+                "pit_feature_identity_invalid", signal_date=date, code=code
+            )
+
+        latest_execution: dict | None = None
+        label_snapshot_id = expected_feature_snapshot
+        label_snapshot_date = date
+        latest_sessions: list[str] = []
+        try:
+            signal_index = global_sessions.index(date)
+        except ValueError:
+            unresolved_mature.append(
+                {"date": date, "code": code, "reason": "signal_session_missing"}
+            )
+            continue
+        terminal_session_index = (
+            signal_index
+            + 1
+            + DEFAULT_EXECUTION_POLICY.holding_sessions
+            + DEFAULT_EXECUTION_POLICY.max_exit_delay_sessions
+        )
+        terminal_date = (
+            global_sessions[terminal_session_index]
+            if terminal_session_index < len(global_sessions)
+            else None
+        )
+        last_observed_date = ordered_snapshots[-1][0]
+        evidence_dates = [
+            snapshot_date
+            for snapshot_date, _snapshot in ordered_snapshots
+            if date <= snapshot_date <= last_observed_date
+        ]
+        removal_date = next(
+            (
+                snapshot_date
+                for snapshot_date in evidence_dates
+                if (terminal_date is None or snapshot_date <= terminal_date)
+                and code
+                not in set(snapshot_by_date[snapshot_date].get("universe") or [])
+            ),
+            None,
+        )
+        entry_session_index = signal_index + 1
+        target_session_index = (
+            entry_session_index + DEFAULT_EXECUTION_POLICY.holding_sessions
+        )
+        candidate_indexes = [entry_session_index]
+        candidate_indexes.extend(
+            range(
+                target_session_index,
+                min(terminal_session_index, len(global_sessions) - 1) + 1,
+            )
+        )
+        evaluation_dates = {
+            global_sessions[index]
+            for index in candidate_indexes
+            if index < len(global_sessions)
+            and global_sessions[index] in snapshot_by_date
+        }
+        if terminal_session_index >= len(global_sessions):
+            evaluation_dates.add(last_observed_date)
+        if removal_date is not None:
+            evaluation_dates.add(removal_date)
+
+        for evaluation_date in sorted(evaluation_dates):
+            evaluation_snapshot = snapshot_by_date.get(evaluation_date)
+            if evaluation_snapshot is None:
+                unresolved_mature.append(
+                    {
+                        "date": date,
+                        "code": code,
+                        "reason": "label_snapshot_missing",
+                    }
+                )
+                break
+            evaluation_snapshot_id = str(
+                evaluation_snapshot.get("market_snapshot_id") or ""
+            ).lower()
+            if code not in set(evaluation_snapshot.get("universe") or []):
+                latest_execution = removal_execution(latest_execution, evaluation_date)
+                label_snapshot_id = evaluation_snapshot_id
+                label_snapshot_date = evaluation_date
+                break
+            manager = snapshot_manager(evaluation_snapshot_id)
+            if manager is None:
+                return unavailable(
+                    "pit_label_snapshot_unavailable",
+                    signal_date=date,
+                    code=code,
+                    label_snapshot_id=evaluation_snapshot_id,
+                )
+            if evaluation_snapshot_id not in session_cache:
+                session_cache[evaluation_snapshot_id] = load_exchange_sessions(
+                    manager.data_dir
+                )
+            latest_sessions = session_cache[evaluation_snapshot_id]
+            history_frame = stock_frame(manager, evaluation_snapshot_id, code)
+            if history_frame.empty:
+                history_dates = [
+                    snapshot_date
+                    for snapshot_date in evidence_dates
+                    if snapshot_date <= evaluation_date
+                    and code
+                    in set(snapshot_by_date[snapshot_date].get("universe") or [])
+                ]
+                for history_date in reversed(history_dates):
+                    history_snapshot_id = str(
+                        snapshot_by_date[history_date].get("market_snapshot_id") or ""
+                    ).lower()
+                    history_manager = snapshot_manager(history_snapshot_id)
+                    if history_manager is None:
+                        continue
+                    history_frame = stock_frame(
+                        history_manager, history_snapshot_id, code
+                    )
+                    if not history_frame.empty:
+                        break
+            latest_execution = evaluate_trade(
+                history_frame,
+                date,
+                hold_days=5,
+                code=code,
+                security_states=security_states(code),
+                trading_sessions=latest_sessions,
+                require_pit_status=True,
+            )
+            label_snapshot_id = evaluation_snapshot_id
+            label_snapshot_date = evaluation_date
+            if is_terminal(latest_execution):
+                break
+
+        if latest_execution is None:
+            unresolved_mature.append({"date": date, "code": code, "reason": "no_label"})
+            continue
+        if not is_terminal(latest_execution):
+            if terminal_session_index < len(global_sessions):
+                unresolved_mature.append(
+                    {
+                        "date": date,
+                        "code": code,
+                        "reason": latest_execution.get("reason"),
+                    }
+                )
+                continue
+        rows.append(
+            training_row(
+                item,
+                code,
+                latest_execution,
+                label_snapshot_id,
+                label_snapshot_date,
+            )
+        )
+    if unresolved_mature:
+        return unavailable(
+            "pit_label_history_unavailable",
+            unresolved_mature_count=len(unresolved_mature),
+            first_unresolved=unresolved_mature[0],
+        )
+    return pd.DataFrame(rows)
+
+
+def pit_snapshot_coverage(
+    snapshots: dict[str, dict], trading_sessions: list[str]
+) -> dict:
+    """证明参考窗口内每个交易所会话都有不可变的当日快照。"""
+    observed = sorted(str(date)[:10] for date in snapshots)
+    sessions = sorted(set(str(date)[:10] for date in trading_sessions))
+    if not observed or not sessions:
+        return {
+            "complete": False,
+            "coverage_ratio": 0.0,
+            "observed_sessions": len(observed),
+            "expected_sessions": 0,
+            "missing_sessions": [],
+            "unexpected_snapshot_dates": observed,
+        }
+    expected = [date for date in sessions if observed[0] <= date <= observed[-1]]
+    observed_set = set(observed)
+    expected_set = set(expected)
+    missing = sorted(expected_set - observed_set)
+    unexpected = sorted(observed_set - expected_set)
+    coverage_ratio = len(observed_set & expected_set) / max(len(expected_set), 1)
+    return {
+        "complete": bool(
+            expected
+            and coverage_ratio >= MIN_DAILY_SNAPSHOT_COVERAGE
+            and not missing
+            and not unexpected
+        ),
+        "coverage_ratio": round(coverage_ratio, 6),
+        "observed_sessions": len(observed_set & expected_set),
+        "expected_sessions": len(expected_set),
+        "missing_sessions": missing,
+        "unexpected_snapshot_dates": unexpected,
+        "first_session": expected[0] if expected else None,
+        "last_session": expected[-1] if expected else None,
+    }
 
 
 def build_dataset(
-    cm: CSVManager, names: dict, industry_map: dict, limit: int = 0
+    cm: CSVManager,
+    names: dict,
+    industry_map: dict,
+    limit: int = 0,
+    *,
+    snapshots: dict[str, dict] | None = None,
+    feature_ledger: dict | None = None,
+    commit_guard: Callable[[], None] | None = None,
 ) -> pd.DataFrame:
     def unavailable(reason: str, **details) -> pd.DataFrame:
         result = pd.DataFrame()
@@ -397,12 +1180,40 @@ def build_dataset(
         return result
 
     data_root = Path(getattr(cm, "base_data_dir", cm.data_dir))
-    snapshots = load_reference_snapshots(data_root)
+    catalog = (
+        snapshots if snapshots is not None else load_reference_snapshots(data_root)
+    )
+    trading_sessions = load_exchange_sessions(cm.data_dir)
+    snapshots, snapshot_cohort = latest_complete_snapshot_cohort(
+        catalog,
+        trading_sessions,
+    )
+    feature_ledger = (
+        feature_ledger
+        if feature_ledger is not None
+        else materialize_pit_feature_ledger(
+            cm,
+            snapshots=snapshots,
+            limit=limit,
+            commit_guard=commit_guard,
+        )
+    )
     if len({date[:7] for date in snapshots}) < MIN_REFERENCE_MONTHS:
         return unavailable(
             "reference_history_insufficient",
             reference_months=len({date[:7] for date in snapshots}),
             minimum_reference_months=MIN_REFERENCE_MONTHS,
+            snapshot_cohort=snapshot_cohort,
+            feature_ledger=feature_ledger,
+        )
+
+    snapshot_coverage = pit_snapshot_coverage(snapshots, trading_sessions)
+    if snapshot_coverage.get("complete") is not True:
+        return unavailable(
+            "pit_daily_snapshot_history_incomplete",
+            snapshot_coverage=snapshot_coverage,
+            snapshot_cohort=snapshot_cohort,
+            feature_ledger=feature_ledger,
         )
 
     feature_snapshot_id = str(getattr(cm, "snapshot_id", "") or "")
@@ -411,55 +1222,52 @@ def build_dataset(
     ):
         return unavailable("feature_snapshot_unavailable")
 
-    # 当前 CSV 快照里的前复权历史不能倒推为过去真实可见的特征。只有信号日的
-    # 参考快照和计算特征的行情快照完全相同，样本才可作为发布证据。历史快照
-    # 尚未按日重建时宁可停止训练，也不能用今天看到的历史曲线制造 PIT 证据。
-    mismatched_dates = sorted(
+    missing_dates = sorted(
         date
         for date, snapshot in snapshots.items()
-        if snapshot.get("market_snapshot_id") != feature_snapshot_id
+        if not _feature_shard_path(
+            data_root,
+            date,
+            str(snapshot.get("market_snapshot_id") or "").lower(),
+            limit=limit,
+        ).exists()
     )
-    if mismatched_dates:
+    if missing_dates:
         return unavailable(
             "pit_feature_history_unavailable",
             feature_snapshot_id=feature_snapshot_id,
-            mismatched_snapshot_count=len(mismatched_dates),
-            first_mismatched_date=mismatched_dates[0],
-            last_mismatched_date=mismatched_dates[-1],
+            mismatched_snapshot_count=len(missing_dates),
+            first_mismatched_date=missing_dates[0],
+            last_mismatched_date=missing_dates[-1],
+            snapshot_cohort=snapshot_cohort,
+            feature_ledger=feature_ledger,
         )
 
-    codes = [c for c in cm.list_all_stocks() if c.isdigit() and len(c) == 6]
-    if main_board_only():
-        codes = [code for code in codes if is_main_board(code)]
-    if limit:
-        codes = codes[:limit]
-    market, sector, stock_frames = build_panels(
-        cm,
-        codes,
-        industry_map,
-        reference_snapshots=snapshots,
-    )
-    if market.empty or sector.empty:
-        return pd.DataFrame()
-    tasks = [
-        (
-            code,
-            names.get(code, code),
-            frame,
-            market,
-            sector,
-            snapshots,
-            feature_snapshot_id,
+    feature_frames = []
+    for date, snapshot in sorted(snapshots.items()):
+        snapshot_id = str(snapshot.get("market_snapshot_id") or "").lower()
+        feature_frames.append(
+            _read_feature_shard(
+                _feature_shard_path(
+                    data_root,
+                    date,
+                    snapshot_id,
+                    limit=limit,
+                ),
+                date,
+                snapshot_id,
+            )
         )
-        for code, frame in stock_frames.items()
-    ]
-    rows = []
-    with ThreadPoolExecutor(max_workers=min(8, max(1, len(tasks)))) as pool:
-        for result in pool.map(_signals_one, tasks):
-            rows.extend(result)
-    frame = pd.DataFrame(rows)
+    features = pd.concat(feature_frames, ignore_index=True)
+    frame = _hydrate_outcomes(features, cm, industry_map, snapshots)
     if not frame.empty:
         frame = frame.sort_values(["date", "code"]).reset_index(drop=True)
+    else:
+        if not frame.attrs.get("reason"):
+            frame.attrs["reason"] = "training_dataset_empty"
+        frame.attrs["feature_ledger"] = feature_ledger
+        frame.attrs["snapshot_coverage"] = snapshot_coverage
+    frame.attrs["snapshot_cohort"] = snapshot_cohort
     return frame
 
 
@@ -995,6 +1803,20 @@ def _bootstrap_evidence(frame: pd.DataFrame, layer: str, reference: str) -> dict
     }
 
 
+def _with_label_availability(frame: pd.DataFrame) -> pd.DataFrame:
+    data = frame.copy()
+    data["date"] = data["date"].astype(str).str[:10]
+    data["label_end_date"] = data["label_end_date"].astype(str).str[:10]
+    data["label_snapshot_date"] = data["label_snapshot_date"].astype(str).str[:10]
+    if (data["label_snapshot_date"] < data["date"]).any():
+        raise ValueError("训练样本的标签快照早于信号日")
+    data["label_available_date"] = data[["label_end_date", "label_snapshot_date"]].max(
+        axis=1
+    )
+    data["month"] = data["date"].str[:7]
+    return data
+
+
 def _purged_month_split(
     data: pd.DataFrame,
     train_months: list[str],
@@ -1004,20 +1826,198 @@ def _purged_month_split(
     # 使用月初边界而不是该月首个信号日，避免月初没有信号时把跨界标签误留在前窗。
     validation_start = f"{min(validation_months)}-01"
     test_start = f"{test_month}-01"
+    label_available = (
+        data["label_available_date"].fillna(data["label_end_date"])
+        if "label_available_date" in data.columns
+        else data["label_end_date"]
+    )
     train = data[
-        data["month"].isin(train_months) & (data["label_end_date"] < validation_start)
+        data["month"].isin(train_months) & (label_available < validation_start)
     ].copy()
     validation = data[
-        data["month"].isin(validation_months) & (data["label_end_date"] < test_start)
+        data["month"].isin(validation_months) & (label_available < test_start)
     ].copy()
     test = data[data["month"] == test_month].copy()
     return train, validation, test, str(validation_start), str(test_start)
 
 
+def _walk_forward_fold_gate(
+    train: pd.DataFrame,
+    validation: pd.DataFrame,
+    test: pd.DataFrame,
+) -> tuple[str | None, dict]:
+    row_counts = {
+        "train": int(len(train)),
+        "validation": int(len(validation)),
+        "test": int(len(test)),
+    }
+    if (
+        len(train) < MIN_WALK_FORWARD_TRAIN_ROWS
+        or len(validation) < MIN_WALK_FORWARD_VALIDATION_ROWS
+        or len(test) < MIN_WALK_FORWARD_TEST_ROWS
+    ):
+        return "walk_forward_sample_insufficient", row_counts
+    train_units = _layer_frames(train)
+    validation_units = _layer_frames(validation)
+    layer_counts = {
+        key: {
+            "train": int(len(train_units[key])),
+            "validation": int(len(validation_units[key])),
+        }
+        for key in MODEL_KEYS
+    }
+    if (
+        len(train_units["market"]) < MIN_MARKET_TRAINING_UNITS
+        or len(train_units["sector"]) < MIN_SECTOR_TRAINING_UNITS
+        or any(
+            train_units[key].empty or validation_units[key].empty for key in MODEL_KEYS
+        )
+    ):
+        return "layer_label_coverage_insufficient", {
+            **row_counts,
+            "layers": layer_counts,
+        }
+    return None, {**row_counts, "layers": layer_counts}
+
+
+def _final_calibration_split(
+    data: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str], str] | None:
+    months = sorted(data["month"].unique())
+    if len(months) <= FINAL_CALIBRATION_MONTHS:
+        return None
+    calibration_months = months[-FINAL_CALIBRATION_MONTHS:]
+    calibration_start = f"{calibration_months[0]}-01"
+    train = data[
+        data["month"].isin(months[:-FINAL_CALIBRATION_MONTHS])
+        & (data["label_available_date"] < calibration_start)
+    ].copy()
+    calibration = data[data["month"].isin(calibration_months)].copy()
+    return train, calibration, calibration_months, calibration_start
+
+
+def _final_calibration_gate(
+    train: pd.DataFrame,
+    calibration: pd.DataFrame,
+) -> tuple[str | None, dict]:
+    row_counts = {
+        "train": int(len(train)),
+        "calibration": int(len(calibration)),
+    }
+    if (
+        len(train) < MIN_FINAL_TRAIN_ROWS
+        or len(calibration) < MIN_FINAL_CALIBRATION_ROWS
+    ):
+        return "final_calibration_sample_insufficient", row_counts
+    train_units = _layer_frames(train)
+    calibration_units = _layer_frames(calibration)
+    layer_counts = {
+        key: {
+            "train": int(len(train_units[key])),
+            "calibration": int(len(calibration_units[key])),
+        }
+        for key in MODEL_KEYS
+    }
+    if any(
+        train_units[key].empty or calibration_units[key].empty for key in MODEL_KEYS
+    ):
+        return "layer_label_coverage_insufficient", {
+            **row_counts,
+            "layers": layer_counts,
+        }
+    return None, {**row_counts, "layers": layer_counts}
+
+
+def training_readiness(
+    frame: pd.DataFrame,
+    min_train_months: int = DEFAULT_MIN_TRAIN_MONTHS,
+    val_months: int = DEFAULT_VALIDATION_MONTHS,
+) -> dict:
+    """在写模型产物前证明样本能形成真实训练折与独立校准窗。
+
+    月份数只是历史长度，不代表有足够信号。这里复用 walk-forward
+    和最终校准的同一组行数、分层单元与标签覆盖门槛。
+    """
+    missing = REQUIRED_DATASET_COLUMNS - set(frame.columns)
+    if missing:
+        raise ValueError(f"训练集缺少时点字段: {sorted(missing)}")
+    data = _with_label_availability(frame)
+    months = sorted(data["month"].unique())
+    fold_diagnostics: list[dict] = []
+    eligible_test_months: list[str] = []
+    for test_i in range(min_train_months + val_months, len(months)):
+        train_months = months[: test_i - val_months]
+        val_set = set(months[test_i - val_months : test_i])
+        train, validation, test, _, _ = _purged_month_split(
+            data,
+            train_months,
+            val_set,
+            months[test_i],
+        )
+        reason, evidence = _walk_forward_fold_gate(train, validation, test)
+        fold_diagnostics.append(
+            {"test_month": months[test_i], "reason": reason, **evidence}
+        )
+        if reason is None:
+            eligible_test_months.append(months[test_i])
+    if not eligible_test_months:
+        candidate_reasons = {item["reason"] for item in fold_diagnostics}
+        reason = (
+            "layer_label_coverage_insufficient"
+            if "layer_label_coverage_insufficient" in candidate_reasons
+            else "walk_forward_sample_insufficient"
+        )
+        return {
+            "ready": False,
+            "reason": reason,
+            "months": len(months),
+            "candidate_folds": len(fold_diagnostics),
+            "eligible_folds": 0,
+            "folds": fold_diagnostics,
+            "minimums": {
+                "train_months": min_train_months,
+                "validation_months": val_months,
+                "walk_forward_train_rows": MIN_WALK_FORWARD_TRAIN_ROWS,
+                "walk_forward_validation_rows": MIN_WALK_FORWARD_VALIDATION_ROWS,
+                "walk_forward_test_rows": MIN_WALK_FORWARD_TEST_ROWS,
+                "market_training_units": MIN_MARKET_TRAINING_UNITS,
+                "sector_training_units": MIN_SECTOR_TRAINING_UNITS,
+            },
+        }
+    calibration_split = _final_calibration_split(data)
+    if calibration_split is None:
+        return {
+            "ready": False,
+            "reason": "final_calibration_sample_insufficient",
+            "months": len(months),
+            "candidate_folds": len(fold_diagnostics),
+            "eligible_folds": len(eligible_test_months),
+            "eligible_test_months": eligible_test_months,
+        }
+    calibration_train, calibration, calibration_months, _ = calibration_split
+    reason, calibration_evidence = _final_calibration_gate(
+        calibration_train, calibration
+    )
+    return {
+        "ready": reason is None,
+        "reason": reason,
+        "months": len(months),
+        "candidate_folds": len(fold_diagnostics),
+        "eligible_folds": len(eligible_test_months),
+        "eligible_test_months": eligible_test_months,
+        "calibration_months": calibration_months,
+        "calibration": calibration_evidence,
+        "minimums": {
+            "final_train_rows": MIN_FINAL_TRAIN_ROWS,
+            "final_calibration_rows": MIN_FINAL_CALIBRATION_ROWS,
+        },
+    }
+
+
 def walk_forward(
     frame: pd.DataFrame,
-    min_train_months: int = 12,
-    val_months: int = 3,
+    min_train_months: int = DEFAULT_MIN_TRAIN_MONTHS,
+    val_months: int = DEFAULT_VALIDATION_MONTHS,
     *,
     weekly_gate_mode: str = "shadow",
 ) -> dict:
@@ -1043,17 +2043,19 @@ def walk_forward(
         raise ValueError("训练样本的参考快照日期与信号日不一致")
     reference_ids = frame["reference_snapshot_id"].astype(str).str.lower()
     feature_ids = frame["feature_snapshot_id"].astype(str).str.lower()
+    label_ids = frame["label_snapshot_id"].astype(str).str.lower()
     if (
         not reference_ids.str.fullmatch(r"[0-9a-f]{64}").all()
         or not feature_ids.str.fullmatch(r"[0-9a-f]{64}").all()
+        or not label_ids.str.fullmatch(r"[0-9a-f]{64}").all()
     ):
         raise ValueError("训练样本缺少可验证的行情快照 ID")
     if not (reference_ids == feature_ids).all():
         raise ValueError("训练样本的特征快照与参考快照不一致")
-    data = frame.copy()
-    data["date"] = data["date"].astype(str)
-    data["label_end_date"] = data["label_end_date"].astype(str)
-    data["month"] = data["date"].str[:7]
+    quality_targets = set(frame["quality_target_version"].dropna().astype(str))
+    if quality_targets != {QUALITY_TARGET_VERSION}:
+        raise ValueError(f"质量标签口径版本不匹配: {sorted(quality_targets)}")
+    data = _with_label_availability(frame)
     months = sorted(data["month"].unique())
     folds, selected_thresholds, oos_rows = [], [], []
     for test_i in range(min_train_months + val_months, len(months)):
@@ -1065,18 +2067,8 @@ def walk_forward(
             val_set,
             months[test_i],
         )
-        if len(train) < 80 or len(val) < 20 or len(test) < 3:
-            continue
-        train_units = _layer_frames(train)
-        validation_units = _layer_frames(val)
-        if (
-            len(train_units["market"]) < 40
-            or len(train_units["sector"]) < 40
-            or any(
-                train_units[key].empty or validation_units[key].empty
-                for key in MODEL_KEYS
-            )
-        ):
+        gate_reason, _ = _walk_forward_fold_gate(train, val, test)
+        if gate_reason is not None:
             continue
         models = _fit_models(train)
         thresholds = _validation_thresholds(models, val)
@@ -1279,28 +2271,18 @@ def walk_forward(
 
 def _final_calibrated_models(frame: pd.DataFrame) -> tuple[dict, dict, dict]:
     """保留最后数月作为完全未参与拟合的阈值校准窗。"""
-    data = frame.copy()
-    data["date"] = data["date"].astype(str)
-    data["label_end_date"] = data["label_end_date"].astype(str)
-    data["month"] = data["date"].str[:7]
-    months = sorted(data["month"].unique())
-    if len(months) <= FINAL_CALIBRATION_MONTHS:
+    data = _with_label_availability(frame)
+    split = _final_calibration_split(data)
+    if split is None:
         raise ValueError("独立阈值校准月份不足")
-    calibration_months = months[-FINAL_CALIBRATION_MONTHS:]
-    calibration_start = f"{calibration_months[0]}-01"
-    train = data[
-        data["month"].isin(months[:-FINAL_CALIBRATION_MONTHS])
-        & (data["label_end_date"] < calibration_start)
-    ].copy()
-    calibration = data[data["month"].isin(calibration_months)].copy()
-    if len(train) < 80 or len(calibration) < 20:
+    train, calibration, calibration_months, calibration_start = split
+    gate_reason, _ = _final_calibration_gate(train, calibration)
+    if gate_reason == "final_calibration_sample_insufficient":
         raise ValueError("独立阈值校准窗样本不足")
+    if gate_reason is not None:
+        raise ValueError("独立校准窗的分层标签不完整")
     train_units = _layer_frames(train)
     calibration_units = _layer_frames(calibration)
-    if any(
-        train_units[key].empty or calibration_units[key].empty for key in MODEL_KEYS
-    ):
-        raise ValueError("独立校准窗的分层标签不完整")
     models = _fit_models(train)
     thresholds = _validation_thresholds(models, calibration)
     targets = {
@@ -1369,10 +2351,20 @@ def _final_calibrated_models(frame: pd.DataFrame) -> tuple[dict, dict, dict]:
     return models, thresholds, evidence
 
 
-def train_and_register(frame: pd.DataFrame, output: Path) -> dict:
+def train_and_register(
+    frame: pd.DataFrame,
+    output: Path,
+    *,
+    commit_guard: Callable[[], None] | None = None,
+    trained_as_of: str | None = None,
+) -> dict:
+    guard = commit_guard or (lambda: None)
     missing = REQUIRED_DATASET_COLUMNS - set(frame.columns)
     if missing:
         raise ValueError(f"训练集缺少时点字段: {sorted(missing)}，请重新构建")
+    readiness = training_readiness(frame)
+    if readiness.get("ready") is not True:
+        raise ValueError(f"训练就绪门槛未满足: {readiness.get('reason')}")
     report = walk_forward(frame)
     if not report["folds"]:
         raise ValueError("没有满足 purge 和未来月份要求的 walk-forward 折")
@@ -1387,7 +2379,9 @@ def train_and_register(frame: pd.DataFrame, output: Path) -> dict:
         f"{strategy_version()}|{FEATURE_VERSION}|".encode() + canonical.encode()
     ).hexdigest()[:12]
     version = f"hierarchy-{digest}"
-    trained = datetime.now().astimezone().isoformat(timespec="seconds")
+    trained = str(
+        trained_as_of or datetime.now().astimezone().isoformat(timespec="seconds")
+    )
     bundle = {
         "version": version,
         "policy_version": version,
@@ -1413,6 +2407,7 @@ def train_and_register(frame: pd.DataFrame, output: Path) -> dict:
             "immutable-market-snapshots-v2",
             "point-in-time-reference-snapshots-v4",
             "point-in-time-feature-snapshots-v1",
+            PIT_FEATURE_LEDGER_SCHEMA_VERSION,
             "pit-security-state-and-listing-regime-v2",
             "super-b1-original",
             "weekly-four-ma-shadow",
@@ -1421,6 +2416,7 @@ def train_and_register(frame: pd.DataFrame, output: Path) -> dict:
             "independent-final-calibration-v1",
         ],
     }
+    guard()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
         json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1433,6 +2429,7 @@ def train_and_register(frame: pd.DataFrame, output: Path) -> dict:
             if validation_status == "active" and optimizer_releaseable
             else "rejected"
         )
+        guard()
         register_model(
             {
                 # 训练通过也只进入 shadow；发布必须经过独立的完整策略审核窗口。
@@ -1458,6 +2455,7 @@ def train_and_register(frame: pd.DataFrame, output: Path) -> dict:
                 "artifact": model.to_dict(),
             }
         )
+    guard()
     register_policy_candidate(
         {
             "policy_version": version,

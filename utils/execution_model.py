@@ -6,8 +6,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, replace
 from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
 from typing import Mapping
 
 import pandas as pd
@@ -26,7 +30,7 @@ class CostModel:
 
 @dataclass(frozen=True)
 class ExecutionPolicy:
-    version: str = "a-share-eod-open-open-v3"
+    version: str = "a-share-eod-open-open-v5"
     decision_time: str = "signal_session_close"
     entry_rule: str = "next_session_open"
     exit_rule: str = "open_after_completed_holding_sessions"
@@ -43,9 +47,70 @@ class ExecutionPolicy:
     suspension_rule: str = "zero-volume-or-pit-suspended-no-fill"
     partial_fill_rule: str = "daily-bars-do-not-prove-liquidity;all-or-none"
     liquidity_cap: str = "not_available_in_daily_bar;approximate"
+    session_axis_rule: str = "pinned_exchange_calendar;missing_bar_is_no_fill"
 
 
 DEFAULT_EXECUTION_POLICY = ExecutionPolicy()
+
+
+def load_exchange_sessions(
+    payload_dir: str | Path,
+    *,
+    through_date: str | None = None,
+) -> list[str]:
+    """从已绑定的行情快照载入交易所会话轴。
+
+    调用方必须传入 ``CSVManager.data_dir`` 这类已固定的 snapshot
+    payload，不在成交计算期间跟随可变 CURRENT 指针。
+    """
+    payload = Path(payload_dir)
+    calendar = load_exchange_calendar(payload)
+    if not calendar:
+        return []
+    cutoff = str(through_date or "")[:10]
+    if not cutoff:
+        try:
+            manifest = json.loads((payload.parent / "manifest.json").read_text("utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        cutoff = str(manifest.get("trade_date") or "")[:10]
+    if not cutoff:
+        return []
+    return [date for date in calendar if date <= cutoff]
+
+
+def load_exchange_calendar(payload_dir: str | Path) -> list[str]:
+    """读取已绑定快照的完整交易所日历（含已公布的未来会话）。"""
+    path = Path(payload_dir) / "trade_calendar.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return _normalize_sessions(document) if isinstance(document, list) else []
+
+
+def _normalize_sessions(values: Iterable[object]) -> list[str]:
+    sessions: set[str] = set()
+    for value in values:
+        try:
+            timestamp = pd.Timestamp(value)
+        except (TypeError, ValueError):
+            continue
+        if pd.isna(timestamp):
+            continue
+        sessions.add(timestamp.strftime("%Y-%m-%d"))
+    return sorted(sessions)
+
+
+def _session_axis_evidence(sessions: list[str], source: str) -> dict:
+    canonical = json.dumps(sessions, separators=(",", ":")).encode()
+    return {
+        "session_axis_source": source,
+        "session_axis_verified": source == "pinned_exchange_calendar",
+        "session_axis_hash": hashlib.sha256(canonical).hexdigest(),
+        "session_axis_count": len(sessions),
+        "session_axis_end": sessions[-1] if sessions else None,
+    }
 
 
 def execution_policy_manifest(
@@ -291,10 +356,16 @@ def evaluate_trade(
     *,
     code: str = "",
     security_states: Mapping[str, Mapping] | None = None,
+    trading_sessions: Iterable[object] | None = None,
     require_pit_status: bool = False,
     policy: ExecutionPolicy = DEFAULT_EXECUTION_POLICY,
 ) -> dict:
-    """信号日收盘决策，次日开盘入场，完成持有期后的开盘退出。"""
+    """信号日收盘决策，下一交易所会话开盘尝试入场。
+
+    ``trading_sessions`` 必须是截止当前已发布快照日的不可变
+    交易所会话轴。个股停牌时可以没有 bar，但会话仍然推进；
+    缺 bar 的会话只能判定为不可成交，不得跳到复牌日代替执行。
+    """
     policy = replace(
         policy,
         holding_sessions=int(hold_days),
@@ -316,25 +387,61 @@ def evaluate_trade(
     }
     if daily is None or daily.empty:
         return {"available": False, "reason": "no_daily_data", **common}
-    d = daily.sort_values("date").reset_index(drop=True).copy()
-    dates = d["date"].astype(str).str[:10]
-    hits = d.index[dates == run_date].tolist()
+    d = daily.copy()
+    d["_session_date"] = pd.to_datetime(d["date"], errors="coerce")
+    d = d.dropna(subset=["_session_date"])
+    d["_session_date"] = d["_session_date"].dt.strftime("%Y-%m-%d")
+    d = (
+        d.sort_values("_session_date")
+        .drop_duplicates(subset=["_session_date"], keep="last")
+        .reset_index(drop=True)
+    )
+    if d.empty:
+        return {"available": False, "reason": "no_daily_data", **common}
+    dates = d["_session_date"]
+    run_session = str(run_date)[:10]
+    hits = d.index[dates == run_session].tolist()
     if not hits:
         return {"available": False, "reason": "run_date_missing", **common}
+
+    sessions = _normalize_sessions(trading_sessions or [])
+    if not sessions:
+        return {
+            "available": False,
+            "reason": "trading_calendar_missing",
+            **_session_axis_evidence([], "missing"),
+            **common,
+        }
+    common = {
+        **_session_axis_evidence(sessions, "pinned_exchange_calendar"),
+        **common,
+    }
+    if run_session not in sessions:
+        return {
+            "available": False,
+            "reason": "run_date_not_in_trading_calendar",
+            **common,
+        }
+
+    bar_index_by_date = {str(date): int(i) for i, date in dates.items()}
     signal_i = hits[-1]
-    entry_i = signal_i + 1
-    if entry_i >= len(d):
+    signal_session_i = sessions.index(run_session)
+    entry_session_i = signal_session_i + 1
+    if entry_session_i >= len(sessions):
         return {
             "available": False,
             "reason": "entry_not_available",
             "entry_label_mature": False,
+            "label_end_date": sessions[-1],
             **common,
         }
 
-    entry_date = str(dates.iloc[entry_i])
+    entry_date = sessions[entry_session_i]
+    entry_i = bar_index_by_date.get(entry_date)
+    observed_entry_bars = int((dates <= entry_date).sum())
     entry_state = enrich_security_state_with_history(
         _state_for(security_states, entry_date),
-        entry_i + 1,
+        observed_entry_bars,
     )
     entry_regime = resolve_price_limit_regime(code, entry_date, entry_state)
     if require_pit_status and not entry_regime["point_in_time_verified"]:
@@ -346,28 +453,52 @@ def evaluate_trade(
             "entry_regime": entry_regime,
             **common,
         }
+    entry_state_status = str((entry_state or {}).get("trading_status") or "")
+    if entry_i is None and entry_state_status not in {"suspended", "delisted"}:
+        return {
+            "available": False,
+            "reason": "market_bar_missing",
+            "execution_status": "market_bar_missing",
+            "entry_date": entry_date,
+            "entry_bar_available": False,
+            "entry_label_mature": False,
+            "exit_label_mature": False,
+            "return_label_mature": False,
+            "entry_regime": entry_regime,
+            "label_end_date": entry_date,
+            **common,
+        }
 
     previous_close = float(d.iloc[signal_i]["close"])
-    entry_row = d.iloc[entry_i]
-    entry_price = float(entry_row.get("open", 0) or 0)
-    volume = float(entry_row.get("volume", 0) or 0)
-    entry_one_word_up = is_one_word_limit(
-        entry_row,
-        previous_close,
-        "up",
-        entry_regime["limit_up_pct"],
+    entry_row = d.iloc[entry_i] if entry_i is not None else None
+    entry_price = float(entry_row.get("open", 0) or 0) if entry_row is not None else 0
+    volume = float(entry_row.get("volume", 0) or 0) if entry_row is not None else 0
+    entry_one_word_up = bool(
+        entry_row is not None
+        and is_one_word_limit(
+            entry_row,
+            previous_close,
+            "up",
+            entry_regime["limit_up_pct"],
+        )
     )
     next_open_gap_pct = (
-        (entry_price / previous_close - 1) * 100 if previous_close > 0 else None
+        (entry_price / previous_close - 1) * 100
+        if entry_row is not None and entry_price > 0 and previous_close > 0
+        else None
     )
-    one_word_down_next_open = is_one_word_limit(
-        entry_row,
-        previous_close,
-        "down",
-        entry_regime["limit_down_pct"],
+    one_word_down_next_open = bool(
+        entry_row is not None
+        and is_one_word_limit(
+            entry_row,
+            previous_close,
+            "down",
+            entry_regime["limit_down_pct"],
+        )
     )
     entry_feasible = bool(
-        entry_price > 0
+        entry_row is not None
+        and entry_price > 0
         and volume > 0
         and entry_regime["can_trade"]
         and not entry_one_word_up
@@ -376,8 +507,9 @@ def evaluate_trade(
         "available": True,
         "entry_label_mature": True,
         "entry_date": entry_date,
-        "entry_price": round(entry_price, 3),
+        "entry_price": round(entry_price, 3) if entry_price > 0 else None,
         "entry_feasible": entry_feasible,
+        "entry_bar_available": entry_row is not None,
         "entry_one_word_limit_up": entry_one_word_up,
         "one_word_limit_down_next_open": one_word_down_next_open,
         "next_open_gap_pct": round(next_open_gap_pct, 2)
@@ -403,8 +535,8 @@ def evaluate_trade(
             "label_end_date": entry_date,
         }
 
-    target_i = entry_i + policy.holding_sessions
-    if target_i >= len(d):
+    target_session_i = entry_session_i + policy.holding_sessions
+    if target_session_i >= len(sessions):
         return {
             **base,
             "reason": "holding_incomplete",
@@ -413,17 +545,24 @@ def evaluate_trade(
             "return_label_mature": False,
             "exit_feasible": None,
             "net_return": None,
-            "label_end_date": str(dates.iloc[-1]),
+            "label_end_date": sessions[-1],
         }
 
-    exit_i = target_i
-    delayed = 0
+    exit_session_i = target_session_i
+    exit_i: int | None = None
+    blocked_attempts = 0
+    session_delay = 0
     exit_regime = None
-    while exit_i < len(d):
-        exit_date = str(dates.iloc[exit_i])
+    observed_end = sessions[target_session_i]
+    while exit_session_i < len(sessions):
+        exit_date = sessions[exit_session_i]
+        session_delay = exit_session_i - target_session_i
+        observed_end = exit_date
+        exit_i = bar_index_by_date.get(exit_date)
+        observed_exit_bars = int((dates <= exit_date).sum())
         exit_state = enrich_security_state_with_history(
             _state_for(security_states, exit_date),
-            exit_i + 1,
+            observed_exit_bars,
         )
         exit_regime = resolve_price_limit_regime(code, exit_date, exit_state)
         if require_pit_status and not exit_regime["point_in_time_verified"]:
@@ -438,27 +577,72 @@ def evaluate_trade(
                 "label_end_date": exit_date,
                 "exit_regime": exit_regime,
             }
-        previous = float(d.iloc[exit_i - 1]["close"])
-        exit_row = d.iloc[exit_i]
-        exit_volume = float(exit_row.get("volume", 0) or 0)
+        exit_state_status = str((exit_state or {}).get("trading_status") or "")
+        if exit_i is None and exit_state_status not in {"suspended", "delisted"}:
+            return {
+                **base,
+                "reason": "market_bar_missing",
+                "execution_status": "market_bar_missing",
+                "exit_date": exit_date,
+                "exit_bar_available": False,
+                "exit_label_mature": False,
+                "return_label_mature": False,
+                "exit_feasible": None,
+                "exit_delay_days": session_delay,
+                "exit_delay_sessions": session_delay,
+                "net_return": None,
+                "label_end_date": exit_date,
+                "exit_regime": exit_regime,
+            }
+        exit_row = d.iloc[exit_i] if exit_i is not None else None
+        prior = d[d["_session_date"] < exit_date]
+        previous = float(prior.iloc[-1]["close"]) if not prior.empty else 0
+        exit_volume = (
+            float(exit_row.get("volume", 0) or 0) if exit_row is not None else 0
+        )
         blocked = (
-            not exit_regime["can_trade"]
+            exit_row is None
+            or not exit_regime["can_trade"]
             or exit_volume <= 0
-            or is_one_word_limit(
-                exit_row,
-                previous,
-                "down",
-                exit_regime["limit_down_pct"],
+            or previous <= 0
+            or bool(
+                exit_row is not None
+                and is_one_word_limit(
+                    exit_row,
+                    previous,
+                    "down",
+                    exit_regime["limit_down_pct"],
+                )
             )
         )
         if not blocked:
             break
-        exit_i += 1
-        delayed += 1
-        if delayed > policy.max_exit_delay_sessions:
+        blocked_attempts += 1
+        if blocked_attempts > policy.max_exit_delay_sessions:
             break
-    exit_feasible = exit_i < len(d) and delayed <= policy.max_exit_delay_sessions
-    observed_end = str(dates.iloc[min(exit_i, len(d) - 1)])
+        exit_session_i += 1
+    if (
+        exit_session_i >= len(sessions)
+        and blocked_attempts <= policy.max_exit_delay_sessions
+    ):
+        return {
+            **base,
+            "reason": "exit_delay_incomplete",
+            "execution_status": "exit_delay_incomplete",
+            "exit_label_mature": False,
+            "return_label_mature": False,
+            "exit_feasible": None,
+            "exit_delay_days": session_delay,
+            "exit_delay_sessions": session_delay,
+            "net_return": None,
+            "label_end_date": observed_end,
+            "exit_regime": exit_regime,
+        }
+    exit_feasible = bool(
+        exit_i is not None
+        and exit_session_i < len(sessions)
+        and blocked_attempts <= policy.max_exit_delay_sessions
+    )
     if not exit_feasible:
         return {
             **base,
@@ -467,12 +651,14 @@ def evaluate_trade(
             "exit_label_mature": True,
             "return_label_mature": False,
             "exit_feasible": False,
-            "exit_delay_days": delayed,
+            "exit_delay_days": session_delay,
+            "exit_delay_sessions": session_delay,
             "net_return": None,
             "label_end_date": observed_end,
             "exit_regime": exit_regime,
         }
 
+    assert exit_i is not None
     exit_row = d.iloc[exit_i]
     exit_price = float(exit_row["open"])
     net_return, cost_evidence = _net_return(entry_price, exit_price, policy)
@@ -483,21 +669,24 @@ def evaluate_trade(
         "exit_label_mature": True,
         "return_label_mature": True,
         "exit_feasible": True,
-        "exit_date": str(dates.iloc[exit_i]),
-        "label_end_date": str(dates.iloc[exit_i]),
+        "exit_date": sessions[exit_session_i],
+        "label_end_date": sessions[exit_session_i],
         "exit_price": round(exit_price, 3),
         "exit_price_field": "open",
-        "exit_delay_days": delayed,
+        "exit_delay_days": session_delay,
+        "exit_delay_sessions": session_delay,
         "gross_return": round((exit_price / entry_price - 1) * 100, 2),
         "net_return": round(net_return, 2),
         "cost_evidence": cost_evidence,
         "exit_regime": exit_regime,
     }
-    segment = d.iloc[entry_i : exit_i + 1]
-    result["max_gain"] = round(
-        (float(segment["high"].max()) / entry_price - 1) * 100, 2
-    )
-    result["max_drawdown"] = round(
-        (float(segment["low"].min()) / entry_price - 1) * 100, 2
-    )
+    # 开盘卖出后已不再持仓，不能用退出日盘中 high/low。
+    segment = d[
+        (d["_session_date"] >= entry_date)
+        & (d["_session_date"] < sessions[exit_session_i])
+    ]
+    observed_high = max(float(segment["high"].max()), exit_price)
+    observed_low = min(float(segment["low"].min()), exit_price)
+    result["max_gain"] = round((observed_high / entry_price - 1) * 100, 2)
+    result["max_drawdown"] = round((observed_low / entry_price - 1) * 100, 2)
     return result

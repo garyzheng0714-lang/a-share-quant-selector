@@ -25,9 +25,8 @@ export default defineConfig(() => ({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes("echarts") || id.includes("zrender")) {
-            return "echarts";
-          }
+          if (id.includes("/node_modules/zrender/")) return "zrender";
+          if (id.includes("/node_modules/echarts/")) return "echarts";
         },
       },
     },

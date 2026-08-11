@@ -198,7 +198,7 @@ export function Component() {
             <div><p className="text-xs text-ink-muted">停复牌状态</p><p className="mt-1 break-words leading-5 text-ink-secondary">{data.sources.security_status.source_id ?? "待发布"}</p></div>
             <div><p className="text-xs text-ink-muted">本快照实际行情源</p><p className="mt-1 break-words leading-5 text-ink-secondary">{sources.length ? sources.map(sourceName).join("、") : "尚无正式快照来源记录"}</p></div>
           </div>
-          <Text type="supporting" className="block border-t border-border px-4 py-3">模型演进不在每日收盘管线内自动执行；结果回填已纳入每日闭环。</Text>
+          <Text type="supporting" className="block border-t border-border px-4 py-3">结果回填、全策略复盘和影子模型演进都已纳入每日收盘闭环；前向月份不足时只显示“预热中”，不会冒充已经训练完成。</Text>
         </section>
       </PageShell>
     </PageTransition>

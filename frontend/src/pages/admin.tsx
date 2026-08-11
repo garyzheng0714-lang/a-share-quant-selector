@@ -4,7 +4,7 @@ import { Button } from "@astryxdesign/core/Button";
 import { Icon } from "@astryxdesign/core/Icon";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { LoadError, Skeleton } from "@/components/ui";
-import { useLatestDecision, usePipelineStatus, useRecommend, useSystemStatus } from "@/lib/hooks";
+import { useLatestDecision, usePipelineStatus, useSystemStatus } from "@/lib/hooks";
 
 type StageTone = "success" | "warning" | "error" | "neutral";
 
@@ -17,10 +17,9 @@ export function Component() {
   const pipeline = usePipelineStatus();
   const system = useSystemStatus();
   const decision = useLatestDecision();
-  const recommend = useRecommend();
   const [showAudit, setShowAudit] = useState(false);
 
-  if (pipeline.isLoading || system.isLoading || decision.isLoading || recommend.isLoading) {
+  if (pipeline.isLoading || system.isLoading || decision.isLoading) {
     return <main className="q-admin-page"><Skeleton className="q-admin-skeleton" /></main>;
   }
   if (pipeline.error || !pipeline.data?.available) {
@@ -30,14 +29,23 @@ export function Component() {
   const p = pipeline.data;
   const s = system.data;
   const d = decision.data;
-  const cloud = recommend.data;
-  const cloudCount = cloud?.candidates?.length || 0;
+  const cloudCount = p.decision.candidate_counts.buy || 0;
   const aiReady = s?.ai?.status === "explained" || s?.ai?.status === "shadow_ranked";
+  const reviewReady = p.learning.review.current;
+  const evolutionCurrent = p.learning.evolution.current;
+  const evolutionTrained = evolutionCurrent && p.learning.evolution.trained === true;
+  const evolutionProgress = p.learning.evolution.reference_months != null && p.learning.evolution.minimum_reference_months != null
+    ? `参考月 ${p.learning.evolution.reference_months}/${p.learning.evolution.minimum_reference_months}`
+    : p.learning.evolution.signal_months != null && p.learning.evolution.minimum_signal_months != null
+      ? `信号月 ${p.learning.evolution.signal_months}/${p.learning.evolution.minimum_signal_months}`
+      : null;
   const stages = [
     { label: "行情抓取", detail: `${p.market.stock_count} 只 · 覆盖率 ${(p.market.coverage_ratio * 100).toFixed(1)}%`, ...stage(p.market.fresh, "完成", "行情待更新") },
     { label: "契约校验", detail: p.attention.length ? `${p.attention.length} 项需处理` : "freshness / OHLC / 日历已通过", ...stage(p.attention.length === 0, "通过", "需复核", p.state === "unavailable") },
     { label: "快照切换", detail: p.market.snapshot_id || "快照尚未就绪", ...stage(Boolean(p.market.snapshot_id), "完成", "等待快照") },
-    { label: "云阶决策", detail: cloud?.available ? `买点 ${cloudCount} 只` : "当前快照云阶决策未完成", ...stage(Boolean(cloud?.available), "完成", "等待决策") },
+    { label: "云阶决策", detail: p.decision.available ? `允许买入 ${cloudCount} 只` : "当前快照云阶决策未完成", ...stage(p.decision.available, "完成", "等待决策") },
+    { label: "策略复盘", detail: reviewReady ? `${p.learning.review.status || "已生成"} · AI ${p.learning.review.ai_status || "未调用"}` : "当前快照复盘待生成", ...stage(reviewReady, "完成", "等待复盘") },
+    { label: "影子模型", detail: evolutionTrained ? `${p.learning.evolution.promotion_status || "影子训练完成"} · ${p.learning.evolution.training_status || "已训练"}` : evolutionCurrent ? `预热中 · ${evolutionProgress || p.learning.evolution.training_status || "正在积累前向证据"}` : "当前快照模型待运行", ...stage(evolutionTrained ? true : evolutionCurrent ? false : null, "训练完成", evolutionCurrent ? "预热中" : "等待进化") },
     { label: "AI 解释", detail: aiReady ? `${s?.ai?.model || "模型"} · 已绑定当前决策` : (s?.ai?.reason_codes || []).join(" / ") || "尚未调用", ...stage(aiReady, "完成", "未完成", s?.ai?.status === "failed") },
     { label: "调度器", detail: p.scheduler.running ? `下次收盘任务 ${p.scheduler.next_close_at || "待计算"}` : "调度器未运行", ...stage(p.scheduler.running, "运行中", "未运行", !p.scheduler.running) },
   ];
@@ -127,14 +135,14 @@ export function Component() {
         </section>
 
         <section className="q-admin-card">
-          <div className="q-admin-section-head"><h2>云阶决策发布</h2><span>{cloud?.trade_date || "未发布"}</span></div>
+          <div className="q-admin-section-head"><h2>云阶决策发布</h2><span>{p.decision.trade_date || "未发布"}</span></div>
           <div className="q-decision-counts">
             <div><span>买点</span><strong>{cloudCount}</strong></div>
             <div><span>规则</span><strong>云阶</strong></div>
             <div><span>AI 改票</span><strong>0</strong></div>
           </div>
-          <p className="q-admin-empty">决策 Run：{cloud?.decision_run_id || p.decision.run_id || "尚未生成"}</p>
-          <p className="q-admin-empty">云阶因子决定前台买点；分层模型只保留为影子证据，不降级云阶结论。</p>
+          <p className="q-admin-empty">决策 Run：{p.decision.run_id || "尚未生成"}</p>
+          <p className="q-admin-empty">云阶只提供结构信号；正式动作由决策账本唯一给出，AI 和影子模型均不得改票。</p>
         </section>
 
         <section className="q-admin-card">

@@ -1,42 +1,21 @@
 import { useMemo, useState } from "react";
 import { Badge } from "@astryxdesign/core/Badge";
 import { Button } from "@astryxdesign/core/Button";
-import { ClickableCard } from "@astryxdesign/core/ClickableCard";
-import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { Icon } from "@astryxdesign/core/Icon";
+import { Item } from "@astryxdesign/core/Item";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
-import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { Link } from "react-router";
 import { DecisionKline, type DecisionPeriod, type DecisionSubPanel } from "@/components/decision/decision-kline";
 import { LoadError, Skeleton } from "@/components/ui";
-import type { CloudMarketContext, RecommendStock, SectorHot } from "@/lib/api";
-import { useCloudStairReview, useKline, useRecommend, useSectorDetail, useSectors } from "@/lib/hooks";
+import type { CloudMarketContext, RecommendStock } from "@/lib/api";
+import { useCloudStairReview, useKline, useRecommend, useSectorDetail } from "@/lib/hooks";
 
 type DetailPanel = "history" | "peers" | null;
-type CandidateFilter = "sector" | "ai" | "wave" | "heat" | "industry";
-type SectorDrawerRow = {
-  name: string;
-  score: number;
-  delta3?: number;
-  stage?: string;
-  trend?: SectorHot["trend"];
-  breadth_ma10?: number;
-  heat_series?: number[];
-  rank?: number;
-  total?: number;
-};
 
 const periodLabels: Record<DecisionPeriod, string> = {
-  daily: "日 K",
-  weekly: "周 K",
-  monthly: "月 K",
-};
-
-const aiReasonLabels: Record<string, string> = {
-  llm_unconfigured: "AI 尚未配置",
-  no_cloud_stair_signals: "今日没有云阶信号",
-  decision_not_ready: "收盘决策尚未完成",
-  comment_not_ready: "AI 解释尚未生成",
-  ai_run_not_current: "AI 解释尚未绑定当前快照",
+  daily: "日K",
+  weekly: "周K",
+  monthly: "月K",
 };
 
 function signed(value?: number | null, digits = 1, suffix = "") {
@@ -44,61 +23,44 @@ function signed(value?: number | null, digits = 1, suffix = "") {
   return `${value > 0 ? "+" : ""}${value.toFixed(digits)}${suffix}`;
 }
 
-function actionTone(stock: RecommendStock) {
-  return stock.action === "buy" ? "buy" : "observe";
-}
-
-function stageLabel(stage?: string) {
-  return stage || "状态待补全";
-}
-
-function sectorLine(stock: RecommendStock) {
+function sectorDescriptor(stock: RecommendStock) {
   const sector = stock.sector;
-  if (!sector) return `${stock.industry || "行业待补全"} · 行业热度待补全`;
-  return `${stock.industry} · 热度 ${Math.round(sector.score)} · ${sector.rank}/${sector.total} · ${stageLabel(sector.stage)}`;
+  if (!sector) return `${stock.industry || "行业待补全"} · 行业数据待补全`;
+  return `${stock.industry} · 行业第 ${sector.rank}/${sector.total} · 热度 ${Math.round(sector.score)}`;
 }
 
-function intelligenceLine(stock: RecommendStock) {
-  return `云阶结构 ${stock.structure_score?.toFixed(0) ?? "—"} · ${sectorLine(stock)}`;
+function signalDetail(detail: string) {
+  return detail.replace(/(?:T|\s)00:00:00\b/g, "");
 }
 
-function visibleByFilters(stock: RecommendStock, filters: Set<CandidateFilter>) {
-  const sectorStage = stock.sector?.stage || "";
-  if (filters.has("sector") && !sectorStage.includes("主线") && !["升温", "接力"].includes(sectorStage)) return false;
-  if (filters.has("ai") && !stock.ai_analysis) return false;
-  if (filters.has("wave") && (stock.wave_gain_pct ?? 0) < 30) return false;
-  if (filters.has("heat") && (stock.sector?.score ?? 0) < 60) return false;
-  if (filters.has("industry") && !stock.industry_available) return false;
-  return true;
+function decisionActionText(action: RecommendStock["action"]) {
+  if (action === "buy") return "允许买入";
+  if (action === "avoid") return "回避";
+  if (action === "none") return "无正式动作";
+  return "观察";
 }
 
-function MiniSectorSparkline({ values, trend }: { values?: number[]; trend?: SectorHot["trend"] }) {
-  const points = values?.slice(-9) ?? [];
-  if (points.length < 2) return <span className="q-sector-spark-empty">—</span>;
-  const min = Math.min(...points);
-  const max = Math.max(...points);
-  const span = max - min || 1;
-  return (
-    <span className={`q-sector-spark q-sector-spark--${trend || "flat"}`} aria-label={`近 ${points.length} 日热度`}>
-      {points.map((value, index) => (
-        <span
-          key={`${index}-${value}`}
-          className="q-sector-spark-bar"
-          style={{ height: `${4 + ((value - min) / span) * 14}px` }}
-        />
-      ))}
-    </span>
-  );
+function actionText(stock: RecommendStock) {
+  return stock.action_label || decisionActionText(stock.action);
+}
+
+function actionVariant(action: RecommendStock["action"]) {
+  if (action === "buy") return "red" as const;
+  if (action === "avoid") return "error" as const;
+  if (action === "none") return "neutral" as const;
+  return "warning" as const;
 }
 
 function CandidateDetail({
   stock,
   tradeDate,
   marketContext,
+  formalDecisionAvailable,
 }: {
   stock: RecommendStock;
   tradeDate?: string;
   marketContext?: CloudMarketContext;
+  formalDecisionAvailable: boolean;
 }) {
   const [period, setPeriod] = useState<DecisionPeriod>("daily");
   const [chartSettings, setChartSettings] = useState(false);
@@ -108,24 +70,51 @@ function CandidateDetail({
   const [subPanel, setSubPanel] = useState<DecisionSubPanel>("kdj");
   const kline = useKline(stock.code, period);
   const review = useCloudStairReview(500);
-  const peers = useSectorDetail(stock.industry_available ? stock.industry : null);
+  const peers = useSectorDetail(panel === "peers" && stock.industry_available ? stock.industry : null);
 
   const history = useMemo(
     () => (review.data?.picks || []).filter((pick) => pick.code === stock.code).slice(0, 10),
     [review.data?.picks, stock.code],
   );
-  const riskLine = stock.ai_analysis?.risk || "暂无已记录的结构失效条件";
-  const sector = stock.sector;
   const lastRow = kline.data?.data?.at(-1);
   const readoutDate = String(lastRow?.[0] || tradeDate || "—");
   const readoutClose = typeof lastRow?.[2] === "number" ? lastRow[2].toFixed(2) : stock.close.toFixed(2);
+  const executionMode = marketContext?.execution_mode || "按计划";
+  const candidateFormalAvailable = formalDecisionAvailable && stock.candidate_decision_available === true;
+  const formalAction = candidateFormalAvailable
+    ? actionText(stock)
+    : formalDecisionAvailable
+      ? "未纳入正式模型"
+      : "待生成";
 
   const togglePanel = (next: Exclude<DetailPanel, null>) => setPanel((current) => current === next ? null : next);
   const toggleMa = (key: keyof typeof ma) => setMa((current) => ({ ...current, [key]: !current[key] }));
   const toggleOverlay = (key: keyof typeof overlays) => setOverlays((current) => ({ ...current, [key]: !current[key] }));
 
   return (
-    <div className="q-candidate-detail">
+    <article className="q-candidate-detail" aria-labelledby={`candidate-${stock.code}`}>
+      <header className="q-research-header">
+        <div className="q-research-identity">
+          <div className="q-research-title-line">
+            <h2 id={`candidate-${stock.code}`}>{stock.name}</h2>
+            <code>{stock.code}</code>
+            <span className="q-confirmed-state">
+              <Icon icon="check" size="xsm" color="secondary" label="云阶结构已确认" />
+              {stock.signal_label || "云阶结构已确认"}
+            </span>
+            <Badge
+              variant={candidateFormalAvailable ? actionVariant(stock.action) : "neutral"}
+              label={`正式动作：${formalAction}`}
+            />
+          </div>
+          <p>{sectorDescriptor(stock)}</p>
+        </div>
+        <div className="q-research-price">
+          <strong>{stock.close.toFixed(2)}</strong>
+          <span className={(stock.pct_change || 0) >= 0 ? "q-up" : "q-down"}>{signed(stock.pct_change, 2, "%")}</span>
+        </div>
+      </header>
+
       <div className="q-chart-toolbar">
         <SegmentedControl
           value={period}
@@ -195,60 +184,40 @@ function CandidateDetail({
       )}
 
       <div className="q-detail-body">
-        <section className="q-detail-section" aria-labelledby={`why-${stock.code}`}>
-          <h3 id={`why-${stock.code}`}>为什么被选中</h3>
-          <div className="q-reason-list">
-            {stock.priority_score != null && (
-              <div className="q-reason-row">
-                <Icon icon="viewColumns" size="xsm" color="accent" label="优先级证据" />
-                <strong>{stock.rank_label || "云阶候选"}</strong>
-                <Badge variant="neutral" label={`证据 ${stock.evidence_grade || "—"}级`} />
-                <span>综合优先级 {stock.priority_score.toFixed(1)}；云阶结构 {stock.structure_score?.toFixed(1) ?? "—"}，板块 {stock.sector_score?.toFixed(1) ?? "—"}。</span>
-              </div>
-            )}
-            {(stock.signal_steps || []).map((step) => (
-              <div className="q-reason-row" key={step.key}>
-                <Icon icon="check" size="xsm" color="success" label={`${step.label}已通过`} />
-                <strong>{step.label}</strong>
-                <Badge variant="success" label="云阶条件" />
-                <span>{step.detail}</span>
+        <section className="q-evidence-section" aria-labelledby={`why-${stock.code}`}>
+          <h3 id={`why-${stock.code}`}>信号证据链</h3>
+          <div className="q-evidence-chain">
+            {(stock.signal_steps || []).map((step, index) => (
+              <div className="q-evidence-step" key={step.key}>
+                <span className="q-evidence-index">{index + 1}</span>
+                <div>
+                  <strong>{step.label}</strong>
+                  <span>{signalDetail(step.detail)}</span>
+                </div>
               </div>
             ))}
-            {stock.ai_analysis && (
-              <div className="q-reason-row">
-                <Icon icon="checkDouble" size="xsm" color="accent" label="AI 已解释" />
-                <strong>AI 解释</strong>
-                <Badge variant="neutral" label="不改规则" />
-                <span>{stock.ai_analysis.comment}</span>
-              </div>
-            )}
           </div>
         </section>
 
-        <section className="q-detail-section" aria-labelledby={`resonance-${stock.code}`}>
-          <h3 id={`resonance-${stock.code}`}>共振与主线</h3>
-          <div className="q-resonance-row">
-            <div><strong>行业热度</strong><b>{sector?.score != null ? Math.round(sector.score) : "—"}</b><span>{stageLabel(sector?.stage)}</span></div>
-            <p>{sector ? `${stock.industry} 当前全市场第 ${sector.rank}/${sector.total}；3 日热度 ${signed(sector.delta3, 1, " 分")}。` : "行业热度产物尚未与当前快照绑定。"}</p>
-            <span className="q-score-track"><span style={{ width: `${Math.min(Math.max(sector?.score || 0, 0), 100)}%` }} /></span>
-          </div>
-          <div className="q-resonance-row">
-            <div><strong>板块广度</strong><b>{sector?.breadth_ma10 != null ? Math.round(sector.breadth_ma10) : "—"}</b><span>站上 MA10</span></div>
-            <p>{sector?.breadth_ma10 != null ? `板块内站上 MA10 的成分股占比 ${sector.breadth_ma10.toFixed(1)}%。` : "当前板块广度数据待补全。"}</p>
-            <span className="q-score-track"><span style={{ width: `${Math.min(Math.max(sector?.breadth_ma10 || 0, 0), 100)}%` }} /></span>
-          </div>
-        </section>
-
-        <div className={`q-next-step q-next-step--${actionTone(stock)}`}>
+        <div className="q-next-step">
           <div>
-            <span>下一步</span>
-            <strong>{stock.action_label} · {marketContext?.execution_mode || stock.action_detail}</strong>
-            <p>云阶规则已完成突破确认；市场温度只调整执行强度，AI 只解释结构与板块证据。</p>
+            <span>正式动作</span>
+            <strong>{formalAction}</strong>
           </div>
-          <div><span>证据与风险</span><strong>{stock.evidence_grade ? `${stock.evidence_grade}级 · ` : ""}{riskLine}</strong></div>
+          <div>
+            <span>结构证据</span>
+            <strong>{stock.evidence_grade ? `${stock.evidence_grade}级` : "待评估"}</strong>
+          </div>
+          <p>
+            {formalDecisionAvailable
+              ? stock.action_detail || "正式动作以决策账本为准。"
+              : "正式决策尚未生成，当前只展示结构信号。"}
+            {` 市场执行背景：${executionMode}。`}
+          </p>
         </div>
 
         <div className="q-detail-links">
+          <Link to={`/stock/${stock.code}`}>查看个股详情</Link>
           <Button label={`历史被选中记录 (${history.length})`} variant="ghost" size="sm" onClick={() => togglePanel("history")} />
           <Button label="同板块横向对比" variant="ghost" size="sm" onClick={() => togglePanel("peers")} />
         </div>
@@ -276,239 +245,137 @@ function CandidateDetail({
                 <span>{peer.rank}</span><span><strong>{peer.name}</strong><small>{peer.code}</small></span>
                 <span>{peer.close.toFixed(2)}</span>
                 <span className={peer.ret5 != null && peer.ret5 >= 0 ? "q-up" : "q-down"}>{signed(peer.ret5, 1, "%")}</span>
-                <span>{peer.confirmation_count}</span><span>{peer.action === "buy" ? "买点" : peer.action === "avoid" ? "回避" : "观察"}</span>
+                <span>{peer.confirmation_count}</span><span>{decisionActionText(peer.action)}</span>
               </div>
             )) : <p>当前板块没有可用的横向比较数据。</p>}
           </div>
         )}
       </div>
-    </div>
+    </article>
   );
 }
 
 export function Component() {
   const recommend = useRecommend();
-  const sectors = useSectors();
-  const [openCode, setOpenCode] = useState<string | null | undefined>(undefined);
-  const [showAll, setShowAll] = useState(false);
-  const [filters, setFilters] = useState<Set<CandidateFilter>>(new Set());
-  const [factorDrawerOpen, setFactorDrawerOpen] = useState(false);
-  const [sectorStage, setSectorStage] = useState("全部");
-  const [selectedSector, setSelectedSector] = useState<string | null>(null);
+  const [selectedCode, setSelectedCode] = useState<string | undefined>(undefined);
 
   const allCandidates = useMemo(
     () => recommend.data?.candidates || [],
     [recommend.data?.candidates],
   );
-  const candidates = useMemo(
-    () => allCandidates.filter((stock) => visibleByFilters(stock, filters)),
-    [allCandidates, filters],
-  );
-  const sectorRows = useMemo<SectorDrawerRow[]>(() => {
-    if (sectorStage === "接力") {
-      const relay = sectors.data?.relay || [];
-      return relay.map((sector, index) => ({
-        ...sector,
-        stage: "接力",
-        trend: "flat",
-        rank: index + 1,
-        total: relay.length,
-      }));
-    }
-    const rows: SectorDrawerRow[] = sectors.data?.ranking || sectors.data?.hot || [];
-    if (sectorStage === "主线") {
-      return rows.filter((sector) => sector.stage?.includes("主线") || sector.score >= 80);
-    }
-    return rows.filter((sector) => sectorStage === "全部" || sector.stage === sectorStage);
-  }, [sectorStage, sectors.data?.hot, sectors.data?.ranking, sectors.data?.relay]);
-  const leader = recommend.data?.sector_leader || sectorRows[0] || null;
-  const activeSectorName = selectedSector || leader?.name || null;
-  const activeSector = sectorRows.find((sector) => sector.name === activeSectorName) || leader;
-
-  const resolvedOpenCode = openCode === undefined
-    ? candidates[0]?.code || null
-    : openCode && !candidates.some((candidate) => candidate.code === openCode)
-      ? candidates[0]?.code || null
-      : openCode;
-
-  const toggleFilter = (filter: CandidateFilter) => {
-    setFilters((current) => {
-      const next = new Set(current);
-      if (next.has(filter)) next.delete(filter);
-      else next.add(filter);
-      return next;
-    });
-  };
+  const selectedStock = allCandidates.find((stock) => stock.code === selectedCode) || allCandidates[0] || null;
 
   if (recommend.isLoading) {
-    return <main className="q-decision-page"><Skeleton className="q-page-skeleton" /></main>;
+    return <main className="q-decision-page"><h1 className="sr-only">云阶决策台</h1><Skeleton className="q-page-skeleton" /></main>;
   }
   if (recommend.error || !recommend.data?.available) {
     return (
       <main className="q-decision-page">
+        <h1 className="sr-only">云阶决策台</h1>
         <LoadError label="云阶决策暂不可用" onRetry={() => recommend.mutate()} />
       </main>
     );
   }
 
   const decision = recommend.data;
-  const visibleCandidates = showAll ? candidates : candidates.slice(0, 6);
   const marketContext = decision.market_context;
-  const intelligence = decision.intelligence;
-  const combinationStocks = (intelligence?.combination_codes || [])
-    .map((code) => allCandidates.find((stock) => stock.code === code))
-    .filter((stock): stock is RecommendStock => Boolean(stock));
-  const aiStatus = decision.ai;
-  const aiStatusText = aiStatus?.available
-    ? `AI 已解释 · ${aiStatus.model || "模型已记录"}`
-    : (aiStatus?.reason_codes || []).map((code) => aiReasonLabels[code] || code).join("、") || "AI 尚未生成解释";
+  const leader = decision.sector_leader;
+  const dataReady = Boolean(decision.freshness?.fresh);
+  const canonical = decision.canonical_decision;
+  const formalDecisionAvailable = Boolean(canonical?.available);
+  const formalDecisionLabel = !formalDecisionAvailable
+    ? "决策待生成"
+    : canonical?.status === "degraded"
+      ? "决策降级"
+      : "决策已落账";
 
   return (
     <main className="q-decision-page">
-      <section className="q-decision-hero" aria-labelledby="today-count">
-        <div className="q-count-line">
-          <span>今日</span>
-          <strong id="today-count">{candidates.length}</strong>
-          <b>只符合</b>
-          <time>{decision.trade_date} 收盘 · {decision.freshness?.fresh ? "数据就绪" : "数据需复核"}</time>
-        </div>
-        <p>{decision.core_factor?.plain || "第一波大涨 → 缩量横盘不破位 → 再次突破前高"}</p>
-        <div className="q-temperature-strip" aria-label="云阶环境仪表盘">
-          <div>
-            <span>市场温度</span>
-            <strong>{marketContext?.score != null ? Math.round(marketContext.score) : "—"}<small>/100</small></strong>
-            <p>{marketContext?.state_label || "待补全"} · {marketContext?.execution_mode || "不影响云阶入选"}</p>
-          </div>
-          <div>
-            <span>主线板块</span>
-            <strong>{leader?.name || "待补全"}<small>{leader?.score != null ? Math.round(leader.score) : "—"}</small></strong>
-            <p>{leader ? `第 ${leader.rank || 1}/${leader.total || sectors.data?.industries || "—"} · 3 日 ${signed(leader.delta3, 1, " 分")}` : "行业热度尚未就绪"}</p>
-          </div>
-          <div>
-            <span>排序依据</span>
-            <strong>70 / 30</strong>
-            <p>云阶结构 / 板块共振 · AI 不改排序</p>
+      <header className="q-decision-intro">
+        <div className="q-decision-title-group">
+          <h1>收盘决策</h1>
+          <div className="q-decision-summary">
+            <strong>{allCandidates.length} 个结构信号</strong>
+            <span aria-hidden="true" />
+            <b>
+              {formalDecisionAvailable
+                ? `${decision.today_buy?.length || 0} 只正式允许买入`
+                : "正式动作待生成"}
+            </b>
+            <time dateTime={decision.trade_date}>{decision.trade_date}</time>
+            <em className={dataReady ? "is-ready" : "is-review"}>{dataReady ? "行情就绪" : "行情需复核"}</em>
+            <em className={formalDecisionAvailable && canonical?.status !== "degraded" ? "is-ready" : "is-review"}>
+              {formalDecisionLabel}
+            </em>
           </div>
         </div>
-        <div className="q-ai-status"><StatusDot variant={aiStatus?.available ? "success" : "warning"} label={aiStatusText} /><span>{aiStatusText}</span></div>
-      </section>
+        <div className="q-market-context" aria-label="今日市场环境">
+          <div><span>市场</span><strong>{marketContext?.score != null ? Math.round(marketContext.score) : "—"}</strong><em>{marketContext?.execution_mode || "待评估"}</em></div>
+          <i aria-hidden="true" />
+          <div><span>主线</span><strong>{leader?.name || "待补全"}</strong><em>{leader?.score != null ? Math.round(leader.score) : "—"}</em></div>
+        </div>
+      </header>
 
-      {combinationStocks.length > 1 && (
-        <p className="q-combination-note">
-          <strong>优先组合</strong>
-          {combinationStocks.map((stock) => `${stock.name}（${stock.industry}）`).join(" + ")}
-          <span>优先跨板块，避免把三只同板块股票误当成分散。</span>
-        </p>
-      )}
-
-      <section className="q-candidate-list" aria-label="今日云阶候选">
-        {visibleCandidates.length ? visibleCandidates.map((stock, index) => {
-          const isOpen = resolvedOpenCode === stock.code;
-          return (
-            <div className={isOpen ? "q-candidate-card is-open" : "q-candidate-card"} key={stock.code}>
-              <ClickableCard
-                label={`${stock.name} ${stock.code}，${stock.action_label}`}
-                padding={0}
-                variant="default"
-                onClick={() => setOpenCode(isOpen ? null : stock.code)}
-                className="q-candidate-trigger"
-              >
-                <span className="q-candidate-rank">{index + 1}</span>
-                <span className="q-candidate-copy">
-                  <span><strong>{stock.name}</strong><code>{stock.code}</code>{stock.rank_label && <em>{stock.rank_label}</em>}</span>
-                  <small>{intelligenceLine(stock)}</small>
-                </span>
-                <span className="q-candidate-price"><strong>{stock.close.toFixed(2)}</strong><em className={(stock.pct_change || 0) >= 0 ? "q-up" : "q-down"}>{signed(stock.pct_change, 2, "%")}</em></span>
-                <Badge variant="error" label={stock.action_label} />
-              </ClickableCard>
-              {isOpen && <CandidateDetail stock={stock} tradeDate={decision.trade_date} marketContext={marketContext} />}
-            </div>
-          );
-        }) : (
-          <div className="q-empty-state">
-            <strong>{allCandidates.length ? "当前显示条件下没有候选" : "今天云阶没有选出股票"}</strong>
-            <span>{allCandidates.length ? "清空下方筛选即可恢复全部云阶候选。" : "系统不会为了有票而降低云阶突破确认门槛。"}</span>
+      <section className="q-decision-workspace" aria-label="云阶候选与当前研究结论">
+        <aside className="q-signal-pane" aria-label="今日云阶候选">
+          <div className="q-signal-list-header" aria-hidden="true">
+            <span>优先级</span><span>名称 / 行业</span><span>信号分</span><span>最新价 / 涨跌</span>
           </div>
-        )}
-        {candidates.length > 6 && (
-          <Button width="100%" label={showAll ? "收起" : `还有 ${candidates.length - 6} 只 · 展开全部`} variant="secondary" onClick={() => setShowAll((value) => !value)} />
-        )}
-      </section>
-
-      <section className="q-decision-drawers">
-        <Collapsible
-          isOpen={factorDrawerOpen}
-          trigger={
-            <span className="q-drawer-trigger-copy">
-              <strong>调整因子</strong>
-              <span>{filters.size} 个展示条件 · 云阶规则固定</span>
-              <small>只过滤已命中的云阶，不重新选股</small>
-            </span>
-          }
-          onOpenChange={setFactorDrawerOpen}
-          className="q-drawer-shell q-filter-drawer"
-        >
-          <div className="q-filter-note">云阶三段条件是固定入选规则。以下选项只帮助收窄显示范围，不会改变买点结论。</div>
-          <div className="q-filter-grid">
-            <Badge variant="success" label="云阶三段结构固定" />
-            {([
-              ["sector", "行业主线 / 升温"],
-              ["ai", "已有 AI 解释"],
-              ["wave", "第一波涨幅 ≥ 30%"],
-              ["heat", "行业热度 ≥ 60"],
-              ["industry", "行业信息完整"],
-            ] as Array<[CandidateFilter, string]>).map(([key, label]) => (
-              <Button key={key} label={label} variant={filters.has(key) ? "primary" : "secondary"} size="sm" onClick={() => toggleFilter(key)} />
-            ))}
-            {filters.size > 0 && <Button label="清空" variant="ghost" size="sm" onClick={() => setFilters(new Set())} />}
-          </div>
-        </Collapsible>
-
-        <Collapsible
-          defaultIsOpen={false}
-          trigger={
-            <span className="q-drawer-trigger-copy">
-              <strong>板块全景</strong>
-              <span>{sectors.data?.industries || sectorRows.length} 个行业 · 当前主线 {leader?.name || "待补全"}</span>
-              <small>点开看排名、趋势与板块广度</small>
-            </span>
-          }
-          className="q-drawer-shell"
-        >
-          <div className="q-sector-toolbar">
-            {(["全部", "主线", "升温", "接力"] as const).map((stage) => (
-              <Button key={stage} label={stage} size="sm" variant={sectorStage === stage ? "primary" : "ghost"} onClick={() => setSectorStage(stage)} />
-            ))}
-            <span>{sectorRows.length} / {sectors.data?.industries || sectorRows.length}</span>
-          </div>
-          <div className="q-sector-drawer-grid">
-            <div className="q-sector-list">
-              {sectorRows.map((sector, index) => (
-                <ClickableCard
-                  key={sector.name}
-                  label={`${sector.name}，热度 ${sector.score}`}
-                  padding={0}
-                  variant={activeSectorName === sector.name ? "blue" : "default"}
-                  onClick={() => setSelectedSector(sector.name)}
-                  className="q-sector-row"
-                >
-                  <span>{typeof sector.rank === "number" ? sector.rank : index + 1}</span>
-                  <span><strong>{sector.name}</strong><small>{stageLabel(sector.stage)}</small></span>
-                  <MiniSectorSparkline values={sector.heat_series} trend={sector.trend} />
-                  <span><b>{Math.round(sector.score)}</b><em className={(sector.delta3 ?? 0) >= 0 ? "q-up" : "q-down"}>{signed(sector.delta3, 1)}</em></span>
-                </ClickableCard>
+          {allCandidates.length ? (
+            <ol className="q-signal-list">
+              {allCandidates.map((stock, index) => (
+                <Item
+                  key={stock.code}
+                  as="li"
+                  align="start"
+                  density="spacious"
+                  marker={<span className="q-signal-rank">{index + 1}</span>}
+                  label={<span className="q-signal-name"><strong>{stock.name}</strong><code>{stock.code}</code></span>}
+                  description={(
+                    <span className="q-signal-industry">
+                      {stock.industry || "行业待补全"} · 正式动作：
+                      {formalDecisionAvailable
+                        ? stock.candidate_decision_available === true
+                          ? actionText(stock)
+                          : "未纳入正式模型"
+                        : "待生成"}
+                    </span>
+                  )}
+                  endContent={
+                    <span className="q-signal-metrics">
+                      <strong>{stock.priority_score?.toFixed(1) ?? "—"}</strong>
+                      <span><b>{stock.close.toFixed(2)}</b><em className={(stock.pct_change || 0) >= 0 ? "q-up" : "q-down"}>{signed(stock.pct_change, 2, "%")}</em></span>
+                    </span>
+                  }
+                  isSelected={selectedStock?.code === stock.code}
+                  onClick={() => setSelectedCode(stock.code)}
+                  data-testid={`candidate-${stock.code}`}
+                />
               ))}
+            </ol>
+          ) : (
+            <div className="q-empty-state">
+              <strong>今天云阶没有选出股票</strong>
+              <span>系统不会为了有票而降低突破确认门槛。</span>
             </div>
-            <aside className="q-sector-evidence">
-              <h3>{activeSector?.name || "板块"} · 当前状态</h3>
-              {activeSector && <p>热度 {Math.round(activeSector.score || 0)} · {stageLabel(activeSector.stage)} · 3 日 {signed(activeSector.delta3, 1, " 分")}</p>}
-              {activeSector?.breadth_ma10 != null && <p>站上 MA10 的板块成分股占比 {activeSector.breadth_ma10.toFixed(1)}%。</p>}
-            </aside>
-          </div>
-        </Collapsible>
+          )}
+        </aside>
+
+        <div className="q-research-pane">
+          {selectedStock ? (
+            <CandidateDetail
+              stock={selectedStock}
+              tradeDate={decision.trade_date}
+              marketContext={marketContext}
+              formalDecisionAvailable={formalDecisionAvailable}
+            />
+          ) : (
+            <div className="q-research-empty">选择一只候选查看证据。</div>
+          )}
+        </div>
       </section>
 
-      <p className="q-disclaimer">研究工具，不构成投资建议。云阶规则决定入选；结构占 70%、板块占 30%；市场温度只调整执行强度；AI 只解释，不增删候选、不改变排序。</p>
+      <p className="q-disclaimer">研究工具，不构成投资建议。云阶只生成结构信号；正式动作以决策账本为准，市场温度仅作执行背景。</p>
     </main>
   );
 }

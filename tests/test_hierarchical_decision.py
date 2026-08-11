@@ -65,6 +65,10 @@ class HierarchicalDecisionTest(unittest.TestCase):
                 "utils.hierarchical_decision._verify_manager_snapshot",
                 return_value={"available": True},
             ),
+            patch(
+                "utils.reference_snapshots.forward_capture_evidence",
+                return_value={"eligible": True, "reason": "ok"},
+            ),
         ]
         for item in self.common:
             item.start()
@@ -98,6 +102,30 @@ class HierarchicalDecisionTest(unittest.TestCase):
             "reason_codes": [],
         }
         return save_decision_run(run, [candidate])
+
+    @patch("utils.hierarchical_decision._baseline_candidates")
+    @patch("utils.hierarchical_decision.get_decision_config")
+    def test_late_backfill_is_recorded_as_non_actionable(self, config, baseline):
+        config.return_value = {
+            "enabled": True,
+            "strict_unvalidated_gate": True,
+            "preopen_event_check": True,
+            "weekly_gate_mode": "shadow",
+        }
+        with patch(
+            "utils.reference_snapshots.forward_capture_evidence",
+            return_value={
+                "eligible": False,
+                "reason": "outside_forward_capture_window",
+            },
+        ):
+            result = run_close_decision()
+
+        baseline.assert_not_called()
+        self.assertEqual(result["final_action"], "none")
+        self.assertEqual(result["status"], "degraded")
+        self.assertFalse(result["market"]["actionable"])
+        self.assertIn("backfill_non_actionable", result["reason_codes"])
 
     @patch(
         "utils.hierarchical_decision._active_model_bundle",

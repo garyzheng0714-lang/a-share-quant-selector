@@ -62,9 +62,9 @@ def _cap_yi(code: str, manager: CSVManager):
 def _sector_heat(manager: CSVManager) -> dict:
     """全行业热度榜 {行业: {score, delta3, stage, rank, total}}（只读展示，不参与排序）."""
     try:
-        from utils.sector_rotation import get_sector_rotation
+        from utils.sector_rotation import read_cached_sector_rotation
 
-        s = get_sector_rotation(manager)
+        s = read_cached_sector_rotation(manager)
         if not s.get("available"):
             return {}
         return s.get("heat_map") or {}
@@ -308,3 +308,52 @@ def api_review_bundle():
     except Exception as e:
         logger.error("复盘整包查询失败: %s", e, exc_info=True)
         return jsonify({"available": False, "reason": "复盘整包暂不可用"}), 500
+
+
+@factor_bp.route("/api/review/daily/latest", methods=["GET"])
+def api_daily_strategy_review():
+    """只读 worker 已物化的当日全策略评分与 AI 结论。"""
+    try:
+        from utils.data_freshness import local_data_status
+        from utils.daily_strategy_review import strategy_review_is_current
+        from utils.decision_ledger import (
+            get_latest_decision,
+            get_latest_strategy_review_run,
+        )
+        from utils.decision_versions import strategy_version
+
+        freshness = local_data_status()
+        review = get_latest_strategy_review_run()
+        decision = get_latest_decision("close")
+        snapshot_id = str(freshness.get("snapshot_id") or "")
+        decision_current = bool(
+            decision
+            and freshness.get("fresh") is True
+            and decision.get("trade_date") == freshness.get("local_date")
+            and decision.get("trade_date") == freshness.get("expected_date")
+            and decision.get("strategy_version") == strategy_version()
+            and decision.get("data_version") == f"snapshot-{snapshot_id}"
+            and (decision.get("market") or {}).get("snapshot_id") == snapshot_id
+        )
+        current = bool(
+            decision_current
+            and strategy_review_is_current(review, decision, snapshot_id)
+        )
+        if not current:
+            return jsonify(
+                {
+                    "available": False,
+                    "reason": (
+                        "stale_market_data"
+                        if freshness.get("fresh") is not True
+                        else "daily_strategy_review_not_ready"
+                    ),
+                    "freshness": freshness,
+                }
+            ), 503
+        return jsonify({"available": True, **review, "freshness": freshness})
+    except Exception as e:
+        logger.error("每日全策略复盘查询失败: %s", e, exc_info=True)
+        return jsonify(
+            {"available": False, "reason": "daily_strategy_review_unavailable"}
+        ), 500

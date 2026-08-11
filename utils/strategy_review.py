@@ -25,7 +25,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from utils.execution_model import DEFAULT_EXECUTION_POLICY, evaluate_trade
+from utils.execution_model import (
+    DEFAULT_EXECUTION_POLICY,
+    evaluate_trade,
+    load_exchange_sessions,
+)
 from utils.factor_scan import CACHE_DIR, DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -276,11 +280,7 @@ def seed_strategy_from_cache(strategy: str, cache_dir: Path | None = None) -> in
 
 
 def iter_strategy_hits(strategy: str, cache_dir: Path | None = None) -> list[dict]:
-    try:
-        seed_strategy_from_cache(strategy, cache_dir)
-    except Exception as exc:
-        logger.warning("策略账本补种失败 %s: %s", strategy, exc)
-
+    """只读合并持久账本与当前缓存；HTTP GET 不得隐式补种写盘。"""
     merged: dict[tuple[str, str], dict] = {}
     for pick in _read_ledger(strategy):
         merged[(pick["pick_date"], pick["code"])] = pick
@@ -291,11 +291,17 @@ def iter_strategy_hits(strategy: str, cache_dir: Path | None = None) -> list[dic
     return picks
 
 
-def _window_trade(daily: pd.DataFrame, pick_date: str, hold_days: int) -> dict:
+def _window_trade(
+    daily: pd.DataFrame,
+    pick_date: str,
+    hold_days: int,
+    trading_sessions: list[str],
+) -> dict:
     result = evaluate_trade(
         daily,
         pick_date,
         hold_days=hold_days,
+        trading_sessions=trading_sessions,
         policy=DEFAULT_EXECUTION_POLICY,
     )
     if not result.get("available"):
@@ -359,6 +365,7 @@ def enrich_pick(
     strategy: str,
     strategy_name: str,
     daily_cache: dict[str, pd.DataFrame] | None = None,
+    trading_sessions: list[str] | None = None,
 ) -> dict:
     code = pick["code"]
     pick_date = pick["pick_date"]
@@ -368,6 +375,8 @@ def enrich_pick(
         daily = daily_cache[code]
     else:
         daily = _normalize_daily(csv_manager.read_stock(code))
+    if trading_sessions is None:
+        trading_sessions = load_exchange_sessions(getattr(csv_manager, "data_dir", ""))
 
     row = {
         **pick,
@@ -420,7 +429,7 @@ def enrich_pick(
 
     windows = {}
     for hold in HOLD_WINDOWS:
-        trade = _window_trade(daily, pick_date, hold)
+        trade = _window_trade(daily, pick_date, hold, trading_sessions)
         windows[f"ret_{hold}"] = trade
         row[f"ret_{hold}"] = trade["net_return"]
         row[f"max_gain_{hold}"] = trade["max_gain"]
@@ -608,6 +617,7 @@ def build_strategy_review(
 
     capped = raw[: max(1, min(int(limit), 1000))]
     daily_cache: dict[str, pd.DataFrame] = {}
+    trading_sessions = load_exchange_sessions(getattr(csv_manager, "data_dir", ""))
     picks = [
         enrich_pick(
             csv_manager,
@@ -615,6 +625,7 @@ def build_strategy_review(
             strategy=strategy,
             strategy_name=name,
             daily_cache=daily_cache,
+            trading_sessions=trading_sessions,
         )
         for pick in capped
     ]
