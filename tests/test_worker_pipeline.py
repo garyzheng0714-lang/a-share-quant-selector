@@ -1,3 +1,4 @@
+import threading
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -18,25 +19,89 @@ def test_worker_releases_its_scheduler_lease_on_graceful_stop():
     release.assert_called_once_with("production-scheduler", worker.OWNER_ID)
 
 
-def test_worker_survives_scheduler_lease_takeover():
+def test_scheduler_loop_survives_lease_takeover_without_claiming_leadership():
     stopped = MagicMock()
     stopped.is_set.side_effect = [False, True]
+    leader = threading.Event()
+    leader.set()
     with (
-        patch.object(worker, "STOP", stopped),
-        patch.object(worker, "_initialize_worker_state"),
-        patch.object(worker.time, "monotonic", return_value=31),
         patch.object(
             worker,
             "reconcile_scheduled_tasks",
             side_effect=RuntimeError("scheduler_lease_not_current"),
         ),
-        patch.object(worker, "process_one", return_value=False),
-        patch.object(worker, "release_scheduler_lease") as release,
+    ):
+        worker._scheduler_loop(stopped, leader)
+
+    assert not leader.is_set()
+    stopped.wait.assert_called_once_with(worker.SCHEDULER_RECONCILE_INTERVAL_SECONDS)
+
+
+def test_scheduler_capacity_error_keeps_leader_available_to_drain_queue():
+    stopped = MagicMock()
+    stopped.is_set.side_effect = [False, True]
+    leader = threading.Event()
+    with patch.object(
+        worker,
+        "reconcile_scheduled_tasks",
+        side_effect=worker.TaskQueueCapacityExceeded(100, 100),
+    ):
+        worker._scheduler_loop(stopped, leader)
+
+    assert leader.is_set()
+    stopped.wait.assert_called_once_with(worker.SCHEDULER_RECONCILE_INTERVAL_SECONDS)
+
+
+def test_nonleader_worker_does_not_claim_tasks():
+    stopped = threading.Event()
+
+    def reconcile():
+        stopped.set()
+        return {"leader": False}
+
+    with (
+        patch.object(worker, "STOP", stopped),
+        patch.object(worker, "_initialize_worker_state"),
+        patch.object(worker, "reconcile_scheduled_tasks", side_effect=reconcile),
+        patch.object(worker, "process_one") as process,
+        patch.object(worker, "release_scheduler_lease"),
     ):
         worker.run_worker()
 
-    stopped.wait.assert_called_once_with(1)
-    release.assert_called_once_with("production-scheduler", worker.OWNER_ID)
+    process.assert_not_called()
+
+
+def test_long_task_does_not_block_scheduler_reconciliation():
+    stopped = threading.Event()
+    process_started = threading.Event()
+    reconciled_during_task = threading.Event()
+    reconciliations = 0
+
+    def reconcile():
+        nonlocal reconciliations
+        reconciliations += 1
+        if process_started.is_set():
+            reconciled_during_task.set()
+        return {"leader": True}
+
+    def process_one():
+        process_started.set()
+        assert reconciled_during_task.wait(timeout=1)
+        stopped.set()
+        return True
+
+    with (
+        patch.object(worker, "STOP", stopped),
+        patch.object(worker, "_initialize_worker_state"),
+        patch.object(worker, "reconcile_scheduled_tasks", side_effect=reconcile),
+        patch.object(worker, "process_one", side_effect=process_one),
+        patch.object(worker, "SCHEDULER_RECONCILE_INTERVAL_SECONDS", 0.01),
+        patch.object(worker, "release_scheduler_lease"),
+    ):
+        worker.run_worker()
+
+    assert reconciliations >= 2
+    assert reconciled_during_task.is_set()
 
 
 def test_close_scheduler_routes_fixed_key_through_recoverable_generation_enqueue():

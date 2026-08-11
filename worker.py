@@ -9,7 +9,6 @@ import signal
 import sqlite3
 import socket
 import threading
-import time
 import uuid
 from datetime import datetime, time as wall_time
 from zoneinfo import ZoneInfo
@@ -40,6 +39,7 @@ PREOPEN_RECONCILE_START = wall_time(8, 45)
 PREOPEN_RECONCILE_END = wall_time(9, 25)
 CLOSE_RECONCILE_START = wall_time(16, 0)
 SCHEDULER_RECOVERY_COOLDOWN_SECONDS = 300
+SCHEDULER_RECONCILE_INTERVAL_SECONDS = 30
 DATA_DIR = market_data_dir()
 PIPELINE_STAGE_LABELS = {
     "market_ingestion": "采集并发布行情",
@@ -1313,6 +1313,46 @@ def enqueue_scheduled_preopen() -> dict:
     return {"leader": True, **_enqueue_current_preopen(current)}
 
 
+def _scheduler_loop(
+    stop_event: threading.Event,
+    leader_event: threading.Event,
+) -> None:
+    """独立续约 leader 并补齐调度任务，不被长时间策略计算阻塞。"""
+    while not stop_event.is_set():
+        try:
+            reconciliation = reconcile_scheduled_tasks()
+            if reconciliation.get("leader") is True:
+                leader_event.set()
+            else:
+                leader_event.clear()
+        except TaskQueueCapacityExceeded as exc:
+            # 容量异常发生在本 worker 已取得 scheduler lease 之后。
+            # 保持 leader 身份才能继续消费队列，否则单 worker 会永久自锁。
+            leader_event.set()
+            logger.error(
+                "任务队列已满，调度任务未入队: pending=%d limit=%d",
+                exc.pending,
+                exc.limit,
+            )
+        except sqlite3.OperationalError as exc:
+            leader_event.clear()
+            logger.warning("调度账本暂时不可用，稍后重试: %s", exc)
+        except RuntimeError as exc:
+            if str(exc) != "scheduler_lease_not_current":
+                leader_event.clear()
+                logger.exception("调度线程异常，worker 停止并等待进程管理器重启")
+                stop_event.set()
+                return
+            leader_event.clear()
+            logger.warning("调度租约已由其他 leader 接管，本轮停止入队")
+        except Exception:
+            leader_event.clear()
+            logger.exception("调度线程未处理异常，worker 停止并等待进程管理器重启")
+            stop_event.set()
+            return
+        stop_event.wait(SCHEDULER_RECONCILE_INTERVAL_SECONDS)
+
+
 def _initialize_worker_state() -> None:
     """只读校验账本；worker 不承担迁移职责。"""
     from utils.runtime_schema import verify_runtime_schema
@@ -1323,29 +1363,23 @@ def _initialize_worker_state() -> None:
 def run_worker() -> None:
     _initialize_worker_state()
     logger.info("worker 已启动: %s", OWNER_ID)
-    last_reconciliation = 0.0
+    leader = threading.Event()
+    scheduler = threading.Thread(
+        target=_scheduler_loop,
+        args=(STOP, leader),
+        daemon=True,
+        name="production-scheduler",
+    )
+    scheduler.start()
     try:
         while not STOP.is_set():
-            now = time.monotonic()
-            if now - last_reconciliation >= 30:
-                try:
-                    reconcile_scheduled_tasks()
-                except TaskQueueCapacityExceeded as exc:
-                    logger.error(
-                        "任务队列已满，调度任务未入队: pending=%d limit=%d",
-                        exc.pending,
-                        exc.limit,
-                    )
-                except sqlite3.OperationalError as exc:
-                    logger.warning("调度账本暂时不可用，稍后重试: %s", exc)
-                except RuntimeError as exc:
-                    if str(exc) != "scheduler_lease_not_current":
-                        raise
-                    logger.warning("调度租约已由其他 leader 接管，本轮停止入队")
-                last_reconciliation = now
+            if not leader.wait(timeout=1):
+                continue
             if not process_one():
                 STOP.wait(1)
     finally:
+        STOP.set()
+        scheduler.join(timeout=2)
         try:
             release_scheduler_lease("production-scheduler", OWNER_ID)
         except (OSError, sqlite3.Error) as exc:
