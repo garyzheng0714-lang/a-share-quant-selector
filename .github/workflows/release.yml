@@ -359,7 +359,7 @@ jobs:
           snapshot_ready
           REMOTE
       - name: Deploy exact digest with backup and rollback
-        timeout-minutes: 45
+        timeout-minutes: 120
         env:
           HOST: ${{ secrets.SERVER_HOST }}
           USER: ${{ secrets.SERVER_USER }}
@@ -554,7 +554,10 @@ jobs:
             rollback_failed_release
             exit 1
           fi
-          for attempt in $(seq 1 360); do
+          # 首次上线需要把历史因子命中水合成可审计成交证据。
+          # 本地真实全量回填约 40 分钟，因此预留 90 分钟；
+          # 确定性 AI 配置/调用失败仍会在下方立即回滚。
+          for attempt in $(seq 1 1080); do
             web_container=$(docker compose --env-file .release.env ps -q web)
             worker_container=$(docker compose --env-file .release.env ps -q worker)
             if test -n "$web_container" \
@@ -585,6 +588,23 @@ jobs:
           decision = read_json("/api/decision/latest")
           quant_pick = read_json("/api/quant-pick")
           recommend = read_json("/api/recommend")
+          pipeline = read_json("/api/data-pipeline/status")
+          review = read_json("/api/review/daily/latest")
+          if (
+              review.get("available") is True
+              and review.get("ai_status") != "explained"
+          ):
+              diagnostic = {
+                  "status": review.get("ai_status"),
+                  "reason_codes": review.get("reason_codes") or [],
+                  "model": review.get("ai_model"),
+              }
+              print(
+                  "terminal_strategy_review_ai_failure="
+                  + json.dumps(diagnostic, ensure_ascii=False)
+              )
+              raise SystemExit(42)
+          evolution = read_json("/api/decision/evolution")
           snapshot_id = version.get("snapshot_id")
           scheduler = readiness.get("scheduler") or {}
           market_data = readiness.get("market_data") or {}
@@ -608,10 +628,53 @@ jobs:
           assert (quant_pick.get("decision") or {}).get("run_id") == decision.get("run_id")
           assert recommend.get("available") is True
           assert recommend.get("snapshot_id") == snapshot_id
+          assert pipeline.get("available") is True
+          assert pipeline.get("state") == "healthy"
+          learning = pipeline.get("learning") or {}
+          review_state = learning.get("review") or {}
+          evolution_state = learning.get("evolution") or {}
+          assert learning.get("available") is True
+          assert review_state.get("current") is True
+          assert evolution_state.get("current") is True
+          assert review.get("available") is True
+          assert review_state.get("ai_status") == "explained"
+          assert review.get("snapshot_id") == snapshot_id
+          assert review.get("decision_run_id") == decision.get("run_id")
+          assert review.get("status") in {"warming_up", "ready"}
+          review_report = review.get("report") or {}
+          assert review_report.get("snapshot_id") == snapshot_id
+          assert int(review_report.get("strategy_count") or 0) == 28
+          assert evolution.get("available") is True
+          evolution_data = evolution.get("data") or {}
+          evolution_metrics = evolution_data.get("metrics") or {}
+          assert evolution_data.get("status") == "complete"
+          assert evolution_data.get("data_version") == f"snapshot-{snapshot_id}"
+          assert evolution_metrics.get("market_snapshot_id") == snapshot_id
+          assert evolution_metrics.get("model_state") in {
+              "warming_up",
+              "shadow_observation",
+          }
+          assert isinstance(evolution_metrics.get("trained"), bool)
           candidates = recommend.get("candidates") or []
           assert len(candidates) == int(recommend.get("signal_count") or 0)
           assert all(row.get("industry_available") is True for row in candidates)
-          if candidates:
+          evaluated_candidates = [
+              row
+              for row in candidates
+              if row.get("candidate_decision_available") is True
+          ]
+          unevaluated_candidates = [
+              row
+              for row in candidates
+              if row.get("candidate_decision_available") is not True
+          ]
+          assert all(
+              row.get("action") == "none"
+              and row.get("action_source") == "not_evaluated"
+              and not row.get("ai_analysis")
+              for row in unevaluated_candidates
+          )
+          if evaluated_candidates:
               ai = recommend.get("ai") or {}
               if ai.get("available") is not True and (
                   ai.get("status") == "failed"
@@ -626,7 +689,14 @@ jobs:
                   raise SystemExit(42)
               assert ai.get("available") is True
               assert ai.get("status") == "explained"
-              assert all(row.get("ai_analysis") for row in candidates)
+              assert all(row.get("ai_analysis") for row in evaluated_candidates)
+          elif candidates:
+              ai = recommend.get("ai") or {}
+              assert ai.get("available") is False
+              assert ai.get("status") == "shadow_ranked"
+              assert "no_canonical_cloud_candidates" in (
+                  ai.get("reason_codes") or []
+              )
           PY
             then
               docker compose --env-file .release.env ps
