@@ -40,6 +40,24 @@ export function usePipelineStatus() {
   });
 }
 
+export function useCloudStairHistorySummary() {
+  return useSWR("cloud-stair-history-summary", () => api.getCloudStairHistorySummary(), {
+    revalidateOnFocus: false,
+  });
+}
+
+export function useCloudStairHistorySignals(params: {
+  q: string;
+  date: string;
+  page: number;
+}) {
+  const key = `cloud-stair-history-signals-${params.q}-${params.date}-${params.page}`;
+  return useSWR(key, () => api.getCloudStairHistorySignals(params), {
+    revalidateOnFocus: false,
+    keepPreviousData: true,
+  });
+}
+
 export function useCloudStairReview(limit = 300) {
   return useSWR(`cloud-stair-review-${limit}`, () => api.getCloudStairReview(limit), {
     refreshInterval: 600_000,

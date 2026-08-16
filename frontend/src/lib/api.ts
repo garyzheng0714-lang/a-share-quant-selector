@@ -1326,6 +1326,67 @@ export interface DailyStrategyReport {
   source_hash?: string;
 }
 
+export interface CloudStairHorizonStat {
+  horizon_sessions: number;
+  label: string;
+  signal_count: number;
+  settled_count: number;
+  settled_rate: number | null;
+  win_rate: number | null;
+  mean_net_return_pct: number | null;
+  mean_gross_return_pct: number | null;
+  median_net_return_pct: number | null;
+  mean_win_pct: number | null;
+  mean_loss_pct: number | null;
+}
+
+export interface CloudStairHistorySummary {
+  available: boolean;
+  reason?: string;
+  cutoff: string;
+  archive_id?: string | null;
+  signal_count: number;
+  stock_count: number;
+  first_date: string;
+  last_date: string;
+  today_count: number;
+  t1: CloudStairHorizonStat;
+  t5: CloudStairHorizonStat;
+  t20: CloudStairHorizonStat;
+  horizons: CloudStairHorizonStat[];
+  rule: string;
+}
+
+export interface CloudStairHistoryRow {
+  signal_id: string;
+  code: string;
+  name: string;
+  exchange: string;
+  board: string;
+  signal_date: string;
+  close: number | null;
+  t1_settled: boolean | null;
+  t1_win: boolean | null;
+  t1_net_return_pct: number | null;
+  t5_settled: boolean | null;
+  t5_net_return_pct: number | null;
+  t20_settled: boolean | null;
+  t20_net_return_pct: number | null;
+}
+
+export interface CloudStairHistorySignals {
+  available: boolean;
+  reason?: string;
+  cutoff: string;
+  query: string;
+  date: string;
+  page: number;
+  page_size: number;
+  total: number;
+  page_count: number;
+  rows: CloudStairHistoryRow[];
+}
+
 export interface DailyStrategyReviewResponse {
   available: boolean;
   reason?: string;
@@ -1402,6 +1463,23 @@ export const api = {
     request<PerformanceRecordsResponse>(`/api/performance/records?limit=${limit}`),
   refreshPerformance: () =>
     request<{ success: boolean; synced: number; updated: number }>("/api/performance/refresh", { method: "POST" }),
+  getCloudStairHistorySummary: () =>
+    request<CloudStairHistorySummary>("/api/review/cloud-stair-history/summary"),
+  getCloudStairHistorySignals: (params: {
+    q?: string;
+    date?: string;
+    page?: number;
+    pageSize?: number;
+  } = {}) => {
+    const search = new URLSearchParams();
+    if (params.q) search.set("q", params.q);
+    if (params.date) search.set("date", params.date);
+    search.set("page", String(params.page ?? 1));
+    search.set("page_size", String(params.pageSize ?? 50));
+    return request<CloudStairHistorySignals>(
+      `/api/review/cloud-stair-history/signals?${search.toString()}`,
+    );
+  },
   getCloudStairReview: (limit = 300) =>
     request<StrategyReviewResponse>(`/api/review/cloud-stair?limit=${limit}`),
   getReviewCatalog: () => request<StrategyReviewCatalogResponse>("/api/review/catalog"),

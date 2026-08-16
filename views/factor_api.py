@@ -220,6 +220,48 @@ def _parse_limit(
         return None, (jsonify({"available": False, "reason": "limit 必须是整数"}), 400)
 
 
+@factor_bp.route("/api/review/cloud-stair-history/summary", methods=["GET"])
+def api_cloud_stair_history_summary():
+    """全市已封存云阶历史的 T+1/T+5/T+20 汇总。"""
+    try:
+        from utils.cloud_stair_history_view import history_summary
+
+        return jsonify(history_summary())
+    except FileNotFoundError:
+        return jsonify({"available": False, "reason": "云阶历史尚未封存"}), 503
+    except Exception as exc:
+        logger.error("云阶历史汇总失败: %s", exc, exc_info=True)
+        return jsonify({"available": False, "reason": "云阶历史汇总暂不可用"}), 500
+
+
+@factor_bp.route("/api/review/cloud-stair-history/signals", methods=["GET"])
+def api_cloud_stair_history_signals():
+    """分页翻全市云阶历史信号。"""
+    try:
+        from utils.cloud_stair_history_view import history_signals
+
+        page = request.args.get("page", "1")
+        page_size = request.args.get("page_size", "50")
+        try:
+            page_n = int(page)
+            size_n = int(page_size)
+        except ValueError:
+            return jsonify({"available": False, "reason": "页码必须是整数"}), 400
+        return jsonify(
+            history_signals(
+                query=request.args.get("q", ""),
+                date=request.args.get("date", ""),
+                page=page_n,
+                page_size=size_n,
+            )
+        )
+    except FileNotFoundError:
+        return jsonify({"available": False, "reason": "云阶历史尚未封存"}), 503
+    except Exception as exc:
+        logger.error("云阶历史名单失败: %s", exc, exc_info=True)
+        return jsonify({"available": False, "reason": "云阶历史名单暂不可用"}), 500
+
+
 @factor_bp.route("/api/review/cloud-stair", methods=["GET"])
 def api_cloud_stair_review():
     """兼容旧入口：等价于 /api/review/strategy?strategy=cloud_stair。"""
