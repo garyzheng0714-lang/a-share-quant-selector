@@ -2026,7 +2026,33 @@
   flex-wrap: wrap;
   align-items: end;
   gap: 12px;
-  margin: 16px 0;
+  margin: 16px 0 12px;
+}
+
+.q-history-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0 0 16px;
+}
+
+.q-history-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.q-history-field > span {
+  width: 72px;
+  color: #615d59;
+  font-size: 13px;
+}
+
+.q-history-field-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .q-history-table-wrap {

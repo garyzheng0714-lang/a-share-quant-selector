@@ -22,6 +22,31 @@ class CloudStairHistoryViewTest(unittest.TestCase):
         self.assertTrue(all(row["signal_date"] == "2026-08-14" for row in day["rows"]))
         search = history_signals(query="002612", page=1, page_size=20)
         self.assertTrue(any(row["code"] == "002612" for row in search["rows"]))
+        wins = history_signals(horizon="t1", result="win", page=1, page_size=50)
+        self.assertGreater(wins["total"], 0)
+        self.assertLess(wins["total"], summary["signal_count"])
+        self.assertTrue(
+            all(
+                row["t1_settled"] is True and (row["t1_net_return_pct"] or 0) > 0
+                for row in wins["rows"]
+            )
+        )
+        losses = history_signals(horizon="t1", result="loss", page=1, page_size=20)
+        self.assertTrue(
+            all(
+                row["t1_settled"] is True and (row["t1_net_return_pct"] or 0) <= 0
+                for row in losses["rows"]
+            )
+        )
+        open_rows = history_signals(
+            horizon="t1", result="unsettled", page=1, page_size=50
+        )
+        self.assertGreaterEqual(open_rows["total"], 22)
+        self.assertTrue(all(row["t1_settled"] is False for row in open_rows["rows"]))
+        today_open = history_signals(
+            date="2026-08-14", horizon="t1", result="unsettled", page=1, page_size=50
+        )
+        self.assertEqual(today_open["total"], 22)
 
 
 if __name__ == "__main__":

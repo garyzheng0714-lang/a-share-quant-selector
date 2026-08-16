@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { Button, LoadError, Input, Skeleton } from "@/components/ui";
-import type { CloudStairHistoryRow, CloudStairHorizonStat } from "@/lib/api";
+import type {
+  CloudStairHistoryRow,
+  CloudStairHorizonStat,
+  HistoryHorizon,
+  HistoryResult,
+} from "@/lib/api";
 import { groupHistoryRows, visibleWindow } from "@/lib/history-feed";
 import { useCloudStairHistoryFeed, useCloudStairHistorySummary } from "@/lib/hooks";
 
@@ -47,8 +52,49 @@ function Kpi({
   );
 }
 
-function HistoryList({ query, date }: { query: string; date: string }) {
-  const feed = useCloudStairHistoryFeed(query, date);
+function FieldOptions<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="q-history-field">
+      <span>{label}</span>
+      <div className="q-history-field-options" role="group" aria-label={label}>
+        {options.map((option) => (
+          <Button
+            key={option.value}
+            type="button"
+            size="sm"
+            variant={value === option.value ? "primary" : "secondary"}
+            label={option.label}
+            aria-pressed={value === option.value}
+            onClick={() => onChange(option.value)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HistoryList({
+  query,
+  date,
+  horizon,
+  result,
+}: {
+  query: string;
+  date: string;
+  horizon: HistoryHorizon;
+  result: HistoryResult;
+}) {
+  const feed = useCloudStairHistoryFeed(query, date, horizon, result);
   const { ensureAhead, rows, total } = feed;
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -180,6 +226,8 @@ export function Component() {
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState("");
   const [date, setDate] = useState("");
+  const [horizon, setHorizon] = useState<HistoryHorizon>("t1");
+  const [result, setResult] = useState<HistoryResult>("all");
   const data = summary.data;
 
   if (summary.isLoading) {
@@ -313,7 +361,36 @@ export function Component() {
             }}
           />
         </form>
-        <HistoryList key={`${query}|${date}`} query={query} date={date} />
+        <div className="q-history-fields">
+          <FieldOptions
+            label="看哪一段"
+            value={horizon}
+            onChange={setHorizon}
+            options={[
+              { value: "t1", label: "T+1" },
+              { value: "t5", label: "T+5" },
+              { value: "t20", label: "T+20" },
+            ]}
+          />
+          <FieldOptions
+            label="结果"
+            value={result}
+            onChange={setResult}
+            options={[
+              { value: "all", label: "全部" },
+              { value: "win", label: "赚钱" },
+              { value: "loss", label: "亏" },
+              { value: "unsettled", label: "未走完" },
+            ]}
+          />
+        </div>
+        <HistoryList
+          key={`${query}|${date}|${horizon}|${result}`}
+          query={query}
+          date={date}
+          horizon={horizon}
+          result={result}
+        />
       </section>
     </main>
   );

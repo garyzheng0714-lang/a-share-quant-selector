@@ -45,10 +45,37 @@ def history_summary() -> dict[str, Any]:
     return payload
 
 
+HORIZON_KEYS = ("t1", "t5", "t20")
+RESULT_KEYS = ("all", "win", "loss", "unsettled")
+
+
+def _horizon_key(horizon: str) -> str:
+    key = str(horizon or "t1").strip().lower()
+    return key if key in HORIZON_KEYS else "t1"
+
+
+def _result_key(result: str) -> str:
+    key = str(result or "all").strip().lower()
+    return key if key in RESULT_KEYS else "all"
+
+
+def row_outcome(row: dict[str, Any], horizon: str) -> str:
+    key = _horizon_key(horizon)
+    if not row.get(f"{key}_settled"):
+        return "unsettled"
+    try:
+        value = float(row.get(f"{key}_net_return_pct"))
+    except (TypeError, ValueError):
+        return "unsettled"
+    return "win" if value > 0 else "loss"
+
+
 def history_signals(
     *,
     query: str = "",
     date: str = "",
+    horizon: str = "t1",
+    result: str = "all",
     page: int = 1,
     page_size: int = 50,
 ) -> dict[str, Any]:
@@ -68,6 +95,12 @@ def history_signals(
             if lowered in str(row.get("code") or "").lower()
             or lowered in str(row.get("name") or "").lower()
         ]
+    horizon_key = _horizon_key(horizon)
+    result_key = _result_key(result)
+    if result_key != "all":
+        listing = [
+            row for row in listing if row_outcome(row, horizon_key) == result_key
+        ]
     page = max(int(page or 1), 1)
     page_size = max(1, min(int(page_size or 50), 200))
     total = len(listing)
@@ -77,6 +110,8 @@ def history_signals(
         "cutoff": summary.get("cutoff"),
         "query": needle,
         "date": wanted_date,
+        "horizon": horizon_key,
+        "result": result_key,
         "page": page,
         "page_size": page_size,
         "total": total,

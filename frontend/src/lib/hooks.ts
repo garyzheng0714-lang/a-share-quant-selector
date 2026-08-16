@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { api } from "./api";
-import type { CloudStairHistoryRow } from "./api";
+import type { CloudStairHistoryRow, HistoryHorizon, HistoryResult } from "./api";
 import { HISTORY_PAGE_SIZE, shouldPrefetchMore } from "./history-feed";
 
 export function useKline(code: string | null, period: string = "daily") {
@@ -49,7 +49,12 @@ export function useCloudStairHistorySummary() {
   });
 }
 
-export function useCloudStairHistoryFeed(query: string, date: string) {
+export function useCloudStairHistoryFeed(
+  query: string,
+  date: string,
+  horizon: HistoryHorizon = "t1",
+  result: HistoryResult = "all",
+) {
   const [rows, setRows] = useState<CloudStairHistoryRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -68,6 +73,8 @@ export function useCloudStairHistoryFeed(query: string, date: string) {
         const payload = await api.getCloudStairHistorySignals({
           q: query,
           date,
+          horizon,
+          result,
           page: nextPage,
           pageSize: HISTORY_PAGE_SIZE,
         });
@@ -85,7 +92,7 @@ export function useCloudStairHistoryFeed(query: string, date: string) {
         }
       }
     },
-    [date, query],
+    [date, horizon, query, result],
   );
 
   useEffect(() => {

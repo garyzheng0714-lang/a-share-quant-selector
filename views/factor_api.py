@@ -251,6 +251,8 @@ def api_cloud_stair_history_signals():
             history_signals(
                 query=request.args.get("q", ""),
                 date=request.args.get("date", ""),
+                horizon=request.args.get("horizon", "t1"),
+                result=request.args.get("result", "all"),
                 page=page_n,
                 page_size=size_n,
             )

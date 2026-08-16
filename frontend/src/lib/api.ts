@@ -1374,12 +1374,17 @@ export interface CloudStairHistoryRow {
   t20_net_return_pct: number | null;
 }
 
+export type HistoryHorizon = "t1" | "t5" | "t20";
+export type HistoryResult = "all" | "win" | "loss" | "unsettled";
+
 export interface CloudStairHistorySignals {
   available: boolean;
   reason?: string;
   cutoff: string;
   query: string;
   date: string;
+  horizon?: HistoryHorizon;
+  result?: HistoryResult;
   page: number;
   page_size: number;
   total: number;
@@ -1468,12 +1473,16 @@ export const api = {
   getCloudStairHistorySignals: (params: {
     q?: string;
     date?: string;
+    horizon?: HistoryHorizon;
+    result?: HistoryResult;
     page?: number;
     pageSize?: number;
   } = {}) => {
     const search = new URLSearchParams();
     if (params.q) search.set("q", params.q);
     if (params.date) search.set("date", params.date);
+    if (params.horizon) search.set("horizon", params.horizon);
+    if (params.result && params.result !== "all") search.set("result", params.result);
     search.set("page", String(params.page ?? 1));
     search.set("page_size", String(params.pageSize ?? 50));
     return request<CloudStairHistorySignals>(
