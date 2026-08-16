@@ -2033,6 +2033,19 @@
   overflow: auto;
 }
 
+.q-history-scroll {
+  height: min(560px, calc(100dvh - 220px));
+  min-height: 240px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--color-border);
+}
+
+.q-history-scroll:focus-visible {
+  outline: 2px solid #0075de;
+  outline-offset: 2px;
+}
+
 .q-history-table {
   width: 100%;
   border-collapse: collapse;
@@ -2050,6 +2063,34 @@
 .q-history-table th {
   color: #615d59;
   font-weight: 500;
+}
+
+.q-history-scroll .q-history-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f6f5f4;
+}
+
+.q-history-group th {
+  position: sticky;
+  top: 36px;
+  z-index: 1;
+  padding-top: 12px;
+  color: #191918;
+  font-weight: 600;
+  background: #f6f5f4;
+}
+
+.q-history-group span {
+  margin-left: 8px;
+  color: #615d59;
+  font-weight: 500;
+}
+
+.q-history-spacer td {
+  padding: 0;
+  border: 0;
 }
 
 .q-history-table .is-num {
@@ -2072,19 +2113,15 @@
   color: #615d59;
 }
 
-.q-history-pager {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  margin-top: 16px;
+.q-history-status,
+.q-history-loading {
+  margin-top: 12px;
   color: #615d59;
   font-size: 13px;
 }
 
-.q-history-pager > div {
-  display: flex;
-  gap: 8px;
+.q-history-loading {
+  margin: 8px 0 12px;
 }
 
 .q-history-list-skeleton {

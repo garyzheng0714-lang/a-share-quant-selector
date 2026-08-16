@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { Button, LoadError, Input, Skeleton } from "@/components/ui";
 import type { CloudStairHistoryRow, CloudStairHorizonStat } from "@/lib/api";
-import { useCloudStairHistorySignals, useCloudStairHistorySummary } from "@/lib/hooks";
+import { groupHistoryRows, visibleWindow } from "@/lib/history-feed";
+import { useCloudStairHistoryFeed, useCloudStairHistorySummary } from "@/lib/hooks";
 
 function pct(value?: number | null, signed = true) {
   if (value == null || !Number.isFinite(value)) return "—";
@@ -46,15 +47,140 @@ function Kpi({
   );
 }
 
+function HistoryList({ query, date }: { query: string; date: string }) {
+  const feed = useCloudStairHistoryFeed(query, date);
+  const { ensureAhead, rows, total } = feed;
+  const scroller = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewport, setViewport] = useState(560);
+  const items = useMemo(() => groupHistoryRows(rows), [rows]);
+  const view = useMemo(
+    () => visibleWindow(items, scrollTop, viewport),
+    [items, scrollTop, viewport],
+  );
+
+  useEffect(() => {
+    const node = scroller.current;
+    if (!node) return;
+    setViewport(node.clientHeight);
+    ensureAhead(node.scrollHeight - node.scrollTop - node.clientHeight);
+  }, [ensureAhead, rows.length, total]);
+
+  useEffect(() => {
+    const node = scroller.current;
+    if (!node) return;
+    const frame = { id: 0 };
+    const onScroll = () => {
+      cancelAnimationFrame(frame.id);
+      frame.id = requestAnimationFrame(() => {
+        setScrollTop(node.scrollTop);
+        ensureAhead(node.scrollHeight - node.scrollTop - node.clientHeight);
+      });
+    };
+    node.addEventListener("scroll", onScroll, { passive: true });
+    const observer = new ResizeObserver(() => {
+      setViewport(node.clientHeight);
+    });
+    observer.observe(node);
+    return () => {
+      cancelAnimationFrame(frame.id);
+      node.removeEventListener("scroll", onScroll);
+      observer.disconnect();
+    };
+  }, [ensureAhead]);
+
+  if (feed.loading && feed.rows.length === 0) {
+    return <Skeleton className="q-history-list-skeleton" />;
+  }
+  if (feed.failed && feed.rows.length === 0) {
+    return <LoadError label="名单加载失败" onRetry={feed.reload} />;
+  }
+  if (feed.rows.length === 0) {
+    return <p className="q-history-empty">没有符合条件的云阶记录。</p>;
+  }
+
+  const slice = items.slice(view.start, view.end);
+
+  return (
+    <>
+      <div
+        ref={scroller}
+        className="q-history-scroll"
+        tabIndex={0}
+        role="region"
+        aria-label="全部历史云阶"
+      >
+        <table className="q-history-table">
+          <thead>
+            <tr>
+              <th>股票</th>
+              <th className="is-num">T+1</th>
+              <th className="is-num">T+5</th>
+              <th className="is-num">T+20</th>
+            </tr>
+          </thead>
+          <tbody>
+            {view.padTop > 0 ? (
+              <tr className="q-history-spacer" aria-hidden="true">
+                <td colSpan={4} style={{ height: view.padTop }} />
+              </tr>
+            ) : null}
+            {slice.map((item) =>
+              item.kind === "group" ? (
+                <tr key={item.key} className="q-history-group">
+                  <th scope="rowgroup" colSpan={4}>
+                    {item.date}
+                    <span> · {item.count.toLocaleString()} 次</span>
+                  </th>
+                </tr>
+              ) : (
+                <tr key={item.key}>
+                  <td>
+                    <Link to={`/stock/${item.row.code}`} className="q-history-code">
+                      {item.row.code} {item.row.name}
+                    </Link>
+                  </td>
+                  <td className={`is-num ${item.row.t1_settled ? tone(item.row.t1_net_return_pct) : ""}`}>
+                    {settledLabel(item.row, "t1")}
+                    {item.row.t1_win === true ? " 赚" : item.row.t1_win === false ? " 亏" : ""}
+                  </td>
+                  <td className={`is-num ${item.row.t5_settled ? tone(item.row.t5_net_return_pct) : ""}`}>
+                    {settledLabel(item.row, "t5")}
+                  </td>
+                  <td className={`is-num ${item.row.t20_settled ? tone(item.row.t20_net_return_pct) : ""}`}>
+                    {settledLabel(item.row, "t20")}
+                  </td>
+                </tr>
+              ),
+            )}
+            {view.padBottom > 0 ? (
+              <tr className="q-history-spacer" aria-hidden="true">
+                <td colSpan={4} style={{ height: view.padBottom }} />
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+        {feed.loadingMore ? (
+          <p className="q-history-loading">正在加载后面的记录</p>
+        ) : null}
+      </div>
+      <p className="q-history-status">
+        已加载 {feed.rows.length.toLocaleString()} / {feed.total.toLocaleString()} 次
+        {feed.hasMore ? "，继续下拉会自动补后面的。" : "，已经到底。"}
+      </p>
+      {feed.failed ? (
+        <LoadError label="后面的记录没加载上" onRetry={() => feed.ensureAhead(0)} />
+      ) : null}
+    </>
+  );
+}
+
 export function Component() {
   const summary = useCloudStairHistorySummary();
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState("");
   const [date, setDate] = useState("");
-  const [page, setPage] = useState(1);
-  const list = useCloudStairHistorySignals({ q: query, date, page });
   const data = summary.data;
-  const rows = list.data?.rows || [];
 
   if (summary.isLoading) {
     return (
@@ -84,8 +210,6 @@ export function Component() {
   const t1 = data.t1;
   const t5 = data.t5;
   const t20 = data.t20;
-  const pageCount = list.data?.page_count || 0;
-  const total = list.data?.total ?? 0;
 
   return (
     <main className="q-review-page">
@@ -170,7 +294,6 @@ export function Component() {
           onSubmit={(event) => {
             event.preventDefault();
             setQuery(draft.trim());
-            setPage(1);
           }}
         >
           <Input
@@ -187,77 +310,10 @@ export function Component() {
             size="sm"
             onClick={() => {
               setDate((current) => (current === data.cutoff ? "" : data.cutoff));
-              setPage(1);
             }}
           />
         </form>
-
-        {list.isLoading && !list.data ? (
-          <Skeleton className="q-history-list-skeleton" />
-        ) : list.error ? (
-          <LoadError label="名单加载失败" onRetry={() => list.mutate()} />
-        ) : rows.length === 0 ? (
-          <p className="q-history-empty">没有符合条件的云阶记录。</p>
-        ) : (
-          <>
-            <div className="q-history-table-wrap">
-              <table className="q-history-table">
-                <thead>
-                  <tr>
-                    <th>日期</th>
-                    <th>股票</th>
-                    <th className="is-num">T+1</th>
-                    <th className="is-num">T+5</th>
-                    <th className="is-num">T+20</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.signal_id}>
-                      <td>{row.signal_date}</td>
-                      <td>
-                        <Link to={`/stock/${row.code}`} className="q-history-code">
-                          {row.code} {row.name}
-                        </Link>
-                      </td>
-                      <td className={`is-num ${row.t1_settled ? tone(row.t1_net_return_pct) : ""}`}>
-                        {settledLabel(row, "t1")}
-                        {row.t1_win === true ? " 赚" : row.t1_win === false ? " 亏" : ""}
-                      </td>
-                      <td className={`is-num ${row.t5_settled ? tone(row.t5_net_return_pct) : ""}`}>
-                        {settledLabel(row, "t5")}
-                      </td>
-                      <td className={`is-num ${row.t20_settled ? tone(row.t20_net_return_pct) : ""}`}>
-                        {settledLabel(row, "t20")}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="q-history-pager">
-              <span>
-                第 {page} / {Math.max(pageCount, 1)} 页，共 {total.toLocaleString()} 条
-              </span>
-              <div>
-                <Button
-                  label="上一页"
-                  variant="secondary"
-                  size="sm"
-                  disabled={page <= 1}
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
-                />
-                <Button
-                  label="下一页"
-                  variant="secondary"
-                  size="sm"
-                  disabled={page >= pageCount}
-                  onClick={() => setPage((current) => current + 1)}
-                />
-              </div>
-            </div>
-          </>
-        )}
+        <HistoryList key={`${query}|${date}`} query={query} date={date} />
       </section>
     </main>
   );

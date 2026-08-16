@@ -1,5 +1,8 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { api } from "./api";
+import type { CloudStairHistoryRow } from "./api";
+import { HISTORY_PAGE_SIZE, shouldPrefetchMore } from "./history-feed";
 
 export function useKline(code: string | null, period: string = "daily") {
   return useSWR(code ? `kline-${code}-${period}` : null, () => api.getKline(code!, period));
@@ -46,16 +49,91 @@ export function useCloudStairHistorySummary() {
   });
 }
 
-export function useCloudStairHistorySignals(params: {
-  q: string;
-  date: string;
-  page: number;
-}) {
-  const key = `cloud-stair-history-signals-${params.q}-${params.date}-${params.page}`;
-  return useSWR(key, () => api.getCloudStairHistorySignals(params), {
-    revalidateOnFocus: false,
-    keepPreviousData: true,
-  });
+export function useCloudStairHistoryFeed(query: string, date: string) {
+  const [rows, setRows] = useState<CloudStairHistoryRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const generation = useRef(0);
+  const inflight = useRef(false);
+
+  const load = useCallback(
+    async (nextPage: number, expected: number, replace: boolean) => {
+      if (inflight.current && !replace) return;
+      inflight.current = true;
+      setLoading(true);
+      setFailed(false);
+      try {
+        const payload = await api.getCloudStairHistorySignals({
+          q: query,
+          date,
+          page: nextPage,
+          pageSize: HISTORY_PAGE_SIZE,
+        });
+        if (generation.current !== expected) return;
+        setRows((current) => (replace ? payload.rows : current.concat(payload.rows)));
+        setTotal(payload.total);
+        setPage(nextPage);
+      } catch {
+        if (generation.current !== expected) return;
+        setFailed(true);
+      } finally {
+        if (generation.current === expected) {
+          inflight.current = false;
+          setLoading(false);
+        }
+      }
+    },
+    [date, query],
+  );
+
+  useEffect(() => {
+    const expected = generation.current + 1;
+    generation.current = expected;
+    inflight.current = false;
+    setRows([]);
+    setTotal(0);
+    setPage(0);
+    void load(1, expected, true);
+  }, [load]);
+
+  const hasMore = total === 0 ? page === 0 : rows.length < total;
+
+  const ensureAhead = useCallback(
+    (remainingPx: number) => {
+      if (failed || inflight.current || !hasMore || page < 1) return;
+      if (
+        shouldPrefetchMore({
+          loadedCount: rows.length,
+          total,
+          remainingPx,
+        })
+      ) {
+        void load(page + 1, generation.current, false);
+      }
+    },
+    [failed, hasMore, load, page, rows.length, total],
+  );
+
+  return {
+    rows,
+    total,
+    loading,
+    loadingMore: loading && rows.length > 0,
+    failed,
+    hasMore,
+    ensureAhead,
+    reload: () => {
+      const expected = generation.current + 1;
+      generation.current = expected;
+      inflight.current = false;
+      setRows([]);
+      setTotal(0);
+      setPage(0);
+      void load(1, expected, true);
+    },
+  };
 }
 
 export function useCloudStairReview(limit = 300) {
