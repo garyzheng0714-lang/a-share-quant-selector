@@ -611,7 +611,23 @@ jobs:
           candidates = recommend.get("candidates") or []
           assert len(candidates) == int(recommend.get("signal_count") or 0)
           assert all(row.get("industry_available") is True for row in candidates)
-          if candidates:
+          evaluated_candidates = [
+              row
+              for row in candidates
+              if row.get("candidate_decision_available") is True
+          ]
+          unevaluated_candidates = [
+              row
+              for row in candidates
+              if row.get("candidate_decision_available") is not True
+          ]
+          assert all(
+              row.get("action") == "none"
+              and row.get("action_source") == "not_evaluated"
+              and not row.get("ai_analysis")
+              for row in unevaluated_candidates
+          )
+          if evaluated_candidates:
               ai = recommend.get("ai") or {}
               if ai.get("available") is not True and (
                   ai.get("status") == "failed"
@@ -626,7 +642,14 @@ jobs:
                   raise SystemExit(42)
               assert ai.get("available") is True
               assert ai.get("status") == "explained"
-              assert all(row.get("ai_analysis") for row in candidates)
+              assert all(row.get("ai_analysis") for row in evaluated_candidates)
+          elif candidates:
+              ai = recommend.get("ai") or {}
+              assert ai.get("available") is False
+              assert ai.get("status") == "shadow_ranked"
+              assert "no_canonical_cloud_candidates" in (
+                  ai.get("reason_codes") or []
+              )
           PY
             then
               docker compose --env-file .release.env ps
