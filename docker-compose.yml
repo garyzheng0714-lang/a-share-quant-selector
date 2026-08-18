@@ -59,6 +59,8 @@ services:
     <<: *quant-common
     profiles: ["canary"]
     restart: "no"
+    tmpfs:
+      - /tmp:size=1g,noexec,nosuid,nodev
     command: ["gunicorn", "--bind=0.0.0.0:5000", "--workers=1", "--threads=8", "--timeout=60", "web_server:create_app()"]
     volumes:
       - quant-data:/app/data:ro

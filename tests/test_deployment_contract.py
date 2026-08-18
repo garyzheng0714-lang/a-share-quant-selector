@@ -21,6 +21,7 @@ def test_production_canary_has_no_port_and_only_read_only_data_mounts() -> None:
         "quant-data:/app/data:ro",
         "quant-state:/app/state:ro",
     ]
+    assert canary["tmpfs"] == ["/tmp:size=1g,noexec,nosuid,nodev"]
 
 
 def test_release_quiesces_writers_and_validates_canary_before_switch() -> None:
@@ -44,7 +45,6 @@ def test_release_quiesces_writers_and_validates_canary_before_switch() -> None:
     )
     positions = [script.index(fragment) for fragment in expected_order]
     assert positions == sorted(positions)
-    assert "--tmpfs /tmp:size=1g,noexec,nosuid,nodev" in script
     assert "cleanup_canary" in script
     assert "PREVIOUS_STOPPED" in script
     assert "docker inspect -f '{{.Config.Image}}' \"$CANARY_NAME\"" in script
