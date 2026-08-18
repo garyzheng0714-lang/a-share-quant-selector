@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { Badge } from "@astryxdesign/core/Badge";
 import { Button } from "@astryxdesign/core/Button";
 import { Icon } from "@astryxdesign/core/Icon";
 import { Item } from "@astryxdesign/core/Item";
@@ -8,9 +7,9 @@ import { Link } from "react-router";
 import { DecisionKline, type DecisionPeriod, type DecisionSubPanel } from "@/components/decision/decision-kline";
 import { LoadError, Skeleton } from "@/components/ui";
 import type { CloudMarketContext, RecommendStock } from "@/lib/api";
-import { useCloudStairReview, useKline, useRecommend, useSectorDetail } from "@/lib/hooks";
+import { useKline, useRecommend, useSectorDetail } from "@/lib/hooks";
 
-type DetailPanel = "history" | "peers" | null;
+type DetailPanel = "peers" | null;
 
 const periodLabels: Record<DecisionPeriod, string> = {
   daily: "日K",
@@ -25,8 +24,24 @@ function signed(value?: number | null, digits = 1, suffix = "") {
 
 function sectorDescriptor(stock: RecommendStock) {
   const sector = stock.sector;
-  if (!sector) return `${stock.industry || "行业待补全"} · 行业数据待补全`;
-  return `${stock.industry} · 行业第 ${sector.rank}/${sector.total} · 热度 ${Math.round(sector.score)}`;
+  if (!sector || sector.score == null) return stock.industry || "行业待补全";
+  return `${stock.industry || "行业待补全"} · 热度 ${Math.round(sector.score)} · 第 ${sector.rank}/${sector.total}`;
+}
+
+function capText(stock: RecommendStock) {
+  return stock.cap_yi == null ? "市值待补全" : `市值 ${stock.cap_yi.toFixed(0)} 亿`;
+}
+
+function historyText(stock: RecommendStock) {
+  const history = stock.history;
+  if (!history?.appear_count) return "还没有可回看的进场记录";
+  const rate = history.t5.win_rate;
+  const rateText = rate == null ? "T+5 胜率待结算" : `T+5 胜率 ${rate}%`;
+  return `进过 ${history.appear_count} 次 · ${rateText}`;
+}
+
+function stockFacts(stock: RecommendStock) {
+  return [sectorDescriptor(stock), capText(stock), historyText(stock)].join(" · ");
 }
 
 function signalDetail(detail: string) {
@@ -40,27 +55,14 @@ function decisionActionText(action: RecommendStock["action"]) {
   return "观察";
 }
 
-function actionText(stock: RecommendStock) {
-  return stock.action_label || decisionActionText(stock.action);
-}
-
-function actionVariant(action: RecommendStock["action"]) {
-  if (action === "buy") return "red" as const;
-  if (action === "avoid") return "error" as const;
-  if (action === "none") return "neutral" as const;
-  return "warning" as const;
-}
-
 function CandidateDetail({
   stock,
   tradeDate,
-  marketContext,
-  formalDecisionAvailable,
 }: {
   stock: RecommendStock;
   tradeDate?: string;
   marketContext?: CloudMarketContext;
-  formalDecisionAvailable: boolean;
+  formalDecisionAvailable?: boolean;
 }) {
   const [period, setPeriod] = useState<DecisionPeriod>("daily");
   const [chartSettings, setChartSettings] = useState(false);
@@ -69,23 +71,10 @@ function CandidateDetail({
   const [overlays, setOverlays] = useState({ dk: true, trend: true, signals: true });
   const [subPanel, setSubPanel] = useState<DecisionSubPanel>("kdj");
   const kline = useKline(stock.code, period);
-  const review = useCloudStairReview(500);
   const peers = useSectorDetail(panel === "peers" && stock.industry_available ? stock.industry : null);
-
-  const history = useMemo(
-    () => (review.data?.picks || []).filter((pick) => pick.code === stock.code).slice(0, 10),
-    [review.data?.picks, stock.code],
-  );
   const lastRow = kline.data?.data?.at(-1);
   const readoutDate = String(lastRow?.[0] || tradeDate || "—");
   const readoutClose = typeof lastRow?.[2] === "number" ? lastRow[2].toFixed(2) : stock.close.toFixed(2);
-  const executionMode = marketContext?.execution_mode || "按计划";
-  const candidateFormalAvailable = formalDecisionAvailable && stock.candidate_decision_available === true;
-  const formalAction = candidateFormalAvailable
-    ? actionText(stock)
-    : formalDecisionAvailable
-      ? "未纳入正式模型"
-      : "待生成";
 
   const togglePanel = (next: Exclude<DetailPanel, null>) => setPanel((current) => current === next ? null : next);
   const toggleMa = (key: keyof typeof ma) => setMa((current) => ({ ...current, [key]: !current[key] }));
@@ -102,12 +91,8 @@ function CandidateDetail({
               <Icon icon="check" size="xsm" color="secondary" label="云阶结构已确认" />
               {stock.signal_label || "云阶结构已确认"}
             </span>
-            <Badge
-              variant={candidateFormalAvailable ? actionVariant(stock.action) : "neutral"}
-              label={`正式动作：${formalAction}`}
-            />
           </div>
-          <p>{sectorDescriptor(stock)}</p>
+          <p>{stockFacts(stock)}</p>
         </div>
         <div className="q-research-price">
           <strong>{stock.close.toFixed(2)}</strong>
@@ -201,41 +186,24 @@ function CandidateDetail({
 
         <div className="q-next-step">
           <div>
-            <span>正式动作</span>
-            <strong>{formalAction}</strong>
+            <span>历史进出</span>
+            <strong>{historyText(stock)}</strong>
           </div>
           <div>
-            <span>结构证据</span>
-            <strong>{stock.evidence_grade ? `${stock.evidence_grade}级` : "待评估"}</strong>
+            <span>行业 / 市值</span>
+            <strong>{sectorDescriptor(stock)} · {capText(stock)}</strong>
           </div>
-          <p>
-            {formalDecisionAvailable
-              ? stock.action_detail || "正式动作以决策账本为准。"
-              : "正式决策尚未生成，当前只展示结构信号。"}
-            {` 市场执行背景：${executionMode}。`}
-          </p>
+          {stock.history?.recent_dates?.length ? (
+            <p>最近几次：{stock.history.recent_dates.join("、")}</p>
+          ) : (
+            <p>这只股票还没有更早的云街进出记录。</p>
+          )}
         </div>
 
         <div className="q-detail-links">
           <Link to={`/stock/${stock.code}`}>查看个股详情</Link>
-          <Button label={`历史被选中记录 (${history.length})`} variant="ghost" size="sm" onClick={() => togglePanel("history")} />
           <Button label="同板块横向对比" variant="ghost" size="sm" onClick={() => togglePanel("peers")} />
         </div>
-
-        {panel === "history" && (
-          <div className="q-inline-panel q-history-table" role="region" aria-label="历史被选中记录">
-            <div className="q-history-head"><span>选中日</span><span>入场日</span><span>T+1</span><span>T+5</span><span>T+10</span><span>最大回撤</span></div>
-            {review.isLoading ? <Skeleton className="h-24" /> : history.length ? history.map((row) => (
-              <div className="q-history-row" key={`${row.pick_date}-${row.code}`}>
-                <span>{row.pick_date}</span><span>{row.entry_date || "待入场"}</span>
-                <span className={row.ret_1 != null && row.ret_1 >= 0 ? "q-up" : "q-down"}>{signed(row.ret_1, 2, "%")}</span>
-                <span className={row.ret_5 != null && row.ret_5 >= 0 ? "q-up" : "q-down"}>{signed(row.ret_5, 2, "%")}</span>
-                <span className={row.ret_10 != null && row.ret_10 >= 0 ? "q-up" : "q-down"}>{signed(row.ret_10, 2, "%")}</span>
-                <span className="q-down">{signed(row.max_dd_5, 2, "%")}</span>
-              </div>
-            )) : <p>这只股票暂时没有可回读的云阶历史记录。</p>}
-          </div>
-        )}
 
         {panel === "peers" && (
           <div className="q-inline-panel q-peer-table" role="region" aria-label="同板块横向对比">
@@ -295,13 +263,9 @@ export function Component() {
         <div className="q-decision-title-group">
           <h1>收盘决策</h1>
           <div className="q-decision-summary">
-            <strong>{allCandidates.length} 个结构信号</strong>
+            <strong>{allCandidates.length} 只云街候选</strong>
             <span aria-hidden="true" />
-            <b>
-              {formalDecisionAvailable
-                ? `${decision.today_buy?.length || 0} 只正式允许买入`
-                : "正式动作待生成"}
-            </b>
+            <b>{dataReady ? "行情就绪" : "行情需复核"}</b>
             <time dateTime={decision.trade_date}>{decision.trade_date}</time>
             <em className={dataReady ? "is-ready" : "is-review"}>{dataReady ? "行情就绪" : "行情需复核"}</em>
             <em className={formalDecisionAvailable && canonical?.status !== "degraded" ? "is-ready" : "is-review"}>
@@ -323,35 +287,35 @@ export function Component() {
           </div>
           {allCandidates.length ? (
             <ol className="q-signal-list">
-              {allCandidates.map((stock, index) => (
-                <Item
-                  key={stock.code}
-                  as="li"
-                  align="start"
-                  density="spacious"
-                  marker={<span className="q-signal-rank">{index + 1}</span>}
-                  label={<span className="q-signal-name"><strong>{stock.name}</strong><code>{stock.code}</code></span>}
-                  description={(
-                    <span className="q-signal-industry">
-                      {stock.industry || "行业待补全"} · 正式动作：
-                      {formalDecisionAvailable
-                        ? stock.candidate_decision_available === true
-                          ? actionText(stock)
-                          : "未纳入正式模型"
-                        : "待生成"}
-                    </span>
-                  )}
-                  endContent={
-                    <span className="q-signal-metrics">
-                      <strong>{stock.priority_score?.toFixed(1) ?? "—"}</strong>
-                      <span><b>{stock.close.toFixed(2)}</b><em className={(stock.pct_change || 0) >= 0 ? "q-up" : "q-down"}>{signed(stock.pct_change, 2, "%")}</em></span>
-                    </span>
-                  }
-                  isSelected={selectedStock?.code === stock.code}
-                  onClick={() => setSelectedCode(stock.code)}
-                  data-testid={`candidate-${stock.code}`}
-                />
-              ))}
+              {allCandidates.map((stock, index) => {
+                const selected = selectedStock?.code === stock.code;
+                return (
+                  <li key={stock.code} className={selected ? "q-signal-item is-open" : "q-signal-item"}>
+                    <Item
+                      as="div"
+                      align="start"
+                      density="spacious"
+                      marker={<span className="q-signal-rank">{index + 1}</span>}
+                      label={<span className="q-signal-name"><strong>{stock.name}</strong><code>{stock.code}</code></span>}
+                      description={<span className="q-signal-industry">{stockFacts(stock)}</span>}
+                      endContent={
+                        <span className="q-signal-metrics">
+                          <strong>{stock.priority_score?.toFixed(1) ?? "—"}</strong>
+                          <span><b>{stock.close.toFixed(2)}</b><em className={(stock.pct_change || 0) >= 0 ? "q-up" : "q-down"}>{signed(stock.pct_change, 2, "%")}</em></span>
+                        </span>
+                      }
+                      isSelected={selected}
+                      onClick={() => setSelectedCode(stock.code)}
+                      data-testid={`candidate-${stock.code}`}
+                    />
+                    {selected && (
+                      <div className="q-inline-research">
+                        <CandidateDetail stock={stock} tradeDate={decision.trade_date} />
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
             </ol>
           ) : (
             <div className="q-empty-state">
@@ -363,12 +327,7 @@ export function Component() {
 
         <div className="q-research-pane">
           {selectedStock ? (
-            <CandidateDetail
-              stock={selectedStock}
-              tradeDate={decision.trade_date}
-              marketContext={marketContext}
-              formalDecisionAvailable={formalDecisionAvailable}
-            />
+            <CandidateDetail stock={selectedStock} tradeDate={decision.trade_date} />
           ) : (
             <div className="q-research-empty">选择一只候选查看证据。</div>
           )}

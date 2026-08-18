@@ -1,6 +1,10 @@
 import unittest
 
-from utils.cloud_stair_history_view import history_signals, history_summary
+from utils.cloud_stair_history_view import (
+    history_signals,
+    history_summary,
+    stock_history_summary,
+)
 
 
 class CloudStairHistoryViewTest(unittest.TestCase):
@@ -47,6 +51,15 @@ class CloudStairHistoryViewTest(unittest.TestCase):
             date="2026-08-14", horizon="t1", result="unsettled", page=1, page_size=50
         )
         self.assertEqual(today_open["total"], 22)
+
+    def test_per_stock_history_summary(self):
+        row = stock_history_summary("002612")
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertGreaterEqual(row["appear_count"], 1)
+        self.assertIn("t5", row)
+        self.assertIn("win_rate", row["t5"])
+        self.assertIsNone(stock_history_summary("999999"))
 
 
 if __name__ == "__main__":

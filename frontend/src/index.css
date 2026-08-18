@@ -1587,6 +1587,10 @@
   list-style: none;
 }
 
+.q-inline-research {
+  display: none;
+}
+
 .q-signal-list > li {
   min-height: 92px;
   border-bottom: 1px solid #f0efee;
@@ -3104,6 +3108,20 @@
   .q-decision-workspace {
     display: block;
     overflow: visible;
+  }
+
+  .q-research-pane {
+    display: none;
+  }
+
+  .q-inline-research {
+    display: block;
+    padding: 0 0 16px;
+    border-bottom: 1px solid #f0efee;
+  }
+
+  .q-signal-item {
+    scroll-margin-top: 72px;
   }
 
   .q-signal-pane {

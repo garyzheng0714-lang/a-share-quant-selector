@@ -199,6 +199,13 @@ def api_recommend():
             str(item.get("code") or ""): item
             for item in ((decision or {}).get("candidates") or [])
         }
+        try:
+            from utils.cloud_stair_history_view import stock_history_summary
+        except Exception:  # pragma: no cover - 历史档案缺失时名单仍可展示
+
+            def stock_history_summary(_code: str):
+                return None
+
         rows = []
         for candidate in result.get("candidates") or []:
             code = str(candidate.get("code") or "")
@@ -217,10 +224,10 @@ def api_recommend():
                     "buy": "允许买入",
                     "avoid": "回避",
                     "observe": "观察",
-                    "none": "无正式动作",
+                    "none": "无动作",
                 }.get(str(action), "观察")
                 if candidate_decision_available
-                else "未纳入正式模型"
+                else ""
             )
             rows.append(
                 {
@@ -256,6 +263,7 @@ def api_recommend():
                         )
                         if candidate_intelligence.get(key) is not None
                     },
+                    "history": stock_history_summary(code),
                     "ai_analysis": by_code.get(code),
                     "decision_evidence": {
                         "available": candidate_decision_available,

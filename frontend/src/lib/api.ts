@@ -979,6 +979,16 @@ export interface CloudMarketContext {
   summary: string;
 }
 
+export interface CloudStairStockHistory {
+  appear_count: number;
+  first_date: string | null;
+  last_date: string | null;
+  recent_dates: string[];
+  t1: { settled: number; wins: number; win_rate: number | null };
+  t5: { settled: number; wins: number; win_rate: number | null };
+  t20: { settled: number; wins: number; win_rate: number | null };
+}
+
 /** 云阶当日候选：规则决定入选，证据层只做可追溯优先级。 */
 export interface RecommendStock {
   code: string;
@@ -987,6 +997,7 @@ export interface RecommendStock {
   industry: string;
   cap_yi: number | null;
   sector: SectorState | null;
+  history?: CloudStairStockHistory | null;
   J?: number | null;
   RSI?: number | null;
   pct_change?: number | null;

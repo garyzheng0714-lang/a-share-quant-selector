@@ -118,3 +118,67 @@ def history_signals(
         "page_count": (total + page_size - 1) // page_size if total else 0,
         "rows": listing[start : start + page_size],
     }
+
+
+def _horizon_stats(rows: list[dict[str, Any]], key: str) -> dict[str, Any]:
+    settled_rows = [row for row in rows if row.get(f"{key}_settled")]
+    wins = 0
+    for row in settled_rows:
+        try:
+            if float(row.get(f"{key}_net_return_pct")) > 0:
+                wins += 1
+        except (TypeError, ValueError):
+            if key == "t1" and row.get("t1_win") is True:
+                wins += 1
+    count = len(settled_rows)
+    return {
+        "settled": count,
+        "wins": wins,
+        "win_rate": round(wins / count * 100, 1) if count else None,
+    }
+
+
+@lru_cache(maxsize=1)
+def _history_index(summary_mtime: int, signals_mtime: int) -> dict[str, dict[str, Any]]:
+    _summary, rows = _loaded(summary_mtime, signals_mtime)
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        code = str(row.get("code") or "").strip().zfill(6)
+        if not code or code == "000000":
+            continue
+        grouped.setdefault(code, []).append(row)
+
+    out: dict[str, dict[str, Any]] = {}
+    for code, items in grouped.items():
+        items.sort(key=lambda item: str(item.get("signal_date") or ""))
+        dates = [
+            str(item.get("signal_date")) for item in items if item.get("signal_date")
+        ]
+        name = next(
+            (str(item.get("name")) for item in reversed(items) if item.get("name")), ""
+        )
+        out[code] = {
+            "code": code,
+            "name": name,
+            "appear_count": len(items),
+            "first_date": dates[0] if dates else None,
+            "last_date": dates[-1] if dates else None,
+            "recent_dates": list(reversed(dates[-8:])),
+            "t1": _horizon_stats(items, "t1"),
+            "t5": _horizon_stats(items, "t5"),
+            "t20": _horizon_stats(items, "t20"),
+        }
+    return out
+
+
+def stock_history_summary(code: str) -> dict[str, Any] | None:
+    if not code:
+        return None
+    try:
+        path_key = (
+            int(SUMMARY_PATH.stat().st_mtime_ns),
+            int(SIGNALS_PATH.stat().st_mtime_ns),
+        )
+    except FileNotFoundError:
+        return None
+    return _history_index(*path_key).get(str(code).strip().zfill(6))
