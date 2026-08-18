@@ -44,6 +44,15 @@ function stockFacts(stock: RecommendStock) {
   return [sectorDescriptor(stock), capText(stock), historyText(stock)].join(" · ");
 }
 
+function StockFactLines({ stock }: { stock: RecommendStock }) {
+  return (
+    <span className="q-signal-industry">
+      <span>{sectorDescriptor(stock)}</span>
+      <span>{capText(stock)} · {historyText(stock)}</span>
+    </span>
+  );
+}
+
 function signalDetail(detail: string) {
   return detail.replace(/(?:T|\s)00:00:00\b/g, "");
 }
@@ -296,8 +305,12 @@ export function Component() {
                       align="start"
                       density="spacious"
                       marker={<span className="q-signal-rank">{index + 1}</span>}
-                      label={<span className="q-signal-name"><strong>{stock.name}</strong><code>{stock.code}</code></span>}
-                      description={<span className="q-signal-industry">{stockFacts(stock)}</span>}
+                      label={(
+                        <span className="q-signal-copy">
+                          <span className="q-signal-name"><strong>{stock.name}</strong><code>{stock.code}</code></span>
+                          <StockFactLines stock={stock} />
+                        </span>
+                      )}
                       endContent={
                         <span className="q-signal-metrics">
                           <strong>{stock.priority_score?.toFixed(1) ?? "—"}</strong>

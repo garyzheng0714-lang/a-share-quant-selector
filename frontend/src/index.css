@@ -1592,7 +1592,8 @@
 }
 
 .q-signal-list > li {
-  min-height: 92px;
+  min-height: 108px;
+  overflow: visible;
   border-bottom: 1px solid #f0efee;
   border-radius: 0;
 }
@@ -1619,6 +1620,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+.q-signal-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
 .q-signal-name {
   display: flex;
   min-width: 0;
@@ -1642,14 +1649,20 @@
   font-size: 11px;
 }
 
+.q-signal-industry,
+.q-signal-industry span {
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+}
+
 .q-signal-industry {
-  display: block;
-  margin-top: 5px;
-  overflow: hidden;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
   color: #615d59;
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
 }
 
 .q-signal-metrics {
@@ -3136,7 +3149,7 @@
   }
 
   .q-signal-list > li {
-    min-height: 82px;
+    min-height: 108px;
   }
 
   .q-signal-rank {
