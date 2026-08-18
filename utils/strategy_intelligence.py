@@ -34,7 +34,7 @@ BAYES_PRIOR_BETA = 1.0
 WILSON_Z = 1.959963984540054
 
 METHOD = (
-    "信号日 T 为因子命中收盘日，按 a-share-eod-open-open-v5 在 T+1 "
+    "信号日 T 为因子命中收盘日，按 a-share-eod-open-open-v7 在 T+1 "
     "开盘近似买入，持有 n 个交易日后的开盘卖出，净收益已扣费用和"
     "双边滑点。每个 T+n 窗口只纳入 return_label_mature=true 的记录；"
     "先对同一信号日的全部可成交命中等权，再对信号日等权。胜率以当日"
@@ -543,7 +543,7 @@ def build_strategy_intelligence(csv_manager, trade_date: str) -> dict:
         "source_refs": [
             "factor-evidence-v1",
             "factor-outcome-observation-v1",
-            "a-share-eod-open-open-v5",
+            "a-share-eod-open-open-v7",
         ],
         "factor_registry_version": registry_version or None,
         "current_factor_registry_version": factor_registry_version(),

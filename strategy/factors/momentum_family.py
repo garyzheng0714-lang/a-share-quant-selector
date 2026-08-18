@@ -16,6 +16,7 @@ import numpy as np
 
 from strategy.factor_lib import (
     hit_payload,
+    handle_factor_exception,
     bbi_uptrend_ok,
     amplitude_pct,
     _last,
@@ -40,8 +41,8 @@ def _safe(fn):
     def wrap(ctx, params=None):
         try:
             return fn(ctx, params)
-        except Exception:
-            return None
+        except Exception as exc:
+            return handle_factor_exception(fn.__qualname__, exc)
 
     return wrap
 

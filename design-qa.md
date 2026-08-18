@@ -2,8 +2,8 @@
 
 ## 对照目标
 
-- source visual truth path: `/Users/simba/Agentic-Engineering/归档/share/a-share-quant-selector-astryx-rebase/frontend/design-references/decision-console-master-detail.png`
-- implementation screenshot path: `/Users/simba/Agentic-Engineering/归档/share/a-share-quant-selector-astryx-rebase/.runtime/qa/stocks-implementation.png`
+- source visual truth path: `/Users/simba/Agentic-Engineering/个人-A股量化选股-发布线/frontend/design-references/decision-console-master-detail.png`
+- implementation screenshot path: `/Users/simba/Agentic-Engineering/个人-A股量化选股-发布线/.runtime/qa/stocks-implementation.png`
 - route: `http://127.0.0.1:5124/stocks`
 - viewport: `1487 × 1058` CSS px
 - source pixels: `1487 × 1058`
@@ -14,10 +14,10 @@
 
 ## 对照证据
 
-- full-view comparison evidence: `/Users/simba/Agentic-Engineering/归档/share/a-share-quant-selector-astryx-rebase/.runtime/qa/stocks-design-comparison.png`
-- focused list comparison evidence: `/Users/simba/Agentic-Engineering/归档/share/a-share-quant-selector-astryx-rebase/.runtime/qa/stocks-design-focus-list.png`
-- focused detail comparison evidence: `/Users/simba/Agentic-Engineering/归档/share/a-share-quant-selector-astryx-rebase/.runtime/qa/stocks-design-focus-detail.png`
-- mobile implementation evidence: `/Users/simba/Agentic-Engineering/归档/share/a-share-quant-selector-astryx-rebase/.runtime/qa/stocks-mobile-final.png`
+- full-view comparison evidence: `/Users/simba/Agentic-Engineering/个人-A股量化选股-发布线/.runtime/qa/stocks-design-comparison.png`
+- focused list comparison evidence: `/Users/simba/Agentic-Engineering/个人-A股量化选股-发布线/.runtime/qa/stocks-design-focus-list.png`
+- focused detail comparison evidence: `/Users/simba/Agentic-Engineering/个人-A股量化选股-发布线/.runtime/qa/stocks-design-focus-detail.png`
+- mobile implementation evidence: `/Users/simba/Agentic-Engineering/个人-A股量化选股-发布线/.runtime/qa/stocks-mobile-final.png`
 - mobile viewport: `390 × 844` CSS px，全页截图 `390 × 1533` px，页面水平溢出为 `0` px。
 
 ## Findings

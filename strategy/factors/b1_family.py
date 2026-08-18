@@ -17,6 +17,7 @@ import numpy as np
 from strategy.factor_lib import (
     FactorContext,
     hit_payload,
+    handle_factor_exception,
     _last,
     adaptive_trend_selector,
     adaptive_trend_selector_series,
@@ -51,8 +52,8 @@ def compute_oversold_b1(ctx: FactorContext, params=None):
     try:
         if adaptive_trend_selector(ctx, p):
             return hit_payload(ctx)
-    except Exception:
-        return None
+    except Exception as exc:
+        return handle_factor_exception(compute_oversold_b1.__qualname__, exc)
     return None
 
 
@@ -100,8 +101,8 @@ def compute_kdj_cross(ctx: FactorContext, params=None):
                 "D": round(_last(d), 2) if _last(d) == _last(d) else None,
             },
         )
-    except Exception:
-        return None
+    except Exception as exc:
+        return handle_factor_exception(compute_kdj_cross.__qualname__, exc)
 
 
 # ====================================================================
@@ -178,8 +179,8 @@ def compute_tepu(ctx: FactorContext, params=None):
                 },
             )
         return None
-    except Exception:
-        return None
+    except Exception as exc:
+        return handle_factor_exception(compute_tepu.__qualname__, exc)
 
 
 # ====================================================================
@@ -255,8 +256,8 @@ def compute_super_b1_factor(ctx: FactorContext, params=None):
                     },
                 )
         return None
-    except Exception:
-        return None
+    except Exception as exc:
+        return handle_factor_exception(compute_super_b1_factor.__qualname__, exc)
 
 
 # ====================================================================
@@ -324,8 +325,8 @@ def compute_fill_pit(ctx: FactorContext, params=None):
                     },
                 )
         return None
-    except Exception:
-        return None
+    except Exception as exc:
+        return handle_factor_exception(compute_fill_pit.__qualname__, exc)
 
 
 # ====================================================================
@@ -383,8 +384,8 @@ def compute_ticket_refill(ctx: FactorContext, params=None):
                 "RSV3": round(float(rsv_short[-1]), 2),
             },
         )
-    except Exception:
-        return None
+    except Exception as exc:
+        return handle_factor_exception(compute_ticket_refill.__qualname__, exc)
 
 
 # ====================================================================

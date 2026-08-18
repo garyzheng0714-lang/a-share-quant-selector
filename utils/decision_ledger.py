@@ -1764,7 +1764,7 @@ def _atomic_artifact_is_releaseable(payload: dict, runtime_manifest: dict) -> bo
         return False
     return bool(
         payload.get("runtime_policy_manifest") == runtime_manifest
-        and metrics.get("execution_policy_version") == "a-share-eod-open-open-v5"
+        and metrics.get("execution_policy_version") == "a-share-eod-open-open-v7"
         and evaluation_months >= 6
         and ablations == set(POLICY_REQUIRED_COMPONENTS)
         and coverage >= 0.60

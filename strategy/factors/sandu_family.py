@@ -27,9 +27,11 @@
 """
 
 import numpy as np
+import pandas as pd
 
 from strategy.factor_lib import (
     hit_payload,
+    handle_factor_exception,
     top_pressure_safe,
     gap_pressure_safe,
     trend_pressure_safe,
@@ -44,10 +46,23 @@ from strategy.factor_lib import (
 def _f(s, i=-1):
     """iloc 取值转 float，越界/非数返回 NaN（比较自然 False）."""
     try:
-        v = float(s.iloc[i])
-    except (IndexError, TypeError, ValueError):
+        value = s.iloc[i]
+    except IndexError:
         return float("nan")
-    return v
+    except (TypeError, ValueError) as exc:
+        handle_factor_exception("sandu._f.iloc", exc)
+        return float("nan")
+    try:
+        if bool(pd.isna(value)):
+            return float("nan")
+    except (TypeError, ValueError) as exc:
+        handle_factor_exception("sandu._f.isna", exc)
+        return float("nan")
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        handle_factor_exception("sandu._f.float", exc)
+        return float("nan")
 
 
 def _vol_base(ctx):
@@ -227,8 +242,8 @@ def compute_sandu_a_zone(ctx, params=None):
         if not (small[0] > small[1] > small[2]):
             return None
         return hit_payload(ctx, extra={"ma_spread_pct": round(spread * 100, 2)})
-    except Exception:
-        return None
+    except Exception as exc:
+        return handle_factor_exception(compute_sandu_a_zone.__qualname__, exc)
 
 
 # ---------------------------------------------------------------- 24 三度B区
@@ -353,8 +368,8 @@ def compute_sandu_b_zone(ctx, params=None):
                 "pullback_days": int(t - h),
             },
         )
-    except Exception:
-        return None
+    except Exception as exc:
+        return handle_factor_exception(compute_sandu_b_zone.__qualname__, exc)
 
 
 # ---------------------------------------------------------------- 25 三度洗盘
@@ -482,8 +497,8 @@ def compute_sandu_washout(ctx, params=None):
         if not _upper_body_ok(ctx, -1, p["reversal_max_upper_shadow"]):
             return None
         return hit_payload(ctx, extra={"wash_type": wash_type})
-    except Exception:
-        return None
+    except Exception as exc:
+        return handle_factor_exception(compute_sandu_washout.__qualname__, exc)
 
 
 # ---------------------------------------------------------------- 26 三度颈位
@@ -601,8 +616,8 @@ def compute_sandu_neckline(ctx, params=None):
                 "days_since_neck": int(t - p_abs),
             },
         )
-    except Exception:
-        return None
+    except Exception as exc:
+        return handle_factor_exception(compute_sandu_neckline.__qualname__, exc)
 
 
 # ---------------------------------------------------------------- 27 三度星线
@@ -729,8 +744,8 @@ def compute_sandu_star(ctx, params=None):
                 "confirm": "breakout" if breakout else "attack_star",
             },
         )
-    except Exception:
-        return None
+    except Exception as exc:
+        return handle_factor_exception(compute_sandu_star.__qualname__, exc)
 
 
 # ---------------------------------------------------------------- 因子注册表
