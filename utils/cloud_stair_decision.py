@@ -1,6 +1,6 @@
 """云阶当日决策读模型。
 
-只聚合 worker 已经固化的云阶因子命中、行业归属和板块热度，
+只聚合 worker 已经固化的云阶因子命中、行业归属、流通市值和板块热度，
 不在 Web 请求中扫描行情、不调用 LLM、不写数据。
 """
 
@@ -17,6 +17,25 @@ def _industry_map(csv_manager) -> dict:
         snapshot_id=csv_manager.snapshot_id,
     )
     return value if isinstance(value, dict) else {}
+
+
+def _cap_map(csv_manager) -> dict:
+    value, _snapshot_id = read_snapshot_metadata(
+        "stock_market_cap.json",
+        csv_manager.base_data_dir,
+        snapshot_id=csv_manager.snapshot_id,
+    )
+    return value if isinstance(value, dict) else {}
+
+
+def _cap_yi(code: str, caps: dict) -> float | None:
+    item = caps.get(code) or caps.get(str(code).zfill(6) if code else "")
+    if not isinstance(item, dict):
+        return None
+    cap = item.get("circ_mv") or item.get("total_mv")
+    if isinstance(cap, (int, float)) and cap > 0:
+        return round(float(cap) / 1e8, 1)
+    return None
 
 
 def _sector_rotation(csv_manager) -> dict:
@@ -145,6 +164,7 @@ def load_cloud_stair_decision(csv_manager) -> dict:
         hits = [row for row in hits if is_main_board(str(row.get("code") or ""))]
 
     industries = _industry_map(csv_manager)
+    caps = _cap_map(csv_manager)
     rotation = _sector_rotation(csv_manager)
     heat_map = rotation.get("heat_map") or {}
     candidates = []
@@ -155,6 +175,7 @@ def load_cloud_stair_decision(csv_manager) -> dict:
             **hit,
             "industry": industry or "行业待补全",
             "industry_available": bool(industry),
+            "cap_yi": _cap_yi(code, caps),
             "sector": heat_map.get(industry) or None,
             # 这里只证明云阶结构命中。最终动作必须由 canonical
             # decision ledger 投影，不能由单一因子在读模型里自称 buy。
