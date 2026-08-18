@@ -492,7 +492,8 @@ jobs:
             --interactive=false --no-deps web python tools/backup_databases.py \
             </dev/null
           docker compose --profile canary --env-file "$NEXT_ENV" run --rm \
-            --interactive=false --no-deps canary python tools/migration_dry_run.py \
+            --interactive=false --tmpfs /tmp:size=1g,noexec,nosuid,nodev \
+            --no-deps canary python tools/migration_dry_run.py \
             </dev/null
           docker compose --env-file "$NEXT_ENV" run --rm \
             --interactive=false --no-deps migrate </dev/null
