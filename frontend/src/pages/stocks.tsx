@@ -205,7 +205,7 @@ function CandidateDetail({
           {stock.history?.recent_dates?.length ? (
             <p>最近几次：{stock.history.recent_dates.join("、")}</p>
           ) : (
-            <p>这只股票还没有更早的云街进出记录。</p>
+            <p>这只股票还没有更早的云阶进出记录。</p>
           )}
         </div>
 
@@ -272,7 +272,7 @@ export function Component() {
         <div className="q-decision-title-group">
           <h1>收盘决策</h1>
           <div className="q-decision-summary">
-            <strong>{allCandidates.length} 只云街候选</strong>
+            <strong>{allCandidates.length} 只云阶候选</strong>
             <span aria-hidden="true" />
             <b>{dataReady ? "行情就绪" : "行情需复核"}</b>
             <time dateTime={decision.trade_date}>{decision.trade_date}</time>
