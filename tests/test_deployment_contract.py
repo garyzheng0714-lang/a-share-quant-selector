@@ -21,7 +21,7 @@ def test_production_canary_has_no_port_and_only_read_only_data_mounts() -> None:
         "quant-data:/app/data:ro",
         "quant-state:/app/state:ro",
     ]
-    assert canary["tmpfs"] == ["/tmp:size=1g,noexec,nosuid,nodev"]
+    assert canary["tmpfs"] == ["/tmp:size=2g,noexec,nosuid,nodev"]
 
 
 def test_release_quiesces_writers_and_validates_canary_before_switch() -> None:

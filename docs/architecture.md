@@ -55,7 +55,7 @@ Web 不运行 APScheduler，不抓行情，不扫描全市场，不在 GET 中�
 
 ### 一次性 migration
 
-`tools/migrate_databases.py` / `python main.py migrate` 是唯一允许创建或修改生产表结构的入口。发布前，`tools/migration_dry_run.py` 会通过 SQLite online backup 把两个活动账本复制到一次性目录，并只在副本上执行完整 migration 和 predeploy。Web、worker 和普通业务写连接会用只读 URI 校验：
+`tools/migrate_databases.py` / `python main.py migrate` 是唯一允许创建或修改生产表结构的入口。发布前，`tools/migration_dry_run.py` 会通过 SQLite online backup 把两个活动账本复制到一次性目录，并只在副本上执行完整 migration 和 predeploy；canary 为副本目录设置 2 GiB tmpfs 上限。Web、worker 和普通业务写连接会用只读 URI 校验：
 
 - 数据库文件已存在；
 - 所有必需表和关键列存在；
