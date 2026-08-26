@@ -2113,6 +2113,21 @@ class AKShareFetcher:
         print(f"\n开始更新 {need_update} 只股票...")
         print("=" * 60)
 
+        def fetch_current(code, days_to_fetch):
+            fetch = self.fetch_stock_update(code, days=days_to_fetch)
+            df = fetch.data if fetch.success else pd.DataFrame()
+            if not df.empty:
+                df = df[
+                    pd.to_datetime(df["date"]).dt.date <= completed_cutoff
+                ].copy()
+            dates = (
+                pd.to_datetime(df["date"], errors="coerce").dropna()
+                if not df.empty
+                else pd.Series(dtype="datetime64[ns]")
+            )
+            latest = dates.max().strftime("%Y-%m-%d") if not dates.empty else None
+            return fetch, df, latest
+
         for i, (code, days_to_fetch) in enumerate(stocks_to_update, 1):
             print(
                 f"[{i}/{need_update}] 更新 {code} (需获取 {days_to_fetch} 天数据)...",
@@ -2123,22 +2138,13 @@ class AKShareFetcher:
             existing_df = self.csv_manager.read_stock(code)
             old_count = len(existing_df)
 
-            fetch = self.fetch_stock_update(code, days=days_to_fetch)
-            df = fetch.data if fetch.success else pd.DataFrame()
-
-            if not df.empty:
-                # 腾讯接口盘中会包含今天的实时 K 线；未收盘时必须截掉。
-                df = df[pd.to_datetime(df["date"]).dt.date <= completed_cutoff].copy()
-            returned_dates = (
-                pd.to_datetime(df["date"], errors="coerce").dropna()
-                if not df.empty
-                else pd.Series(dtype="datetime64[ns]")
-            )
-            returned_latest = (
-                returned_dates.max().strftime("%Y-%m-%d")
-                if not returned_dates.empty
-                else None
-            )
+            # ponytail: 每只最多重试 3 次；若仍稳定失败再复用上次 staging。
+            for attempt in range(3):
+                fetch, df, returned_latest = fetch_current(code, days_to_fetch)
+                if not df.empty and returned_latest == cutoff_str:
+                    break
+                if attempt < 2:
+                    print("重试...", end=" ")
             if not df.empty and returned_latest == cutoff_str:
                 self.csv_manager.update_stock(code, df)
                 new_df = self.csv_manager.read_stock(code)

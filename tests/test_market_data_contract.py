@@ -129,6 +129,29 @@ class MarketDataContractTest(unittest.TestCase):
         )
         self.assertEqual(before, after)
 
+    @patch(
+        "utils.data_freshness.expected_completed_trade_date",
+        return_value="2026-07-14",
+    )
+    def test_daily_update_retries_a_transient_stock_failure(self, _cutoff):
+        with tempfile.TemporaryDirectory() as tmp:
+            fetcher = AKShareFetcher(tmp)
+            fetcher._main_board_universe = lambda: {"600000": "浦发银行"}
+            fetcher.csv_manager.write_stock("600000", history("2026-07-13", rows=20))
+            fetcher.fetch_stock_update = MagicMock(
+                side_effect=[
+                    FetchResult.failure(source="test", reason="source_failed"),
+                    FetchResult.ok(history("2026-07-14", rows=2), source="test"),
+                ]
+            )
+
+            result = fetcher.daily_update()
+
+            self.assertEqual(result["failed"], 0)
+            self.assertEqual(fetcher.fetch_stock_update.call_count, 2)
+            latest = fetcher.csv_manager.read_stock("600000", nrows=1)
+            self.assertEqual(str(latest.iloc[0]["date"])[:10], "2026-07-14")
+
     @patch("utils.akshare_fetcher.time.sleep", return_value=None)
     def test_partial_or_missing_universe_never_becomes_success(self, _sleep):
         with tempfile.TemporaryDirectory() as tmp:
