@@ -483,6 +483,43 @@ jobs:
             echo "ARK_API_KEY_FILE=/opt/a-share-quant/secrets/ark-api-key"
           } > "$NEXT_ENV"
           chmod 600 "$NEXT_ENV"
+          BACKUP_PREFLIGHT='
+          from pathlib import Path
+          import re
+          import shutil
+
+          state = Path("/app/state")
+          root = state / "backups"
+          directories = (
+              sorted(
+                  path
+                  for path in root.iterdir()
+                  if path.is_dir()
+                  and not path.is_symlink()
+                  and re.fullmatch(r"\d{8}T\d{6}Z", path.name)
+              )
+              if root.exists()
+              else []
+          )
+          completed = [path for path in directories if (path / "manifest.json").is_file()]
+          stale = [path for path in directories if path not in completed] + completed[:-1]
+          for path in stale:
+              shutil.rmtree(path)
+          required_bytes = sum(path.stat().st_size for path in state.glob("*.db")) + 128 * 1024 * 1024
+          free_bytes = shutil.disk_usage(state).free
+          print(f"backup_preflight removed={len(stale)} free={free_bytes} required={required_bytes}")
+          if free_bytes < required_bytes:
+              raise SystemExit("insufficient_space_for_database_backup")
+          '
+          if docker inspect -f '{{.State.Running}}' a-share-quant-web \
+            2>/dev/null | grep -qx true
+          then
+            docker exec a-share-quant-web python -c "$BACKUP_PREFLIGHT"
+          else
+            docker compose --env-file "$NEXT_ENV" run --rm \
+              --interactive=false --no-deps web python -c "$BACKUP_PREFLIGHT" \
+              </dev/null
+          fi
           if test "$PREVIOUS_COMPOSE" -eq 1 && test "$PREVIOUS_ENV" -eq 1; then
             PREVIOUS_STOPPED=1
             docker compose --env-file .rollback.env -f .rollback-compose.yml \

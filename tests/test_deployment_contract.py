@@ -45,6 +45,10 @@ def test_release_quiesces_writers_and_validates_canary_before_switch() -> None:
     )
     positions = [script.index(fragment) for fragment in expected_order]
     assert positions == sorted(positions)
+    assert script.index("BACKUP_PREFLIGHT") < script.index("stop worker web")
+    assert 're.fullmatch(r"\\d{8}T\\d{6}Z", path.name)' in script
+    assert "completed[:-1]" in script
+    assert "insufficient_space_for_database_backup" in script
     assert "cleanup_canary" in script
     assert "PREVIOUS_STOPPED" in script
     assert "docker inspect -f '{{.Config.Image}}' \"$CANARY_NAME\"" in script
@@ -152,8 +156,8 @@ def test_release_one_off_containers_cannot_consume_transaction_script() -> None:
     )
     script = release_step["run"]
 
-    assert script.count("--interactive=false") == 5
-    assert script.count("</dev/null") == 5
+    assert script.count("--interactive=false") == 6
+    assert script.count("</dev/null") == 6
     assert 'DEPLOY_RECEIPT=".deploy-success-${RELEASE_SHA}"' in script
     assert 'mv "${DEPLOY_RECEIPT}.next" "$DEPLOY_RECEIPT"' in script
     assert "cat '/opt/a-share-quant/.deploy-success-${RELEASE_SHA}'" in script

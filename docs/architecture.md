@@ -113,4 +113,4 @@ Web 不运行 APScheduler，不抓行情，不扫描全市场，不在 GET 中�
 
 ## 发布边界
 
-CI 分为后端、前端和安全门禁。发布必须人工选择已测试的完整 SHA，构建不可变镜像，生成 SBOM/来源证明，签名并扫描。GitHub runner 按 digest 拉取该镜像、验证构建 SHA，再通过 SSH 传入目标主机；目标主机必须得到相同的内容寻址镜像 ID，Compose 也禁止自行拉取。Web 只绑定 localhost，容器非 root、只读根文件系统、丢弃 capabilities。目标主机先停止旧 web/worker，再备份静止账本并在临时数据库副本上演练迁移；正式迁移和只读预检通过后，使用 data/state 双只读的隔离 canary 核对候选镜像 ID、SHA、snapshot 和只读查询，才切换正式 web/worker。切换前任一步失败都会恢复旧发布文件并尝试重启旧服务。
+CI 分为后端、前端和安全门禁。发布必须人工选择已测试的完整 SHA，构建不可变镜像，生成 SBOM/来源证明，签名并扫描。GitHub runner 按 digest 拉取该镜像、验证构建 SHA，再通过 SSH 传入目标主机；目标主机必须得到相同的内容寻址镜像 ID，Compose 也禁止自行拉取。Web 只绑定 localhost，容器非 root、只读根文件系统、丢弃 capabilities。目标主机在停止旧 web/worker 前先清理无 manifest 的失败备份，只保留最近一份完整本地备份，并确认可用空间至少覆盖活动账本总量加 128 MiB；随后备份静止账本并在临时数据库副本上演练迁移。正式迁移和只读预检通过后，使用 data/state 双只读的隔离 canary 核对候选镜像 ID、SHA、snapshot 和只读查询，才切换正式 web/worker。切换前任一步失败都会恢复旧发布文件并尝试重启旧服务。

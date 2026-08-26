@@ -135,7 +135,7 @@ python tools/migrate_databases.py
 python tools/predeploy_check.py
 ```
 
-`backup_databases.py` 使用 SQLite online backup API，对每个备份执行完整性检查，并在本地 `data/backups/<UTC timestamp>/manifest.json` 或生产 `/app/state/backups/<UTC timestamp>/manifest.json` 记录文件大小和 SHA-256。`migration_dry_run.py` 再用 online backup 把当前两个账本复制到一次性目录，在副本上完整执行 migration 和 predeploy；canary 的一次性目录使用 2 GiB tmpfs 上限，账本总量接近该上限前必须先扩容或调整演练介质。它不会修改线上源库，首次部署没有旧 DB 时也会演练从空状态建库。只有副本演练通过后才可迁移正式库，最后再做只读检查。生产发布会先停止旧 web/worker，确保最终备份、演练和正式迁移期间没有旧进程写入；切换前失败会恢复旧发布文件并重启旧服务。备份目录不得和主数据库使用同一个无冗余磁盘作为唯一副本。
+`backup_databases.py` 使用 SQLite online backup API，对每个备份执行完整性检查，并在本地 `data/backups/<UTC timestamp>/manifest.json` 或生产 `/app/state/backups/<UTC timestamp>/manifest.json` 记录文件大小和 SHA-256。生产发布会在停服务前清理标准时间戳目录中没有 manifest 的失败残留和除最近一份以外的旧完整备份，并校验可用空间至少等于活动账本总量加 128 MiB；新备份成功后因此最多保留新旧两份本地副本。`migration_dry_run.py` 再用 online backup 把当前两个账本复制到一次性目录，在副本上完整执行 migration 和 predeploy；canary 的一次性目录使用 2 GiB tmpfs 上限，账本总量接近该上限前必须先扩容或调整演练介质。它不会修改线上源库，首次部署没有旧 DB 时也会演练从空状态建库。只有副本演练通过后才可迁移正式库，最后再做只读检查。生产发布会先停止旧 web/worker，确保最终备份、演练和正式迁移期间没有旧进程写入；切换前失败会恢复旧发布文件并重启旧服务。滚动本地备份不得作为唯一副本；异地备份和更长保留期必须独立配置并验证恢复。
 
 迁移会保留旧模拟盘事件，但不会为它们伪造 `snapshot_id` 或执行版本。只读预检发现这类旧 fill/NAV 时会以 `runtime_unverified_legacy_paper_evidence` 阻止启动；应将旧账本完整归档，经批准后从新账户开始可验证运行，不得手工补写快照来绕过门禁。
 
