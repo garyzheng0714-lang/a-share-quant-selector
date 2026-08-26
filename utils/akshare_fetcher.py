@@ -2117,9 +2117,7 @@ class AKShareFetcher:
             fetch = self.fetch_stock_update(code, days=days_to_fetch)
             df = fetch.data if fetch.success else pd.DataFrame()
             if not df.empty:
-                df = df[
-                    pd.to_datetime(df["date"]).dt.date <= completed_cutoff
-                ].copy()
+                df = df[pd.to_datetime(df["date"]).dt.date <= completed_cutoff].copy()
             dates = (
                 pd.to_datetime(df["date"], errors="coerce").dropna()
                 if not df.empty
