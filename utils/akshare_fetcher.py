@@ -971,7 +971,7 @@ class AKShareFetcher:
 
             for page_number in range(1, max_pages + 1):
                 url = (
-                    "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
+                    "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
                     f"?param={market_code},day,,{cursor_end},{page_size},qfq"
                 )
                 resp = requests.get(
@@ -1226,7 +1226,7 @@ class AKShareFetcher:
             # 腾讯接口：直接指定获取天数（最多1000天）
             # 多取2天确保覆盖周末节假日
             fetch_days = min(days + 2, 1000)
-            url = f"https://ifzq.gtimg.cn/appstock/app/fqkline/get?param={market_code},day,,,{fetch_days},qfq"
+            url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={market_code},day,,,{fetch_days},qfq"
 
             resp = requests.get(
                 url,
@@ -1339,8 +1339,27 @@ class AKShareFetcher:
         except Exception as exc:
             failures.append(f"akshare:{type(exc).__name__}")
 
+        fallback = self._fetch_stock_history_sina(stock_code, years=1)
+        if fallback.success:
+            dates = pd.to_datetime(fallback.data["date"], errors="coerce")
+            frame = fallback.data[
+                dates.between(
+                    pd.Timestamp(requested_start), pd.Timestamp(requested_end)
+                )
+            ].copy()
+            if not frame.empty:
+                return FetchResult.ok(
+                    frame,
+                    source="sina",
+                    requested_start=requested_start,
+                    requested_end=requested_end,
+                )
+            failures.append("sina:empty_requested_window")
+        else:
+            failures.extend(fallback.details.get("failures") or [fallback.reason])
+
         return FetchResult.failure(
-            source="tencent+akshare",
+            source="tencent+akshare+sina",
             reason="all_sources_failed",
             requested_start=requested_start,
             requested_end=requested_end,

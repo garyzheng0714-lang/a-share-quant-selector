@@ -152,6 +152,34 @@ class MarketDataContractTest(unittest.TestCase):
             latest = fetcher.csv_manager.read_stock("600000", nrows=1)
             self.assertEqual(str(latest.iloc[0]["date"])[:10], "2026-07-14")
 
+    def test_update_uses_existing_sina_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fetcher = AKShareFetcher(tmp)
+            sina = FetchResult.ok(
+                history(pd.Timestamp.now().strftime("%Y-%m-%d"), rows=3),
+                source="sina",
+            )
+            with (
+                patch(
+                    "utils.akshare_fetcher.requests.get",
+                    side_effect=ConnectionError,
+                ),
+                patch(
+                    "utils.akshare_fetcher.ak.stock_zh_a_hist",
+                    side_effect=TimeoutError,
+                ),
+                patch.object(
+                    fetcher,
+                    "_fetch_stock_history_sina",
+                    return_value=sina,
+                ),
+            ):
+                result = fetcher.fetch_stock_update("600000", days=10)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.source, "sina")
+        self.assertEqual(result.rows, 3)
+
     @patch("utils.akshare_fetcher.time.sleep", return_value=None)
     def test_partial_or_missing_universe_never_becomes_success(self, _sleep):
         with tempfile.TemporaryDirectory() as tmp:
