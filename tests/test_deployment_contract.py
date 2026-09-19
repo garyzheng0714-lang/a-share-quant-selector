@@ -82,7 +82,7 @@ def test_release_stages_image_before_transactional_deploy() -> None:
     assert stage_index < bootstrap_index < release_index
     assert stage_step["timeout-minutes"] == 90
     assert bootstrap_step["timeout-minutes"] == 220
-    assert release_step["timeout-minutes"] == 45
+    assert release_step["timeout-minutes"] == 240
     assert 'docker pull "$SOURCE_IMAGE"' in stage_script
     assert 'docker save "$RUNTIME_IMAGE" | gzip -1' in stage_script
     assert '"$USER@$HOST" "docker load >/dev/null"' in stage_script
