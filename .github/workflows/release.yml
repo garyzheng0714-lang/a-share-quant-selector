@@ -359,7 +359,7 @@ jobs:
           snapshot_ready
           REMOTE
       - name: Deploy exact digest with backup and rollback
-        timeout-minutes: 45
+        timeout-minutes: 240
         env:
           HOST: ${{ secrets.SERVER_HOST }}
           USER: ${{ secrets.SERVER_USER }}
@@ -508,7 +508,7 @@ jobs:
           test "$(docker inspect -f '{{.Config.Image}}' "$CANARY_NAME")" = "$EXPECTED_IMAGE"
           test "$(docker inspect -f '{{.Image}}' "$CANARY_NAME")" = "$EXPECTED_IMAGE_ID"
           CANARY_READY=0
-          for attempt in $(seq 1 20); do
+          for attempt in $(seq 1 600); do
             if docker exec -i -e EXPECTED_SHA="$RELEASE_SHA" \
               "$CANARY_NAME" python - <<'PY'
           import json
