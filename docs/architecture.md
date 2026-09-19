@@ -91,7 +91,7 @@ Web 不运行 APScheduler，不抓行情，不扫描全市场，不在 GET 中�
 
 ## API 边界
 
-主要只读端点：`/healthz`、`/readyz`、`/api/version`、`/api/stats`、`/api/stocks`、`/api/stock/<code>`、`/api/decision/latest`、`/api/performance/*`、`/api/super-b1`、`/api/factors` 和板块端点。
+主要只读端点：`/healthz`、`/readyz`、`/api/version`、`/api/stats`、`/api/stocks`、`/api/stock/<code>`、`/api/decision/latest`、`/api/performance/*`、`/api/super-b1`、`/api/factors`（含常用组合 `PRESETS` 及当日命中数）、`/api/factor-compose?keys=a,b&join=and|or`（只读 worker 已发布的因子缓存做交集/并集，任一因子快照未就绪则整体阻断）和板块端点。
 
 会改变状态的端点要求 publisher/admin，必须同时提供：
 

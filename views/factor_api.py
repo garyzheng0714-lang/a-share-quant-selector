@@ -73,6 +73,138 @@ def _sector_heat(manager: CSVManager) -> dict:
         return {}
 
 
+def _compose_codes(sets: list, join: str) -> set:
+    """按 join 合并各因子命中集合：and=交集，or=并集."""
+    if not sets:
+        return set()
+    out = set(sets[0])
+    for s in sets[1:]:
+        out = out & set(s) if join == "and" else out | set(s)
+    return out
+
+
+def _spark(code: str, manager: CSVManager, n: int = 20) -> list:
+    """最近 n 根收盘（旧→新），迷你走势图用；读不到返回空列表."""
+    try:
+        df = manager.read_stock(code, nrows=n)
+        if df.empty or "close" not in df:
+            return []
+        closes = [float(v) for v in df["close"].tolist()]
+        dates = df["date"].astype(str).tolist()
+        if len(dates) > 1 and dates[0] > dates[-1]:
+            closes.reverse()
+        return [round(v, 2) for v in closes]
+    except Exception:
+        return []
+
+
+@factor_bp.route("/api/factor-compose", methods=["GET"])
+def api_factor_compose():
+    """多因子组合选股（只读 worker 已发布的缓存）：keys 逗号分隔，join=and|or.
+
+    稳定性约束：任一因子当日缓存缺失就整体阻断，不返回部分交集，也不在 GET 中重扫。
+    附加列：matched（命中了哪几个因子）、streak（连续命中天数，只用已缓存的历史
+    交易日推算，缓存断档即停止计数）、spark（20 日收盘）。win_rate 固定 None：
+    旧回测口径已隔离，生产证据见 decision outcomes。
+    """
+    try:
+        from strategy.factors import FACTOR_REGISTRY
+        from utils.factor_scan import (
+            _load_cache,
+            read_cached_factor_hits,
+            recent_trade_dates,
+        )
+        from utils.market_filter import is_main_board, main_board_only
+
+        manager = CSVManager("data", writable=False)
+        if manager.snapshot_id is None:
+            return jsonify({"available": False, "reason": "snapshot_unavailable"}), 503
+        keys = list(dict.fromkeys(
+            k.strip() for k in request.args.get("keys", "").split(",") if k.strip()
+        ))
+        join = request.args.get("join", "and").strip()
+        date = request.args.get("date", "").strip()
+        if not keys or any(k not in FACTOR_REGISTRY for k in keys):
+            return jsonify({"available": False, "reason": "缺少或未知的因子 keys"}), 400
+        if join not in ("and", "or"):
+            return jsonify({"available": False, "reason": "join 只能是 and 或 or"}), 400
+        if date and not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+            return jsonify({"available": False, "reason": "日期格式不合法"}), 400
+
+        result = read_cached_factor_hits(manager, keys, date=date)
+        if not result.get("available"):
+            return jsonify(result)
+        buckets = result["results"]
+        if any(k not in buckets for k in keys):
+            missing = [k for k in keys if k not in buckets]
+            return jsonify({
+                "available": False,
+                "reason": f"因子 {', '.join(missing)} 当日快照未就绪，已停止计算",
+                "trade_date": result["trade_date"],
+            })
+
+        mb_only = main_board_only()
+        per_key = {}
+        for k in keys:
+            hits = buckets[k].get("hits", [])
+            if mb_only:
+                hits = [h for h in hits if is_main_board(h.get("code", ""))]
+            per_key[k] = {h["code"]: h for h in hits}
+        codes = _compose_codes([set(v) for v in per_key.values()], join)
+
+        # 连续命中：往前逐个已缓存交易日看该股是否仍在组合结果里
+        trade_date = result["trade_date"]
+        history = []
+        for d in [d for d in recent_trade_dates(manager, limit=40) if d < trade_date]:
+            cache = _load_cache(d, manager)
+            if any(k not in cache for k in keys):
+                break
+            sets = [{h.get("code") for h in cache[k].get("hits", [])} for k in keys]
+            history.append(_compose_codes(sets, join))
+
+        def _streak(code):
+            n = 1
+            for prev in history:
+                if code not in prev:
+                    break
+                n += 1
+            return n
+
+        ind = _industry_map(manager)
+        heat = _sector_heat(manager)
+        hits = []
+        for code in codes:
+            matched = [k for k in keys if code in per_key[k]]
+            industry = ind.get(code, "")
+            hits.append({
+                **per_key[matched[0]][code],
+                "matched": matched,
+                "industry": industry,
+                "cap_yi": _cap_yi(code, manager),
+                "sector": heat.get(industry) or None,
+                "streak": _streak(code),
+                "streak_depth": len(history) + 1,
+                "win_rate": None,
+                "spark": _spark(code, manager),
+            })
+        hits.sort(key=lambda h: (-len(h["matched"]), -h["streak"],
+                                 h.get("J") if h.get("J") is not None else 999, h["code"]))
+        return jsonify({
+            "available": True,
+            "keys": keys,
+            "join": join,
+            "trade_date": trade_date,
+            "hits": hits,
+            "per_key_counts": {k: len(v) for k, v in per_key.items()},
+            "total_scanned": max((buckets[k].get("total_scanned", 0) for k in keys), default=0),
+            "research_only": True,
+            "source": "worker_snapshot",
+        })
+    except Exception as e:
+        logger.error("因子组合查询失败: %s", e, exc_info=True)
+        return jsonify({"available": False, "reason": "因子组合选股暂不可用"}), 500
+
+
 @factor_bp.route("/api/factors", methods=["GET"])
 def api_list_factors():
     """策略因子清单（分组+白话说明+当日命中数）+ 最近交易日列表.
@@ -81,7 +213,7 @@ def api_list_factors():
     主板过滤与 /api/factor-scan 同口径——概览徽标和详情列表数字必须一致。
     """
     try:
-        from strategy.factors import FACTOR_REGISTRY, GROUP_ORDER, PLAIN_DESC
+        from strategy.factors import FACTOR_REGISTRY, GROUP_ORDER, PLAIN_DESC, PRESETS
         from utils.factor_scan import _latest_data_date, _load_cache, recent_trade_dates
         from utils.market_filter import is_main_board, main_board_only
 
@@ -92,14 +224,29 @@ def api_list_factors():
         cache = _load_cache(trade_date, manager) if trade_date else {}
         mb_only = main_board_only()
 
-        def _today_hits(key):
+        def _codes(key):
             bucket = cache.get(key)
             if not bucket:
                 return None
-            hits = bucket.get("hits", [])
-            if mb_only:
-                return sum(1 for h in hits if is_main_board(h.get("code", "")))
-            return len(hits)
+            codes = {h.get("code", "") for h in bucket.get("hits", [])}
+            return {c for c in codes if is_main_board(c)} if mb_only else codes
+
+        def _today_hits(key):
+            codes = _codes(key)
+            return None if codes is None else len(codes)
+
+        def _preset_hits(preset):
+            """常用组合当日命中数：只读缓存，任一因子未算过则 None."""
+            sets = [_codes(k) for k in preset["keys"]]
+            if any(s is None for s in sets):
+                return None
+            return len(_compose_codes(sets, preset["join"]))
+
+        presets = [
+            {**p, "today_hits": _preset_hits(p)}
+            for p in PRESETS
+            if all(k in FACTOR_REGISTRY for k in p["keys"])
+        ]
 
         factors = []
         for key, meta in FACTOR_REGISTRY.items():
@@ -126,6 +273,7 @@ def api_list_factors():
         return jsonify(
             {
                 "factors": factors,
+                "presets": presets,
                 "groups": GROUP_ORDER,
                 "trade_date": trade_date,
                 "recent_dates": recent_trade_dates(manager, limit=40),

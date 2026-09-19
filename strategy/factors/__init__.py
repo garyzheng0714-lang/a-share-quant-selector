@@ -8,16 +8,17 @@ from strategy.factors.b1_family import FACTORS as _b1
 from strategy.factors.zhixing_family import FACTORS as _zx
 from strategy.factors.momentum_family import FACTORS as _mo
 from strategy.factors.sandu_family import FACTORS as _sd
+from strategy.factors.shenji_family import FACTORS as _sj
 
 FACTOR_REGISTRY = {}
-for _m in (_b1, _zx, _mo, _sd):
+for _m in (_b1, _zx, _mo, _sd, _sj):
     for _k, _v in _m.items():
         if _k in FACTOR_REGISTRY:
             raise ValueError(f"因子 key 冲突: {_k}")
         FACTOR_REGISTRY[_k] = _v
 
 # 前端分组展示顺序
-GROUP_ORDER = ["B1系", "知行系", "动量系", "三度系"]
+GROUP_ORDER = ["B1系", "知行系", "动量系", "三度系", "生命线系"]
 
 # 每个因子的大白话说明（面向无编程基础的用户，一句话讲清"这个公式在等什么"）。
 # 技术口径见各 compute 函数 docstring；这里只负责说人话。
@@ -50,4 +51,15 @@ PLAIN_DESC = {
     "sandu_washout": "关键位置被凶狠洗盘，今天强势收复",
     "sandu_neckline": "充分整理后放量突破颈位压力",
     "sandu_star": "关键位置连续星线蓄势，今天向上发力",
+    "shenji_lifeline": "收盘带 0.5% 容差上穿 13 日生命线，且当天涨幅超过 2%",
 }
+
+# 常用组合（前端顶部一排按钮，点一下条件和结果同时切换）。
+# join: "and" = 全部满足（交集），"or" = 任一满足（并集）。改这里即可，前端不写死。
+PRESETS = [
+    {"key": "shenji", "name": "神机上穿", "keys": ["shenji_lifeline"], "join": "and"},
+    {"key": "oversold_bounce", "name": "超卖反弹", "keys": ["oversold_b1", "kdj_cross"], "join": "or"},
+    {"key": "zx_white", "name": "知行白线", "keys": ["zx_white_b1", "zx_brick"], "join": "and"},
+    {"key": "breakout", "name": "强势突破", "keys": ["trend_strengthen", "bottom_violent_k", "cloud_stair"], "join": "or"},
+    {"key": "washout_end", "name": "洗盘结束", "keys": ["nana_chart", "sandu_washout"], "join": "or"},
+]

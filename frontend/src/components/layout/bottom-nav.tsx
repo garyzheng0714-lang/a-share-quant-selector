@@ -4,7 +4,8 @@ import { Icon } from "@astryxdesign/core/Icon";
 /** 手机与桌面共用三段主任务：市场环境 → 策略工作台 → 复盘。 */
 const navItems = [
   { to: "/sectors", label: "市场", end: false, matches: ["/sectors"], icon: "viewColumns" as const },
-  { to: "/stocks", label: "策略", end: false, matches: ["/stocks", "/stock/"], icon: "funnel" as const },
+  { to: "/stocks", label: "云阶", end: false, matches: ["/stocks", "/stock/"], icon: "funnel" as const },
+  { to: "/select", label: "选股", end: false, matches: ["/select"], icon: "search" as const },
   { to: "/review", label: "复盘", end: false, matches: ["/review"], icon: "calendar" as const },
 ];
 

@@ -1,5 +1,5 @@
 import useSWR from "swr";
-import { api } from "./api";
+import { api, type ComposeJoin } from "./api";
 
 export function useStats() {
   return useSWR("stats", () => api.getStats().then((r) => r.data), { refreshInterval: 30_000 });
@@ -89,6 +89,15 @@ export function usePipelineStatus() {
 export function useFactors() {
   // today_hits 随 16:00 预热更新，页面常开也能拿到新数字
   return useSWR("factors", () => api.getFactors(), { refreshInterval: 600_000 });
+}
+
+/** 多因子组合（且/或）。keys 为空不请求；历史日期不自动刷新 */
+export function useFactorCompose(keys: string[], join: ComposeJoin, date?: string) {
+  return useSWR(
+    keys.length ? `factor-compose-${join}-${keys.join(",")}-${date || "latest"}` : null,
+    () => api.getFactorCompose(keys, join, date),
+    { refreshInterval: date ? 0 : 600_000, revalidateOnFocus: false },
+  );
 }
 
 /** date 为空 = 最新交易日。历史日期结果不变，关掉自动刷新省请求 */

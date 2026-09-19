@@ -6,7 +6,10 @@ import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Text } from "@astryxdesign/core/Text";
 import { useSystemStatus } from "@/lib/hooks";
 
-const navItems = [{ to: "/stocks", label: "云阶决策", matches: ["/stocks", "/stock/"] }];
+const navItems = [
+  { to: "/stocks", label: "云阶决策", matches: ["/stocks", "/stock/"] },
+  { to: "/select", label: "选股", matches: ["/select"] },
+];
 
 export function NavBar() {
   const location = useLocation();

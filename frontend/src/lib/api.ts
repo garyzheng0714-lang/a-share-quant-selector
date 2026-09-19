@@ -467,6 +467,22 @@ export interface SectorState {
   breadth_ma10?: number;
 }
 
+export interface CloudStairHorizonStat {
+  settled: number;
+  wins: number;
+  win_rate: number | null;
+}
+
+export interface CloudStairStockHistory {
+  appear_count: number;
+  first_date: string | null;
+  last_date: string | null;
+  recent_dates: string[];
+  t1: CloudStairHorizonStat;
+  t5: CloudStairHorizonStat;
+  t20: CloudStairHorizonStat;
+}
+
 /** 量化今日一票：今天买什么 / 明天盯什么（纯规则，无模型主观发挥） */
 export interface QuantPickStock {
   code: string;
@@ -475,6 +491,7 @@ export interface QuantPickStock {
   industry: string;
   cap_yi: number | null;
   sector: SectorState | null;
+  history?: CloudStairStockHistory | null;
   J?: number | null;
   RSI?: number | null;
   pct_change?: number | null;
@@ -829,8 +846,21 @@ export interface FactorMeta {
   track: FactorTrack | null;
 }
 
+export type ComposeJoin = "and" | "or";
+
+/** 常用组合（后端 strategy/factors PRESETS 配置，点一下条件和结果同时切换） */
+export interface FactorPreset {
+  key: string;
+  name: string;
+  keys: string[];
+  join: ComposeJoin;
+  /** 当日命中数；null=组合里有因子还没算过 */
+  today_hits: number | null;
+}
+
 export interface FactorsResponse {
   factors: FactorMeta[];
+  presets: FactorPreset[];
   groups: string[];
   trade_date: string;
   /** 最近交易日（新→旧），日期导航用 */
@@ -1080,6 +1110,30 @@ export type CloudStairReviewResponse = StrategyReviewResponse;
 export type CloudStairPick = StrategyReviewPick;
 export type CloudStairWindowAgg = StrategyWindowAgg;
 
+export interface ComposeHit extends FactorHit {
+  /** 命中了哪几个因子 */
+  matched: string[];
+  /** 连续命中天数（含当日） */
+  streak: number;
+  /** 连命中最多能往前追溯的天数（缓存断档即停） */
+  streak_depth: number;
+  /** 命中因子的样本外 5 日胜率（%），无战绩为 null */
+  win_rate: number | null;
+  /** 近 20 日收盘（旧→新） */
+  spark: number[];
+}
+
+export interface FactorComposeResponse {
+  available: boolean;
+  reason?: string;
+  keys?: string[];
+  join?: ComposeJoin;
+  trade_date?: string;
+  hits?: ComposeHit[];
+  per_key_counts?: Record<string, number>;
+  total_scanned?: number;
+}
+
 export const api = {
   getStats: () => request<ApiResponse<StatsData>>("/api/stats"),
   getStocks: (page: number = 1, perPage: number = 50) => {
@@ -1114,6 +1168,10 @@ export const api = {
   getEvolutionStatus: () => request<EvolutionResponse>("/api/decision/evolution"),
   getSystemStatus: () => request<SystemStatusResponse>("/api/decision/system-status"),
   getPipelineStatus: () => request<PipelineStatusResponse>("/api/data-pipeline/status"),
+  getFactorCompose: (keys: string[], join: ComposeJoin, date?: string) =>
+    request<FactorComposeResponse>(
+      `/api/factor-compose?keys=${encodeURIComponent(keys.join(","))}&join=${join}${date ? `&date=${date}` : ""}`,
+    ),
   getFactorScan: (strategy: string, date?: string) =>
     request<FactorScanResponse>(
       `/api/factor-scan?strategy=${encodeURIComponent(strategy)}${date ? `&date=${date}` : ""}`,
