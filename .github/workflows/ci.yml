@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install -r requirements.txt pytest ruff
+      - run: pip install -r requirements.txt pytest ruff==0.12.11
       - run: ruff check app.py updater.py utils strategy tests
       - run: python -m pytest -q
 

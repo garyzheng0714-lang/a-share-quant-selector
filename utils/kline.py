@@ -37,9 +37,7 @@ def build_kline(frame: pd.DataFrame, period: str) -> dict:
         )
         close = weekly["close"].astype(float)
         extras = [close.rolling(n).mean() for n in (5, 10, 20, 60)]
-        extras.append(
-            close.ewm(span=10, adjust=False).mean().ewm(span=10, adjust=False).mean()
-        )
+        extras.append(close.ewm(span=10, adjust=False).mean().ewm(span=10, adjust=False).mean())
         extras.append(sum(close.rolling(n).mean() for n in (14, 28, 57, 114)) / 4)
         week_end = weekly.index[-1] if not weekly.empty else None
         data = [

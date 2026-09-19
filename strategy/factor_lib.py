@@ -21,16 +21,16 @@ import numpy as np
 import pandas as pd
 
 from strategy.tdx import (  # noqa: F401  (re-export 给 factors/ 用)
-    REF,
-    MA,
-    EMA,
-    LLV,
-    HHV,
+    BARSLAST,
     COUNT,
+    CROSS,
+    EMA,
     EVERY,
     EXIST,
-    CROSS,
-    BARSLAST,
+    HHV,
+    LLV,
+    MA,
+    REF,
     SMA_TDX,
 )
 
@@ -82,8 +82,7 @@ class FactorContext:
         """BBI = (MA3+MA6+MA12+MA24)/4."""
         return self._memo(
             "bbi",
-            lambda: (MA(self.C, 3) + MA(self.C, 6) + MA(self.C, 12) + MA(self.C, 24))
-            / 4,
+            lambda: (MA(self.C, 3) + MA(self.C, 6) + MA(self.C, 12) + MA(self.C, 24)) / 4,
         )
 
     def macd(self, fast=12, slow=26, signal=9):
@@ -104,8 +103,7 @@ class FactorContext:
         """知行多空线（黄线）= (MA14+MA28+MA57+MA114)/4，严格窗口."""
         return self._memo(
             ("yellow", m1, m2, m3, m4),
-            lambda: (MA(self.C, m1) + MA(self.C, m2) + MA(self.C, m3) + MA(self.C, m4))
-            / 4,
+            lambda: (MA(self.C, m1) + MA(self.C, m2) + MA(self.C, m3) + MA(self.C, m4)) / 4,
         )
 
     def rsv(self, n):
@@ -164,9 +162,7 @@ class FactorContext:
             sxx = (x * x).sum()
             denom = n * sxx - sx * sx
             sy = self.C.rolling(n, min_periods=n).sum()
-            sxy = self.C.rolling(n, min_periods=n).apply(
-                lambda w: float((w * x).sum()), raw=True
-            )
+            sxy = self.C.rolling(n, min_periods=n).apply(lambda w: float((w * x).sum()), raw=True)
             return (n * sxy - sx * sy) / denom
 
         return self._memo(("slope", n), _calc)
@@ -179,9 +175,7 @@ class FactorContext:
 # ---- 条件积木（返回 bool，NaN 语义一律 False） ----
 
 
-def bbi_uptrend_ok(
-    ctx: FactorContext, min_window=20, q_threshold=0.3, max_period=60
-) -> bool:
+def bbi_uptrend_ok(ctx: FactorContext, min_window=20, q_threshold=0.3, max_period=60) -> bool:
     """BBI 趋势确认（允许回撤）.
 
     在尾部窗口 w ∈ [min_window, max_period] 中，若存在任一 w 使窗口内
@@ -200,9 +194,7 @@ def bbi_uptrend_ok(
     return False
 
 
-def kdj_oversold_ok(
-    ctx: FactorContext, j_threshold=15, j_q_threshold=0.1, window=60
-) -> bool:
+def kdj_oversold_ok(ctx: FactorContext, j_threshold=15, j_q_threshold=0.1, window=60) -> bool:
     """KDJ 超卖：当日 J < 阈值 或 J <= 近 window 日 J 的低分位."""
     _, _, j = ctx.kdj()
     jl = _last(j)
@@ -243,9 +235,7 @@ def adaptive_trend_selector(ctx: FactorContext, b1: dict) -> bool:
         and bbi_uptrend_ok(
             ctx, b1.get("bbi_min_window", 20), b1.get("bbi_q_threshold", 0.3), period
         )
-        and kdj_oversold_ok(
-            ctx, b1.get("j_threshold", 15), b1.get("j_q_threshold", 0.1), period
-        )
+        and kdj_oversold_ok(ctx, b1.get("j_threshold", 15), b1.get("j_q_threshold", 0.1), period)
         and macd_bull_ok(ctx)
     )
 
@@ -271,9 +261,7 @@ def adaptive_trend_selector_series(ctx: FactorContext, b1: dict, lookback: int) 
 # ---- 三度系共用：量时空安全（压力过滤，返回 True=安全/通过） ----
 
 
-def top_pressure_safe(
-    ctx: FactorContext, lookback=120, volume_ratio=2.0, price_dist=0.15
-) -> bool:
+def top_pressure_safe(ctx: FactorContext, lookback=120, volume_ratio=2.0, price_dist=0.15) -> bool:
     """顶部压力过滤：近 lookback 日的"放量顶部"若悬在当前价上方且距离
     不足 price_dist（如 15%），视为压力过近 → 不安全.
 

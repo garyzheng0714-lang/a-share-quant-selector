@@ -29,14 +29,13 @@
 import numpy as np
 
 from strategy.factor_lib import (
+    LLV,
+    MA,
+    gap_pressure_safe,
     hit_payload,
     top_pressure_safe,
-    gap_pressure_safe,
     trend_pressure_safe,
-    MA,
-    LLV,
 )
-
 
 # ---------------------------------------------------------------- 公共小工具
 
@@ -83,9 +82,7 @@ def _pressures_ok(ctx, p):
             p["top_pressure_volume_ratio"],
             p["top_pressure_price_dist"],
         )
-        and gap_pressure_safe(
-            ctx, p["gap_pressure_lookback"], p["gap_pressure_volume_min_ratio"]
-        )
+        and gap_pressure_safe(ctx, p["gap_pressure_lookback"], p["gap_pressure_volume_min_ratio"])
         and trend_pressure_safe(ctx, p["trend_pressure_ma"])
     )
 
@@ -279,9 +276,7 @@ def compute_sandu_b_zone(ctx, params=None):
             return None
         pct = ctx.pct_change()
         vb = _vol_base(ctx)
-        yang3 = (
-            (ctx.C > ctx.O).astype(float).rolling(3, min_periods=1, center=True).sum()
-        )
+        yang3 = (ctx.C > ctx.O).astype(float).rolling(3, min_periods=1, center=True).sum()
         surge = (
             (pct >= p["prior_surge_price_min"])
             & (vb > 0)
@@ -321,18 +316,10 @@ def compute_sandu_b_zone(ctx, params=None):
         for m in p["ma_support_list"]:
             ma_s = ctx.ma(m)
             mv_t, mv_p = _f(ma_s, -1), _f(ma_s, -2)
-            if (
-                mv_t == mv_t
-                and mv_t > 0
-                and abs(today_low / mv_t - 1) <= p["ma_support_pct"]
-            ):
+            if mv_t == mv_t and mv_t > 0 and abs(today_low / mv_t - 1) <= p["ma_support_pct"]:
                 support = True
                 break
-            if (
-                mv_p == mv_p
-                and mv_p > 0
-                and abs(prev_close / mv_p - 1) <= p["ma_support_pct"]
-            ):
+            if mv_p == mv_p and mv_p > 0 and abs(prev_close / mv_p - 1) <= p["ma_support_pct"]:
                 support = True
                 break
         if not support:
@@ -715,11 +702,7 @@ def compute_sandu_star(ctx, params=None):
             and v_t >= v_p * p["breakout_volume_min_ratio"]
             and _upper_body_ok(ctx, -1, p["breakout_max_upper_shadow"])
         )
-        attack = (
-            bool(sa[-1])
-            and c_p > 0
-            and _f(ctx.O) >= c_p * (1 + p["attack_star_gap_min"])
-        )
+        attack = bool(sa[-1]) and c_p > 0 and _f(ctx.O) >= c_p * (1 + p["attack_star_gap_min"])
         if not (breakout or attack):
             return None
         return hit_payload(

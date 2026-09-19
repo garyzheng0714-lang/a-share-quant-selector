@@ -15,18 +15,17 @@
 import numpy as np
 
 from strategy.factor_lib import (
+    CROSS,
     FactorContext,
-    hit_payload,
     _last,
     adaptive_trend_selector,
     adaptive_trend_selector_series,
     bbi_uptrend_ok,
+    hit_payload,
     kdj_oversold_ok,
     macd_bull_ok,
     price_stable_ok,
-    CROSS,
 )
-
 
 # ====================================================================
 # 1. 超卖B1（oversold_b1）
@@ -311,9 +310,7 @@ def compute_fill_pit(ctx: FactorContext, params=None):
             if mids.size and (c[mids] > c[p1]).any():
                 continue  # 区间内其他峰抬高了前峰 → 不合形态
             interval_min = c[p1 : p2 + 1].min()
-            if not (
-                interval_min > 0 and c[p1] >= interval_min * (1 + p["gap_threshold"])
-            ):
+            if not (interval_min > 0 and c[p1] >= interval_min * (1 + p["gap_threshold"])):
                 continue  # 坑不够深
             if abs(close_today - c[p1]) / c[p1] <= p["fluc_threshold"]:
                 return hit_payload(

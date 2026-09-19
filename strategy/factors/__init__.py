@@ -5,10 +5,10 @@ fn(ctx: FactorContext, params=None) -> dict | None
 """
 
 from strategy.factors.b1_family import FACTORS as _b1
-from strategy.factors.zhixing_family import FACTORS as _zx
 from strategy.factors.momentum_family import FACTORS as _mo
 from strategy.factors.sandu_family import FACTORS as _sd
 from strategy.factors.shenji_family import FACTORS as _sj
+from strategy.factors.zhixing_family import FACTORS as _zx
 
 FACTOR_REGISTRY = {}
 for _m in (_b1, _zx, _mo, _sd, _sj):

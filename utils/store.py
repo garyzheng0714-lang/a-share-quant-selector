@@ -44,9 +44,7 @@ class Store:
     def write_stock(self, code: str, df: pd.DataFrame) -> Path:
         path = self.stock_path(code)
         path.parent.mkdir(parents=True, exist_ok=True)
-        df = df.drop_duplicates(subset=["date"], keep="last").sort_values(
-            "date", ascending=False
-        )
+        df = df.drop_duplicates(subset=["date"], keep="last").sort_values("date", ascending=False)
         tmp = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
         df.to_csv(tmp, index=False)
         tmp.replace(path)
@@ -59,9 +57,7 @@ class Store:
         return self.write_stock(code, pd.concat([old, new_df], ignore_index=True))
 
     def list_stocks(self) -> list[str]:
-        return sorted(
-            p.stem for p in self.data_dir.glob("*/*.csv") if _CODE_RE.match(p.stem)
-        )
+        return sorted(p.stem for p in self.data_dir.glob("*/*.csv") if _CODE_RE.match(p.stem))
 
     def latest_date(self) -> str:
         """锚点股最新日期的最大值；没有数据返回空串."""

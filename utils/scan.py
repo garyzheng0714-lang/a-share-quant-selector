@@ -112,9 +112,7 @@ def scan(store: Store, date: str = "", workers: int | None = None) -> dict:
     valid = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for hits in pool.map(
-            lambda c: _scan_one(
-                store, c, names.get(c, ""), trade_date, FACTOR_REGISTRY
-            ),
+            lambda c: _scan_one(store, c, names.get(c, ""), trade_date, FACTOR_REGISTRY),
             codes,
         ):
             if hits is None:
@@ -126,9 +124,7 @@ def scan(store: Store, date: str = "", workers: int | None = None) -> dict:
         return {"available": False, "reason": f"{trade_date} 无有效行情数据"}
     results = {}
     for key, hits in buckets.items():
-        hits.sort(
-            key=lambda h: (h.get("J") if h.get("J") is not None else 999, h["code"])
-        )
+        hits.sort(key=lambda h: (h.get("J") if h.get("J") is not None else 999, h["code"]))
         results[key] = {"hits": hits, "total_scanned": len(codes)}
     _save_cache(store, trade_date, results)
     logger.info(

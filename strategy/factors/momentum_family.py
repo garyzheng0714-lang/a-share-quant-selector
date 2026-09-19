@@ -15,17 +15,17 @@ import functools
 import numpy as np
 
 from strategy.factor_lib import (
-    hit_payload,
-    bbi_uptrend_ok,
-    amplitude_pct,
-    _last,
-    REF,
-    MA,
-    EMA,
-    LLV,
-    HHV,
     CROSS,
+    EMA,
+    HHV,
+    LLV,
+    MA,
+    REF,
     SMA_TDX,
+    _last,
+    amplitude_pct,
+    bbi_uptrend_ok,
+    hit_payload,
 )
 
 
@@ -139,9 +139,7 @@ def compute_six_veins(ctx, params=None):
         / EMA(EMA(am, p["zlmm_short"]), 3).replace(0, np.nan)
     )
     mmm = (
-        100
-        * EMA(EMA(mtm, p["zlmm_long"]), 8)
-        / EMA(EMA(am, p["zlmm_long"]), 8).replace(0, np.nan)
+        100 * EMA(EMA(mtm, p["zlmm_long"]), 8) / EMA(EMA(am, p["zlmm_long"]), 8).replace(0, np.nan)
     )
     c6 = mms > mmm
     allc = c1 & c2 & c3 & c4 & c5 & c6
@@ -458,10 +456,7 @@ def compute_cloud_stair(ctx, params=None):
             continue
         # 1) 强上涨日数量（含低点当日）
         seg = pct[li : peak + 1]
-        if (
-            int(np.nansum(seg >= p["strong_up_pct_threshold"]))
-            < p["min_strong_up_days"]
-        ):
+        if int(np.nansum(seg >= p["strong_up_pct_threshold"])) < p["min_strong_up_days"]:
             continue
         # 2) 横盘段（峰次日 ~ 今日前一日）
         s0, s1 = peak + 1, n - 1
@@ -470,19 +465,13 @@ def compute_cloud_stair(ctx, params=None):
         if not (cmin > 0):
             continue
         crng = cmax / cmin - 1
-        if not (
-            p["min_recent_close_range_pct"] <= crng <= p["max_recent_close_range_pct"]
-        ):
+        if not (p["min_recent_close_range_pct"] <= crng <= p["max_recent_close_range_pct"]):
             continue
         lmin = np.nanmin(ls)
         if not (lmin > 0):
             continue
         hlr = np.nanmax(hs) / lmin - 1
-        if not (
-            p["min_recent_high_low_range_pct"]
-            <= hlr
-            <= p["max_recent_high_low_range_pct"]
-        ):
+        if not (p["min_recent_high_low_range_pct"] <= hlr <= p["max_recent_high_low_range_pct"]):
             continue
         if 1 - lmin / peak_h > p["max_consolidation_pullback_pct"]:
             continue
@@ -500,11 +489,7 @@ def compute_cloud_stair(ctx, params=None):
         bwin = pct[n - p["breakout_lookback_days"] :]
         if int(np.nansum(bwin > 0)) < p["min_breakout_up_days"]:
             continue
-        target = (
-            peak_h
-            * p["min_breakout_close_to_peak_ratio"]
-            * (1 + p["breakout_buffer_pct"])
-        )
+        target = peak_h * p["min_breakout_close_to_peak_ratio"] * (1 + p["breakout_buffer_pct"])
         if not (C[-1] >= target):
             continue
         return hit_payload(

@@ -57,9 +57,7 @@ def fetch_universe(sleep: float = 0.05) -> tuple[dict, dict]:
     for i in range(0, len(codes), 100):
         batch = ",".join(_market(c) for c in codes[i : i + 100])
         try:
-            resp = requests.get(
-                f"https://qt.gtimg.cn/q={batch}", headers=_UA, timeout=30
-            )
+            resp = requests.get(f"https://qt.gtimg.cn/q={batch}", headers=_UA, timeout=30)
             resp.raise_for_status()
         except Exception as exc:
             logger.warning("腾讯行情批次 %d 失败: %s", i, exc)

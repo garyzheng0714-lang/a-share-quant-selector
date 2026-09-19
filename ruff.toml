@@ -1,0 +1,6 @@
+target-version = "py311"
+line-length = 100
+
+[lint]
+# 只做基础检查；规则集显式写死，避免 ruff 升级改默认值把 CI 打红。
+select = ["E4", "E7", "E9", "F", "I"]

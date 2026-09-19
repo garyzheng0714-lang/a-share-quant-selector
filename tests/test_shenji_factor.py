@@ -11,9 +11,7 @@ def _df(closes):
     closes = np.asarray(closes, dtype=float)
     return pd.DataFrame(
         {
-            "date": pd.date_range("2026-01-01", periods=len(closes)).strftime(
-                "%Y-%m-%d"
-            ),
+            "date": pd.date_range("2026-01-01", periods=len(closes)).strftime("%Y-%m-%d"),
             "open": closes * 0.99,
             "high": closes * 1.01,
             "low": closes * 0.98,

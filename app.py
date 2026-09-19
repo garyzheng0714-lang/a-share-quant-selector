@@ -78,9 +78,7 @@ def api_factors():
                 "today_hits": None if hits is None else len(hits),
             }
         )
-    factors.sort(
-        key=lambda f: GROUP_ORDER.index(f["group"]) if f["group"] in GROUP_ORDER else 99
-    )
+    factors.sort(key=lambda f: GROUP_ORDER.index(f["group"]) if f["group"] in GROUP_ORDER else 99)
 
     presets = []
     for preset in PRESETS:
@@ -88,9 +86,7 @@ def api_factors():
             continue
         sets = [codes(k) for k in preset["keys"]]
         hits = (
-            None
-            if any(s is None for s in sets)
-            else len(scan.compose_codes(sets, preset["join"]))
+            None if any(s is None for s in sets) else len(scan.compose_codes(sets, preset["join"]))
         )
         presets.append({**preset, "today_hits": hits})
 
@@ -138,9 +134,7 @@ def api_factor_compose():
     from strategy.factors import FACTOR_REGISTRY
 
     keys = list(
-        dict.fromkeys(
-            k.strip() for k in request.args.get("keys", "").split(",") if k.strip()
-        )
+        dict.fromkeys(k.strip() for k in request.args.get("keys", "").split(",") if k.strip())
     )
     join = request.args.get("join", "and").strip()
     date = request.args.get("date", "").strip()
@@ -174,9 +168,7 @@ def api_factor_compose():
         if any(k not in prev_cache for k in keys):
             break
         history.append(
-            scan.compose_codes(
-                [{h["code"] for h in prev_cache[k]["hits"]} for k in keys], join
-            )
+            scan.compose_codes([{h["code"] for h in prev_cache[k]["hits"]} for k in keys], join)
         )
 
     def streak(code):
@@ -219,9 +211,7 @@ def api_factor_compose():
             "trade_date": trade_date,
             "hits": hits,
             "per_key_counts": {k: len(v) for k, v in per_key.items()},
-            "total_scanned": max(
-                (cache[k].get("total_scanned", 0) for k in keys), default=0
-            ),
+            "total_scanned": max((cache[k].get("total_scanned", 0) for k in keys), default=0),
         }
     )
 

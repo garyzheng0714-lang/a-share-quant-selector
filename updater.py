@@ -48,9 +48,7 @@ def refresh_industries(store: Store, max_age_days: float = 7) -> None:
     logger.info("行业映射 %d 条", len(mapping))
 
 
-def update_bars(
-    store: Store, codes: list[str], *, init: bool, years: int, workers: int
-) -> dict:
+def update_bars(store: Store, codes: list[str], *, init: bool, years: int, workers: int) -> dict:
     """增量（或首次全量）更新日线；返回 {updated, failed, skipped}."""
     stats = {"updated": 0, "failed": 0, "skipped": 0}
 
@@ -76,9 +74,7 @@ def update_bars(
     return stats
 
 
-def run_once(
-    store: Store, *, init: bool = False, years: int = 3, scan_only: bool = False
-) -> dict:
+def run_once(store: Store, *, init: bool = False, years: int = 3, scan_only: bool = False) -> dict:
     started = time.time()
     if not scan_only:
         refresh_universe(store)

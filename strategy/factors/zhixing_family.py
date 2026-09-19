@@ -12,13 +12,13 @@ import functools
 import numpy as np
 
 from strategy.factor_lib import (
-    hit_payload,
+    CROSS,
+    HHV,
+    LLV,
+    _last,
     adaptive_trend_selector,
     amplitude_pct,
-    _last,
-    CROSS,
-    LLV,
-    HHV,
+    hit_payload,
 )
 
 
@@ -323,16 +323,10 @@ def compute_double_line(ctx, params=None):
         if not bool((wh > yl).all()):
             continue
         breaks = int(
-            (
-                ctx.L.iloc[-w:].to_numpy()
-                < yl.to_numpy() * p["support_break_tolerance"]
-            ).sum()
+            (ctx.L.iloc[-w:].to_numpy() < yl.to_numpy() * p["support_break_tolerance"]).sum()
         )
         overs = int(
-            (
-                ctx.C.iloc[-w:].to_numpy()
-                > wh.to_numpy() * (1 + p["oscillation_tolerance"])
-            ).sum()
+            (ctx.C.iloc[-w:].to_numpy() > wh.to_numpy() * (1 + p["oscillation_tolerance"])).sum()
         )
         if breaks <= p["max_break_count"] and overs <= p["max_break_count"]:
             w_found = w
@@ -370,9 +364,7 @@ def compute_double_line(ctx, params=None):
         return None
     # 6. 小阴小阳
     pct_tail = (ctx.C.pct_change() * 100).iloc[-k:]
-    if pct_tail.isna().any() or not bool(
-        (pct_tail.abs() <= p["pct_change_threshold"]).all()
-    ):
+    if pct_tail.isna().any() or not bool((pct_tail.abs() <= p["pct_change_threshold"]).all()):
         return None
     return hit_payload(
         ctx,
@@ -551,9 +543,7 @@ def compute_nana_chart(ctx, params=None):
     if float(ctx.V.iloc[-k:].mean()) > v0 * p["volume_shrink_ratio"]:
         return None
     pct_tail = (ctx.C.pct_change() * 100).iloc[-k:]
-    if pct_tail.isna().any() or not bool(
-        (pct_tail.abs() <= p["pct_change_threshold"]).all()
-    ):
+    if pct_tail.isna().any() or not bool((pct_tail.abs() <= p["pct_change_threshold"]).all()):
         return None
     if not adaptive_trend_selector(ctx, p["B1_params"]):
         return None
