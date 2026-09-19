@@ -4,6 +4,8 @@
 
 研究工具，不构成投资建议。
 
+线上：`https://zxhy.garyzheng.com:8443`（Caddy 反代到容器 18321；443 被同机其他服务占用，故走 8443）。
+
 ## 组成
 
 | 文件 | 作用 |
@@ -16,6 +18,8 @@
 | `frontend/` | React + Astryx：`/select` 选股工作台，`/stock/:code` K 线 |
 
 数据目录 `data/`（环境变量 `QUANT_DATA_DIR`）：`{前两位}/{code}.csv` 日线、`stock_names.json`、`stock_industry.json`、`stock_market_cap.json`、`factor_cache/{date}.json`。
+
+因子口径见各 `strategy/factors/*_family.py` 的 docstring；「神机信号」是从公众号截图反推的，来源与参数见 `docs/architecture.md`。
 
 ## 本地运行
 
