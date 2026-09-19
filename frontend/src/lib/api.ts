@@ -94,6 +94,8 @@ export interface FactorHit {
   pct_change: number | null;
   J: number | null;
   RSI: number | null;
+  /** 量比：当日成交量 / 前 5 日均量 */
+  vol_ratio?: number | null;
   industry: string;
   cap_yi: number | null;
   [key: string]: unknown;

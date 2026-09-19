@@ -342,7 +342,7 @@ def body_pct(ctx: FactorContext) -> float:
 
 
 def hit_payload(ctx: FactorContext, extra: dict = None) -> dict:
-    """命中时的标准展示字段：close / pct_change / J / RSI6，可附加策略特有字段."""
+    """命中时的标准展示字段：close / pct_change / J / RSI6 / 量比，可附加策略特有字段."""
     _, _, j = ctx.kdj()
     payload = {
         "close": round(_last(ctx.C), 2),
@@ -353,6 +353,9 @@ def hit_payload(ctx: FactorContext, extra: dict = None) -> dict:
     }
     rsi = _last(ctx.rsi_tdx(6))
     payload["RSI"] = round(rsi, 2) if rsi == rsi else None
+    # 量比：当日成交量 / 前 5 日均量（不含当日）
+    vol_ratio = _last(ctx.V / ctx.V.rolling(5).mean().shift(1))
+    payload["vol_ratio"] = round(vol_ratio, 2) if vol_ratio == vol_ratio and vol_ratio > 0 else None
     if extra:
         payload.update(extra)
     return payload

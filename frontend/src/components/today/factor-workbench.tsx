@@ -18,7 +18,7 @@ import { type ComposeHit, type ComposeJoin, type FactorMeta, type FactorPreset, 
 import { useFactorCompose, useFactors } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
 
-type SortKey = "streak" | "pct";
+type SortKey = "streak" | "vol" | "pct";
 
 const MAX_RESULTS = 300;
 
@@ -97,6 +97,7 @@ export function FactorWorkbench() {
   const [librarySearch, setLibrarySearch] = useState("");
   const [resultSearch, setResultSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("streak");
+  const [industry, setIndustry] = useState("");
 
   const factorKeys = useMemo(() => new Set(meta?.factors.map((factor) => factor.key) ?? []), [meta]);
   const selectedKeys = useMemo(() => {
@@ -148,16 +149,24 @@ export function FactorWorkbench() {
     .filter((factor): factor is FactorMeta => Boolean(factor));
   const nameOf = (key: string) => meta?.factors.find((factor) => factor.key === key)?.name ?? key;
 
+  const allHits = useMemo(() => (compose?.available ? compose.hits ?? [] : []), [compose]);
+  /** 当日结果里出现的行业及其数量，供筛选 */
+  const industries = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const hit of allHits) if (hit.industry) counts.set(hit.industry, (counts.get(hit.industry) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [allHits]);
   const hits = useMemo(() => {
-    const list = compose?.available ? compose.hits ?? [] : [];
-    const filtered = list.filter((hit) =>
-      `${hit.code} ${hit.name} ${hit.industry}`.toLowerCase().includes(resultSearch.toLowerCase()),
+    const filtered = allHits.filter((hit) =>
+      (!industry || hit.industry === industry)
+      && `${hit.code} ${hit.name} ${hit.industry}`.toLowerCase().includes(resultSearch.toLowerCase()),
     );
     const sorted = [...filtered];
     if (sortKey === "streak") sorted.sort((a, b) => b.matched.length - a.matched.length || b.streak - a.streak || (a.J ?? 999) - (b.J ?? 999));
+    if (sortKey === "vol") sorted.sort((a, b) => (b.vol_ratio ?? -1) - (a.vol_ratio ?? -1));
     if (sortKey === "pct") sorted.sort((a, b) => (b.pct_change ?? -999) - (a.pct_change ?? -999));
     return sorted;
-  }, [compose, resultSearch, sortKey]);
+  }, [allHits, industry, resultSearch, sortKey]);
 
   const totalHits = compose?.available ? compose.hits?.length ?? 0 : 0;
   const resultError = composeError
@@ -212,6 +221,7 @@ export function FactorWorkbench() {
     },
     { key: "industry", header: "行业", width: proportional(1, { minWidth: 96 }), renderCell: (hit) => hit.industry || "—" },
     { key: "cap", header: "流通市值", width: pixel(80), align: "end", renderCell: (hit) => <span className="tabular-nums">{hit.cap_yi === null ? "—" : `${hit.cap_yi}亿`}</span> },
+    { key: "vol", header: "量比", width: pixel(60), align: "end", renderCell: (hit) => <span className={`tabular-nums ${(hit.vol_ratio ?? 0) >= 1.5 ? "text-bull" : ""}`}>{hit.vol_ratio == null ? "—" : hit.vol_ratio.toFixed(1)}</span> },
     {
       key: "matched",
       header: "命中因子",
@@ -369,13 +379,14 @@ export function FactorWorkbench() {
             {selectedKeys.length > 0 && (
               <SegmentedControl value={sortKey} onChange={(value) => setSortKey(value as SortKey)} label="排序" size="sm">
                 <SegmentedControlItem value="streak" label="连命中" />
+                <SegmentedControlItem value="vol" label="量比" />
                 <SegmentedControlItem value="pct" label="涨跌幅" />
               </SegmentedControl>
             )}
           </div>
 
           {selectedKeys.length > 0 && (
-            <div className="border-b border-border p-3">
+            <div className="flex items-center gap-2 border-b border-border p-3">
               <TextInput
                 label="搜索结果"
                 isLabelHidden
@@ -386,6 +397,15 @@ export function FactorWorkbench() {
                 hasClear
                 width="100%"
                 size="sm"
+              />
+              <Selector
+                label="行业"
+                isLabelHidden
+                options={[{ value: "", label: `全部行业 (${allHits.length})` }, ...industries.map(([name, count]) => ({ value: name, label: `${name} (${count})` }))]}
+                value={industry}
+                onChange={(value) => setIndustry(value)}
+                size="sm"
+                width={168}
               />
             </div>
           )}
