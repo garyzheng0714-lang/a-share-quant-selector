@@ -5,9 +5,10 @@ A股量化选股系统 - 主程序
 使用方法:
     python main.py init      # 首次全量抓取
     python main.py update    # 每日增量更新
-    python main.py select    # 执行选股
     python main.py run       # 完整流程（更新+选股+通知）
-    python main.py schedule  # 启动定时调度
+    python main.py track     # 回填并查看战绩
+    python main.py backtest  # 历史回测
+    python main.py web       # 启动 Web 服务与调度器
 """
 import sys
 import os
@@ -623,7 +624,7 @@ def print_version():
     print(f"akshare: {akshare.__version__}")
     print(f"pandas: {pandas.__version__}")
     print(f"System: {platform.system()}")
-    print(f"B1 Pattern Match: 支持（基于双线+量比+形态三维匹配，10个历史案例）")
+    print(f"B1 Pattern Match: 支持（基于双线+KDJ+量能+价格形态四维匹配，10个历史案例）")
 
 
 def main():
@@ -648,7 +649,7 @@ def main():
   near_short_trend - 靠近短期趋势线（±short_pct%，默认2%）
 
 B1完美图形匹配:
-  基于10个历史成功案例（双线+量比+形态三维相似度匹配）
+  基于10个历史成功案例（双线+KDJ+量能+价格形态四维相似度匹配）
   使用 --b1-match 参数启用，--lookback-days 调整回看天数（默认25天）
   使用 --min-similarity 调整匹配阈值（默认60%，范围0-100）
         """

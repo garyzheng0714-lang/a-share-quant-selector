@@ -54,7 +54,7 @@ def _get_with_retry(url, retries: int = 2, backoff: float = 0.5, **kwargs):
 
 
 def _fetch_index(code: str, days: int = 320) -> list:
-    url = (f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+    url = (f"https://ifzq.gtimg.cn/appstock/app/fqkline/get"
            f"?param={code},day,,,{days},qfq")
     r = _get_with_retry(url, timeout=10)
     data = r.json()["data"][code]

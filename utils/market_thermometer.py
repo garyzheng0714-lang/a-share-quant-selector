@@ -32,7 +32,7 @@ def _fetch_index_daily(days=320):
     now = time.time()
     if _CACHE["data"] and now - _CACHE["ts"] < _CACHE_TTL:
         return _CACHE["data"]
-    url = (f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+    url = (f"https://ifzq.gtimg.cn/appstock/app/fqkline/get"
            f"?param={INDEX_CODE},day,,,{days},qfq")
     r = requests.get(url, timeout=10)
     data = r.json()["data"][INDEX_CODE]

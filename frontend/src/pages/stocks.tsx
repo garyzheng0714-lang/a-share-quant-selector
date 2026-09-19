@@ -6,10 +6,11 @@ import { Icon } from "@astryxdesign/core/Icon";
 import { Text } from "@astryxdesign/core/Text";
 import { PageTransition } from "@/components/layout/page-transition";
 import { QuantPickCard } from "@/components/dashboard/quant-pick-card";
+import { CloudStreet } from "@/components/today/cloud-street";
 import { FactorWorkbench } from "@/components/today/factor-workbench";
 import { useCoverage } from "@/lib/hooks";
 
-type View = "workspace" | "decision";
+type View = "cloud" | "workspace" | "decision";
 
 function CoverageDetails() {
   const { data: coverage } = useCoverage();
@@ -25,7 +26,7 @@ function CoverageDetails() {
 }
 
 export function Component() {
-  const [view, setView] = useState<View>("workspace");
+  const [view, setView] = useState<View>("cloud");
   const [coverageOpen, setCoverageOpen] = useState(false);
 
   return (
@@ -33,8 +34,8 @@ export function Component() {
       <div className="strategy-page">
         <div className="flex min-h-12 items-center justify-between gap-3 border-b border-border bg-surface px-3 py-2 sm:px-5">
           <div className="min-w-0">
-            <Heading level={1} className="truncate">每日策略池</Heading>
-            <Text type="supporting" className="hidden sm:block">真实数据驱动的条件组合与结果复核</Text>
+            <Heading level={1} className="truncate">云阶</Heading>
+            <Text type="supporting" className="hidden sm:block">点开一只票，图和关键事实就在这只票下面</Text>
           </div>
           <SegmentedControl
             value={view}
@@ -42,12 +43,17 @@ export function Component() {
             label="研究模式"
             size="sm"
           >
+            <SegmentedControlItem value="cloud" label="云阶" />
             <SegmentedControlItem value="workspace" label="策略组合" />
             <SegmentedControlItem value="decision" label="B1 决策" />
           </SegmentedControl>
         </div>
 
-        {view === "workspace" ? (
+        {view === "cloud" ? (
+          <section aria-label="云阶名单" className="view-enter">
+            <CloudStreet />
+          </section>
+        ) : view === "workspace" ? (
           <section aria-label="策略组合工作台" className="view-enter">
             <FactorWorkbench />
           </section>

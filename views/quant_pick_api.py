@@ -8,6 +8,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify
 
 from utils.csv_manager import CSVManager
+from utils.decision_config import get_decision_config
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +69,8 @@ def _sector_heat() -> dict:
     用 heat_map 而不是 hot/relay 榜：那两个榜只有前 8 名，冷门行业的票查不到分，
     界面上就是一片空白（用户看不出这只票顺不顺风）。
 
-    注意：它**不参与**排序决策（板块热度对个股收益的增益未经回测验证，
-    不能拿未验证的东西当买入依据）。只是把用户已经信任的那份情报贴到票旁边。
+    它不参与版本化分层决策。旧兼容接口 /api/quant-pick 会用当前综合热度分做
+    展示排序，但该运行时分数尚未完成同口径治理验证，不能当成买入依据。
     """
     try:
         from utils.sector_rotation import get_sector_rotation
@@ -83,13 +84,20 @@ def _sector_heat() -> dict:
 
 
 def _enrich(rows):
+    from utils.cloud_stair_stock_history import stock_history
+
     ind, heat = _industry(), _sector_heat()
     out = []
     for r in rows:
         code = r.get("code", "")
         industry = ind.get(code, "")
-        out.append({**r, "industry": industry, "cap_yi": _cap_yi(code),
-                    "sector": heat.get(industry)})
+        out.append({
+            **r,
+            "industry": industry,
+            "cap_yi": _cap_yi(code),
+            "sector": heat.get(industry),
+            "history": stock_history(code),
+        })
     return out
 
 
@@ -108,7 +116,11 @@ def _pending(trade_date):
 
 
 def _today_buy():
-    """今天可以买的票（云阶命中，已做主板过滤和信息补全）。返回 (trade_date, rows) 或 (None, reason)."""
+    """云阶兼容候选：主板过滤、信息补全，并按板块综合热度展示排序。
+
+    tools/sector_rank_research.py 支持的是信号日行业平均涨幅 ind_ret1 这一代理量；
+    当前 sector_rotation 综合分并非同一特征，因此这里只能提供展示顺序。
+    """
     from utils.factor_scan import get_factor_hits
     from utils.market_filter import is_main_board, main_board_only
     from utils.quant_pick import CORE_FACTOR
@@ -119,7 +131,30 @@ def _today_buy():
     hits = scan["results"][CORE_FACTOR]["hits"]
     if main_board_only():
         hits = [h for h in hits if is_main_board(h.get("code", ""))]
-    return scan["trade_date"], _enrich(hits)
+    rows = _enrich(hits)
+
+    def _sector_key(r):
+        s = r.get("sector") or {}
+        return (s.get("score") if s.get("score") is not None else -1.0,
+                s.get("relative_strength") if s.get("relative_strength") is not None else -1.0)
+    rows.sort(key=_sector_key, reverse=True)
+    for i, r in enumerate(rows, 1):
+        s = r.get("sector") or {}
+        r["rank"] = i
+        r["rank_total"] = len(rows)
+        parts = ["云阶：回到前高附近（第一波大涨→缩量横盘→收盘达到前峰至少95%）"]
+        if s:
+            score = s.get("score")
+            if score is not None:
+                parts.append(f"板块热度 {score:.0f} 分（全市场第 {s.get('rank')}/{s.get('total')} 名）")
+            if s.get("delta3") is not None and s["delta3"] >= 8:
+                parts.append(f"3日升温 +{s['delta3']:.0f}")
+            elif s.get("delta3") is not None and s["delta3"] <= -8:
+                parts.append(f"3日降温 {s['delta3']:.0f}")
+            if s.get("stage"):
+                parts.append(s["stage"])
+        r["reason"] = "；".join(parts)
+    return scan["trade_date"], rows
 
 
 @quant_pick_bp.route("/api/quant-comment", methods=["GET"])
@@ -170,43 +205,31 @@ def api_quant_comment():
 
 @quant_pick_bp.route("/api/quant-pick", methods=["GET"])
 def api_quant_pick():
-    """兼容旧客户端；启用分层决策后只暴露通过四层闸门的可执行标的。"""
-    try:
-        from utils.decision_config import get_decision_config
-        if get_decision_config()["enabled"]:
-            from utils.decision_ledger import get_latest_decision
-            from utils.data_freshness import local_data_status
-            from utils.hierarchical_decision import run_close_decision
+    """沿用旧响应形状的研究候选（云阶 + 板块综合热度展示顺序）。
 
-            freshness = local_data_status()
-            decision = get_latest_decision()
-            if not freshness["fresh"] and not decision:
-                return jsonify({
-                    "available": False, "reason": "stale_market_data", "freshness": freshness,
-                }), 503
-            if freshness["fresh"] and (
-                not decision or decision.get("trade_date") != freshness["local_date"]
-            ):
-                decision = run_close_decision()
-            if decision and decision.get("candidates") is not None:
-                rows = []
-                for item in decision["candidates"]:
-                    base = item.get("baseline") or {}
-                    rows.append({
-                        "code": item["code"], "name": item.get("name"),
-                        "industry": item.get("industry") or "", "sector": item.get("sector"),
-                        "close": base.get("close") or 0, "J": base.get("J"),
-                        "RSI": base.get("RSI"), "cap_yi": base.get("cap_yi"),
-                        "action": item.get("action"), "reason_codes": item.get("reason_codes", []),
-                    })
-                return jsonify({
-                    "available": True, "trade_date": decision["trade_date"],
-                    "is_stale": not freshness["fresh"], "freshness": freshness,
-                    "today_buy": [row for row in rows if row["action"] == "buy"],
-                    "tomorrow_watch": [], "decision": decision,
-                    "honest_note": "只执行已验证且启用的门禁；未验证层仅记录影子结果。",
-                })
+    today_buy 当前承载全部云阶命中，已不保持旧版“已批准买入”的字段语义。
+    分层决策启用时，其结果作为 decision 参考字段附带；权威动作仍以版本化
+    decision 为准。
+    """
+    try:
         from utils.quant_pick import CORE_FACTOR
+
+        # 分层决策结果（参考字段；获取失败不影响云阶兼容候选）
+        decision = None
+        if get_decision_config()["enabled"]:
+            try:
+                from utils.decision_ledger import get_latest_decision
+                from utils.data_freshness import local_data_status
+                from utils.hierarchical_decision import run_close_decision
+
+                freshness = local_data_status()
+                decision = get_latest_decision()
+                if freshness["fresh"] and (
+                    not decision or decision.get("trade_date") != freshness["local_date"]
+                ):
+                    decision = run_close_decision()
+            except Exception:
+                decision = None
 
         trade_date, hits = _today_buy()
         if trade_date is None:
@@ -219,15 +242,18 @@ def api_quant_pick():
             "core_factor": {
                 "key": CORE_FACTOR,
                 "name": "云阶",
-                "plain": "第一波大涨 → 缩量横盘不破位 → 再次突破前高",
+                "plain": "第一波大涨 → 缩量横盘不破位 → 收盘回到前峰至少95%",
                 "why": "28个公式里唯一在两段互不重叠的历史中、持有1天和5天都跑赢大盘的",
                 "track": track.get("periods", {}).get("ret_5"),
             },
-            "today_buy": hits,               # _today_buy() 已做主板过滤 + 信息补全
+            "today_buy": hits,               # 旧字段名：云阶候选，按板块热度展示排序
             "tomorrow_watch": _enrich(_pending(trade_date)),
+            "decision": decision,
             "honest_note": (
-                "命中多只时无法区分优劣——J值/RSI/放量/距前高/乖离/涨幅/共振数 "
-                "7个维度全部试过，样本外均失效。建议等权分散，或结合板块风向自行取舍。"
+                "候选按当前板块综合热度展示排序。历史分段研究只支持信号日行业强弱"
+                "这一代理特征；当前综合分尚未完成同口径 point-in-time / purged walk-forward 验证。"
+                "today_buy 只是沿用的字段名，该顺序不是版本化 buy 动作；旧客户端仍可能"
+                "把它显示为今日推荐，完成字段迁移前不可发布，也不构成买卖建议。"
             ),
         })
     except Exception as e:

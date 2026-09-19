@@ -36,13 +36,20 @@ env/
 data/
 !data/.gitkeep
 
+# Local runtime caches, QA shots, and history archives
+.runtime/
+
 # Logs
 *.log
+nohup.out
 
 # Config with sensitive info (user should create their own)
 config/config.yaml
 config/config_local.yaml
 config/github.yaml
+
+# Stray runtime database; the application database lives under ignored data/.
+views/views.db
 
 # OS
 .DS_Store

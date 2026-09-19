@@ -4,7 +4,7 @@ import { Icon } from "@astryxdesign/core/Icon";
 /** 手机与桌面共用三段主任务：环境 → 决策 → 复盘。 */
 const navItems = [
   { to: "/sectors", label: "环境", end: false, matches: ["/sectors"], icon: "viewColumns" as const },
-  { to: "/stocks", label: "策略", end: false, matches: ["/stocks", "/stock/"], icon: "funnel" as const },
+  { to: "/stocks", label: "云阶", end: false, matches: ["/stocks", "/stock/"], icon: "funnel" as const },
   { to: "/review", label: "复盘", end: false, matches: ["/review"], icon: "calendar" as const },
 ];
 
