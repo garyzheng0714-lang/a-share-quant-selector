@@ -1,4 +1,4 @@
-"""K 线接口数据：日线（含 KDJ、知行白线/黄线）与周线（含 MA5/10/20/60）。"""
+"""K 线接口数据：日线（KDJ、知行白线/黄线、生命线 MA13）与周线（MA5/10/20/60）。"""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ def build_kline(frame: pd.DataFrame, period: str) -> dict:
 
     ctx = FactorContext(df)
     k, d, j = ctx.kdj()
-    white, yellow = ctx.white_line(), ctx.yellow_line()
+    white, yellow, lifeline = ctx.white_line(), ctx.yellow_line(), ctx.ma(13)
     data = [
         [
             row["date"].strftime("%Y-%m-%d"),
@@ -77,6 +77,7 @@ def build_kline(frame: pd.DataFrame, period: str) -> dict:
             _num(j.iloc[i]),
             _num(white.iloc[i]),
             _num(yellow.iloc[i]),
+            _num(lifeline.iloc[i]),
         ]
         for i, row in df.iterrows()
     ]

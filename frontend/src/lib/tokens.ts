@@ -32,6 +32,7 @@ export const chartColors = {
   priceLine: "rgba(37,99,235,0.58)",
   trend: "#0f172a",
   dk: "#d97706",
+  lifeline: "#eab308",
   kdjK: "#3b82f6",
   kdjD: "#f59e0b",
   kdjJ: "#ef4444",

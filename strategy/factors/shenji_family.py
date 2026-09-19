@@ -52,7 +52,7 @@ def compute_shenji_lifeline(ctx, params=None):
 
 FACTORS = {
     "shenji_lifeline": {
-        "name": "神机·生命线",
+        "name": "神机信号",
         "group": "生命线系",
         "min_bars": 20,
         "params": SHENJI_PARAMS,

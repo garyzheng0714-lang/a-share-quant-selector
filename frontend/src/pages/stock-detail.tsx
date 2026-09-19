@@ -96,6 +96,7 @@ export function Component() {
     type: "trend";
     trend: number;
     dk: number | null;
+    lifeline: number | null;
     kdjK: number | null;
     kdjD: number | null;
     kdjJ: number | null;
@@ -115,6 +116,7 @@ export function Component() {
         type: "trend",
         trend: src.trendLine,
         dk: src.dkLine ?? null,
+        lifeline: src.lifeline ?? null,
         kdjK: src.kdjK ?? null,
         kdjD: src.kdjD ?? null,
         kdjJ: src.kdjJ ?? null,
@@ -127,11 +129,13 @@ export function Component() {
     if (period === "daily") {
       const t = latestRow[9] as number | null;
       const d = latestRow[10] as number | null;
+      const life = latestRow[11] as number | null;
       return t != null
         ? {
             type: "trend",
             trend: t,
             dk: d,
+            lifeline: life,
             kdjK: latestRow[6] as number | null,
             kdjD: latestRow[7] as number | null,
             kdjJ: latestRow[8] as number | null,
@@ -141,7 +145,7 @@ export function Component() {
     if (weeklyLineMode === "trend") {
       const t = latestRow[10] as number | null;
       const d = latestRow[11] as number | null;
-      return t != null ? { type: "trend", trend: t, dk: d, kdjK: null, kdjD: null, kdjJ: null } : null;
+      return t != null ? { type: "trend", trend: t, dk: d, lifeline: null, kdjK: null, kdjD: null, kdjJ: null } : null;
     }
     return {
       type: "ma",
@@ -385,6 +389,14 @@ export function Component() {
                           </span>
                         </span>
                       )}
+                      {lineValues.lifeline != null && (
+                        <span>
+                          <span className="text-ink-muted">生命线 </span>
+                          <span style={{ color: chartColors.lifeline }}>
+                            {lineValues.lifeline.toFixed(2)}
+                          </span>
+                        </span>
+                      )}
                       {lineValues.kdjK != null && (
                         <>
                           <span style={{ color: chartColors.kdjK }}>
@@ -527,6 +539,11 @@ export function Component() {
                           {overlay.dkLine != null && (
                             <span className="text-ink-secondary">
                               多空 <span className="text-ink">{overlay.dkLine.toFixed(2)}</span>
+                            </span>
+                          )}
+                          {overlay.lifeline != null && (
+                            <span className="text-ink-secondary">
+                              生命线 <span className="text-ink">{overlay.lifeline.toFixed(2)}</span>
                             </span>
                           )}
                         </div>

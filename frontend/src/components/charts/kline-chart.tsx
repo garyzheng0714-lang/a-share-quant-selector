@@ -39,6 +39,8 @@ export interface KlineOverlay {
   kdjJ?: number;
   trendLine?: number;
   dkLine?: number;
+  /** 生命线 MA13（仅日线） */
+  lifeline?: number;
   ma5?: number;
   ma10?: number;
   ma20?: number;
@@ -75,6 +77,7 @@ const {
   priceLine: PRICE_LINE_COLOR,
   trend: TREND_COLOR,
   dk: DK_COLOR,
+  lifeline: LIFELINE_COLOR,
   kdjK: KDJ_K_COLOR,
   kdjD: KDJ_D_COLOR,
   kdjJ: KDJ_J_COLOR,
@@ -338,22 +341,42 @@ function buildOption(
       data: [{ yAxis: latestClose }],
       animation: false,
     },
-    // 因子命中日：对应K线最低价下方一枚金点
+    // 因子命中日：神机信号用红三角 + 文字（同通达信画法），其余因子一枚小圆点
     ...(isDaily && signals?.length
       ? {
           markPoint: {
             silent: true,
-            symbol: "circle",
-            symbolSize: 5,
-            symbolOffset: [0, 10],
-            itemStyle: { color: SIGNAL_COLOR },
-            label: { show: false },
             animation: false,
             data: signals
               .map((s) => {
                 const idx = dates.indexOf(s.date);
                 if (idx < 0) return null;
-                return { coord: [idx, raw[idx][3] as number] };
+                const low = raw[idx][3] as number;
+                const isShenji = s.category.includes("\u795e\u673a");
+                return isShenji
+                  ? {
+                      coord: [idx, low],
+                      symbol: "triangle",
+                      symbolSize: 9,
+                      symbolOffset: [0, 14],
+                      itemStyle: { color: BULL_COLOR },
+                      label: {
+                        show: true,
+                        position: "bottom",
+                        distance: 4,
+                        formatter: "\u795e\u673a",
+                        color: BULL_COLOR,
+                        fontSize: 10,
+                      },
+                    }
+                  : {
+                      coord: [idx, low],
+                      symbol: "circle",
+                      symbolSize: 5,
+                      symbolOffset: [0, 10],
+                      itemStyle: { color: SIGNAL_COLOR },
+                      label: { show: false },
+                    };
               })
               .filter(Boolean),
           },
@@ -380,6 +403,7 @@ function buildOption(
   if (isDaily) {
     series.push(lineSeries("\u8d8b\u52bf\u7ebf", 9, TREND_COLOR, 0, 0));
     series.push(lineSeries("DK\u7ebf", 10, DK_COLOR, 0, 0));
+    series.push(lineSeries("\u751f\u547d\u7ebf", 11, LIFELINE_COLOR, 0, 0));
 
     series.push(lineSeries("K", 6, KDJ_K_COLOR, 2, 2));
     series.push(lineSeries("D", 7, KDJ_D_COLOR, 2, 2));
@@ -487,6 +511,7 @@ function buildOverlay(
     if (d[8] != null) overlay.kdjJ = d[8] as number;
     if (d[9] != null) overlay.trendLine = d[9] as number;
     if (d[10] != null) overlay.dkLine = d[10] as number;
+    if (d[11] != null) overlay.lifeline = d[11] as number;
   } else {
     if (d[6] != null) overlay.ma5 = d[6] as number;
     if (d[7] != null) overlay.ma10 = d[7] as number;

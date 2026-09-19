@@ -57,7 +57,7 @@ PLAIN_DESC = {
 # 常用组合（前端顶部一排按钮，点一下条件和结果同时切换）。
 # join: "and" = 全部满足（交集），"or" = 任一满足（并集）。改这里即可，前端不写死。
 PRESETS = [
-    {"key": "shenji", "name": "神机上穿", "keys": ["shenji_lifeline"], "join": "and"},
+    {"key": "shenji", "name": "神机信号", "keys": ["shenji_lifeline"], "join": "and"},
     {
         "key": "oversold_bounce",
         "name": "超卖反弹",
