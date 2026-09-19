@@ -1,7 +1,7 @@
 """行情抓取：只用腾讯与新浪的公开 HTTP 接口，不依赖 akshare。
 
 - 股票池 + 名称 + 市值：腾讯 qt.gtimg.cn 批量行情（按代码段扫描）
-- 日线（前复权）：腾讯 ifzq.gtimg.cn fqkline
+- 日线（前复权）：腾讯 fqkline（web.ifzq / proxy.finance / ifzq 三个入口轮询，带节流）
 - 行业：新浪「新浪行业」板块及其成分
 任何接口失败都返回空结果，由调用方决定保留旧数据；绝不生成假行情。
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -19,7 +20,18 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+_UA = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Referer": "https://gu.qq.com/",
+}
+# 腾讯 K 线有多个入口，主域名对海外 IP 连发几百次后会被 WAF 拦成 501；逐个尝试
+_KLINE_HOSTS = (
+    "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+    "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get",
+    "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
+)
+# 每次 K 线请求后的节流（秒）；单线程约 4 次/秒，避免触发封禁
+_THROTTLE = float(os.environ.get("QUANT_FETCH_THROTTLE", "0.25"))
 _EXCLUDE = ("债", "基", "ETF", "LOF", "理财", "信托", "B股", "指数", "退")
 
 # 沪深 A 股代码段（含科创、创业板；不含北交所）
@@ -80,6 +92,22 @@ def fetch_universe(sleep: float = 0.05) -> tuple[dict, dict]:
     return names, caps
 
 
+def _kline_get(param: str) -> object:
+    """按入口顺序请求；返回 JSON，全部失败抛出最后一个异常."""
+    last: Exception = RuntimeError("no_kline_host")
+    for base in _KLINE_HOSTS:
+        try:
+            resp = requests.get(f"{base}?param={param}", headers=_UA, timeout=15)
+            if resp.status_code != 200:
+                raise RuntimeError(f"http_{resp.status_code}")
+            return resp.json()
+        except Exception as exc:
+            last = exc
+        finally:
+            time.sleep(_THROTTLE)
+    raise last
+
+
 def _parse_klines(payload: object, market_code: str) -> list:
     data = payload.get("data", {}) if isinstance(payload, dict) else {}
     if isinstance(data, dict):
@@ -111,14 +139,9 @@ def _records(klines: list) -> pd.DataFrame:
 def fetch_recent(code: str, days: int = 12) -> pd.DataFrame:
     """最近 N 个交易日的前复权日线（增量更新用）。失败返回空表."""
     market_code = _market(code)
-    url = (
-        "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
-        f"?param={market_code},day,,,{min(days, 1000)},qfq"
-    )
     try:
-        resp = requests.get(url, headers=_UA, timeout=15)
-        resp.raise_for_status()
-        return _records(_parse_klines(resp.json(), market_code))
+        payload = _kline_get(f"{market_code},day,,,{min(days, 1000)},qfq")
+        return _records(_parse_klines(payload, market_code))
     except Exception as exc:
         logger.debug("增量抓取 %s 失败: %s", code, exc)
         return pd.DataFrame()
@@ -132,14 +155,9 @@ def fetch_history(code: str, years: int = 3) -> pd.DataFrame:
     cursor = ""
     frames: list[pd.DataFrame] = []
     for _ in range(years * 252 // page_size + 2):
-        url = (
-            "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
-            f"?param={market_code},day,,{cursor},{page_size},qfq"
-        )
         try:
-            resp = requests.get(url, headers=_UA, timeout=15)
-            resp.raise_for_status()
-            page = _records(_parse_klines(resp.json(), market_code))
+            payload = _kline_get(f"{market_code},day,,{cursor},{page_size},qfq")
+            page = _records(_parse_klines(payload, market_code))
         except Exception as exc:
             logger.debug("历史抓取 %s 失败: %s", code, exc)
             return pd.DataFrame()

@@ -21,7 +21,7 @@ services:
       - quant-data:/app/data
     environment:
       QUANT_SCAN_WORKERS: "1"
-      QUANT_FETCH_WORKERS: "4"
+      QUANT_FETCH_WORKERS: "2"
       QUANT_RUN_AT: "15:35"
     mem_limit: 512m
 
