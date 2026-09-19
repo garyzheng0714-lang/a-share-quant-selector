@@ -1,0 +1,52 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - name: Build image
+        run: docker build -t a-share-quant:latest .
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$HOST" > ~/.ssh/known_hosts
+      - name: Ship image and restart
+        env:
+          HOST: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+        run: |
+          SSH="ssh -o ServerAliveInterval=15 $USER@$HOST"
+          $SSH "mkdir -p /opt/a-share-quant"
+          scp docker-compose.yml "$USER@$HOST:/opt/a-share-quant/docker-compose.yml"
+          docker save a-share-quant:latest | gzip -1 | $SSH "docker load >/dev/null"
+          $SSH "cd /opt/a-share-quant && docker compose up -d --remove-orphans && docker image prune -f >/dev/null"
+          for i in $(seq 1 12); do
+            if $SSH "curl -fsS http://127.0.0.1:18321/healthz" >/dev/null 2>&1; then echo "healthy"; exit 0; fi
+            sleep 5
+          done
+          $SSH "cd /opt/a-share-quant && docker compose logs --tail 40 web"
+          exit 1

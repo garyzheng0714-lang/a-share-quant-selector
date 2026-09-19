@@ -1,63 +1,29 @@
-import { useLocation } from "@/lib/spa-router";
-import { TopNav, TopNavHeading, TopNavItem } from "@astryxdesign/core/TopNav";
-import { Badge } from "@astryxdesign/core/Badge";
+import { TopNav, TopNavHeading } from "@astryxdesign/core/TopNav";
 import { Icon } from "@astryxdesign/core/Icon";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Text } from "@astryxdesign/core/Text";
-import { useSystemStatus } from "@/lib/hooks";
-
-const navItems = [
-  { to: "/stocks", label: "云阶决策", matches: ["/stocks", "/stock/"] },
-  { to: "/select", label: "选股", matches: ["/select"] },
-];
+import { useStats } from "@/lib/hooks";
 
 export function NavBar() {
-  const location = useLocation();
-  const status = useSystemStatus();
-  const fresh = status.data?.market_data?.fresh;
-  const localDate = status.data?.market_data?.local_date;
-  const expectedDate = status.data?.market_data?.expected_date;
-  const statusLabel = status.error
+  const stats = useStats();
+  const scanDate = stats.data?.scan_date;
+  const label = stats.error
     ? "数据状态读取失败"
-    : fresh === true
-      ? `数据就绪${localDate ? ` · ${localDate}` : ""}`
-      : fresh === false
-        ? `数据过期${localDate ? ` · 截至 ${localDate}` : ""}${expectedDate ? ` · 应更新至 ${expectedDate}` : ""}`
-        : "正在检查数据";
+    : scanDate
+      ? `选股结果 · ${scanDate}`
+      : stats.data
+        ? "还没有扫描结果"
+        : "正在读取数据";
 
   return (
     <TopNav
       className="app-top-nav bg-surface"
       label="主导航"
-      heading={
-        <TopNavHeading
-          heading="QSelect · 云阶"
-          headingHref="/stocks"
-          logo={<Icon icon="viewColumns" size="sm" />}
-        />
-      }
-      startContent={
-        <div className="hidden sm:flex">
-          {navItems.map((item) => (
-            <TopNavItem
-              key={item.to}
-              href={item.to}
-              label={item.label}
-              isSelected={item.matches.some((path) => location.pathname.startsWith(path))}
-            />
-          ))}
-        </div>
-      }
+      heading={<TopNavHeading heading="QSelect 选股" headingHref="/select" logo={<Icon icon="funnel" size="sm" />} />}
       endContent={
-        <div className="flex items-center gap-2" role="status" aria-live="polite" title={statusLabel}>
-          <StatusDot variant={fresh === true ? "success" : fresh === false || status.error ? "error" : "neutral"} label={statusLabel} />
-          <Text type="supporting" className="hidden md:inline">{statusLabel}</Text>
-          <span className="md:hidden">
-            <Badge
-              variant={fresh === true ? "success" : fresh === false || status.error ? "error" : "neutral"}
-              label={fresh === true ? "就绪" : fresh === false ? "过期" : status.error ? "失败" : "检查中"}
-            />
-          </span>
+        <div className="flex items-center gap-2" role="status" aria-live="polite" title={label}>
+          <StatusDot variant={stats.error ? "error" : scanDate ? "success" : "neutral"} label={label} />
+          <Text type="supporting" className="hidden md:inline">{label}</Text>
         </div>
       }
     />

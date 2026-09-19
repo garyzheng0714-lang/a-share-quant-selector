@@ -49,7 +49,7 @@ interface KlineChartProps {
   data: (string | number)[][];
   period: "daily" | "weekly";
   weeklyLineMode?: "trend" | "ma";
-  /** 系统历史信号日：在对应K线下方标金点（仅日线传入，周线日期对不上） */
+  /** 因子命中日：在对应K线下方标金点（仅日线传入，周线日期对不上） */
   signals?: KlineSignal[];
   onCrosshairMove?: (data: KlineOverlay | null) => void;
   className?: string;
@@ -338,7 +338,7 @@ function buildOption(
       data: [{ yAxis: latestClose }],
       animation: false,
     },
-    // 系统历史信号日：对应K线最低价下方一枚金点
+    // 因子命中日：对应K线最低价下方一枚金点
     ...(isDaily && signals?.length
       ? {
           markPoint: {

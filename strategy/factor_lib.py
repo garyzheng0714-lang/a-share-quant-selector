@@ -9,10 +9,9 @@
 2. 条件积木函数：BBI趋势确认（允许回撤）、KDJ超卖（阈值或分位）、价格稳定性、
    少妇策略（AdaptiveTrendSelector）、三度系压力过滤等。
 
-TDX 函数（REF/MA/EMA/LLV/HHV/CROSS/SMA_TDX 等）直接复用 strategy/super_b1.py
-的实现——该实现已过公式保真 review，两处口径必须永远一致，故 import 不复制。
+TDX 函数（REF/MA/EMA/LLV/HHV/CROSS/SMA_TDX 等）统一在 strategy/tdx.py。
 
-语义约定（与 super_b1.py 一致）：
+语义约定：
 - MA 严格窗口（不足 N 根 NaN）；NaN 参与比较一律 False
 - SMA(X,N,M) = ewm(alpha=M/N, adjust=False)；EMA = ewm(span=N, adjust=False)
 - 所有计算在正序（从早到晚）序列上进行
@@ -21,7 +20,7 @@ TDX 函数（REF/MA/EMA/LLV/HHV/CROSS/SMA_TDX 等）直接复用 strategy/super_
 import numpy as np
 import pandas as pd
 
-from strategy.super_b1 import (  # noqa: F401  (re-export 给 factors/ 用)
+from strategy.tdx import (  # noqa: F401  (re-export 给 factors/ 用)
     REF,
     MA,
     EMA,

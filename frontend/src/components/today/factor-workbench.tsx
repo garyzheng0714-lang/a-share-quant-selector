@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "@/lib/spa-router";
-import { Badge, type BadgeVariant } from "@astryxdesign/core/Badge";
+import { Badge } from "@astryxdesign/core/Badge";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
@@ -18,44 +18,12 @@ import { type ComposeHit, type ComposeJoin, type FactorMeta, type FactorPreset, 
 import { useFactorCompose, useFactors } from "@/lib/hooks";
 import { useAppStore } from "@/lib/store";
 
-type SortKey = "streak" | "win" | "pct";
+type SortKey = "streak" | "pct";
 
 const MAX_RESULTS = 300;
-const VERIFIED_GRADES = ["short_robust", "short_ok"];
-
-const gradeMeta: Record<
-  NonNullable<FactorMeta["track"]>["grade"],
-  { label: string; variant: BadgeVariant }
-> = {
-  short_robust: { label: "已验证", variant: "success" },
-  short_ok: { label: "可用", variant: "blue" },
-  long_only: { label: "长线", variant: "neutral" },
-  unstable: { label: "观察中", variant: "warning" },
-  negative: { label: "不稳定", variant: "error" },
-};
-
-function factorStatus(factor: FactorMeta) {
-  return factor.track ? gradeMeta[factor.track.grade] : { label: "待验证", variant: "neutral" as const };
-}
 
 function toNavStocks(hits: ComposeHit[]): SignalStock[] {
-  return hits.map((hit) => ({
-    code: hit.code,
-    name: hit.name,
-    strategy: "factor-composition",
-    category: hit.industry || "",
-    close: hit.close,
-    J: hit.J ?? 0,
-    volume_ratio: 0,
-    market_cap: (hit.cap_yi ?? 0) * 1e8,
-    short_term_trend: 0,
-    bull_bear_line: 0,
-    reasons: [],
-    similarity_score: null,
-    matched_case: null,
-    match_breakdown: null,
-    industry: hit.industry,
-  }));
+  return hits.map((hit) => ({ code: hit.code, name: hit.name, industry: hit.industry }));
 }
 
 function pctClass(value: number | null) {
@@ -90,12 +58,6 @@ function Sparkline({ values }: { values: number[] }) {
   );
 }
 
-function sectorLabel(hit: ComposeHit) {
-  const sector = hit.sector;
-  if (!sector) return null;
-  return `${sector.stage || ""} ${Math.round(sector.score)}`.trim();
-}
-
 function FactorRow({
   factor,
   selected,
@@ -105,7 +67,6 @@ function FactorRow({
   selected: boolean;
   onToggle: (checked: boolean) => void;
 }) {
-  const status = factorStatus(factor);
   return (
     <div className={`strategy-library-row grid grid-cols-[28px_minmax(0,1fr)_40px] ${selected ? "is-active" : ""}`}>
       <CheckboxInput label={`选择 ${factor.name}`} isLabelHidden value={selected} onChange={onToggle} size="sm" />
@@ -117,10 +78,7 @@ function FactorRow({
         onClick={() => onToggle(!selected)}
       >
         <span className="min-w-0" title={factor.name}>
-          <span className="flex min-w-0 items-center gap-1.5">
-            <Text type="label" className="truncate">{factor.name}</Text>
-            <Badge variant={status.variant} label={status.label} />
-          </span>
+          <Text type="label" className="block truncate">{factor.name}</Text>
           <Text type="supporting" className="mt-0.5 block min-w-0 truncate">{factor.plain || factor.desc}</Text>
         </span>
       </Button>
@@ -137,7 +95,6 @@ export function FactorWorkbench() {
   const navigate = useNavigate();
   const setStockNav = useAppStore((state) => state.setStockNav);
   const [librarySearch, setLibrarySearch] = useState("");
-  const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [resultSearch, setResultSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("streak");
 
@@ -198,7 +155,6 @@ export function FactorWorkbench() {
     );
     const sorted = [...filtered];
     if (sortKey === "streak") sorted.sort((a, b) => b.matched.length - a.matched.length || b.streak - a.streak || (a.J ?? 999) - (b.J ?? 999));
-    if (sortKey === "win") sorted.sort((a, b) => (b.win_rate ?? -1) - (a.win_rate ?? -1) || b.streak - a.streak);
     if (sortKey === "pct") sorted.sort((a, b) => (b.pct_change ?? -999) - (a.pct_change ?? -999));
     return sorted;
   }, [compose, resultSearch, sortKey]);
@@ -254,17 +210,7 @@ export function FactorWorkbench() {
         </span>
       ),
     },
-    {
-      key: "industry",
-      header: "行业 · 热度",
-      width: proportional(1, { minWidth: 110 }),
-      renderCell: (hit) => (
-        <span className="block min-w-0">
-          <span className="block truncate">{hit.industry || "—"}</span>
-          <span className="block text-[11px] text-ink-muted">{sectorLabel(hit) ?? "热度未评"}</span>
-        </span>
-      ),
-    },
+    { key: "industry", header: "行业", width: proportional(1, { minWidth: 96 }), renderCell: (hit) => hit.industry || "—" },
     { key: "cap", header: "流通市值", width: pixel(80), align: "end", renderCell: (hit) => <span className="tabular-nums">{hit.cap_yi === null ? "—" : `${hit.cap_yi}亿`}</span> },
     {
       key: "matched",
@@ -277,7 +223,6 @@ export function FactorWorkbench() {
       ),
     },
     { key: "streak", header: "连命中", width: pixel(64), align: "end", renderCell: (hit) => <span className="tabular-nums">{hit.streak} 天</span> },
-    { key: "win", header: "胜率", width: pixel(64), align: "end", renderCell: (hit) => <span className="tabular-nums">{hit.win_rate === null ? "—" : `${hit.win_rate.toFixed(1)}%`}</span> },
   ];
 
   if (metaLoading) {
@@ -291,11 +236,9 @@ export function FactorWorkbench() {
     );
   }
 
-  const visibleFactors = meta.factors.filter((factor) => {
-    const textMatch = `${factor.name} ${factor.plain} ${factor.desc}`.toLowerCase().includes(librarySearch.toLowerCase());
-    if (!textMatch) return false;
-    return !verifiedOnly || VERIFIED_GRADES.includes(factor.track?.grade ?? "");
-  });
+  const visibleFactors = meta.factors.filter((factor) =>
+    `${factor.name} ${factor.plain} ${factor.desc}`.toLowerCase().includes(librarySearch.toLowerCase()),
+  );
   const resultDate = compose?.trade_date ?? meta.trade_date;
   const resultTitle = selectedFactors.length
     ? selectedFactors.map((factor) => factor.name).join(join === "and" ? " 且 " : " 或 ")
@@ -358,7 +301,6 @@ export function FactorWorkbench() {
                 width="100%"
                 size="sm"
               />
-              <CheckboxInput label="只看已验证 / 可用" value={verifiedOnly} onChange={setVerifiedOnly} size="sm" />
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
               {meta.groups.map((group) => {
@@ -380,7 +322,7 @@ export function FactorWorkbench() {
                   </section>
                 );
               })}
-              {!visibleFactors.length && <EmptyState title="没有匹配的因子" description="换一个关键词，或取消「只看已验证」。" isCompact />}
+              {!visibleFactors.length && <EmptyState title="没有匹配的因子" description="换一个关键词试试。" isCompact />}
             </div>
           </div>
         </aside>
@@ -427,7 +369,6 @@ export function FactorWorkbench() {
             {selectedKeys.length > 0 && (
               <SegmentedControl value={sortKey} onChange={(value) => setSortKey(value as SortKey)} label="排序" size="sm">
                 <SegmentedControlItem value="streak" label="连命中" />
-                <SegmentedControlItem value="win" label="胜率" />
                 <SegmentedControlItem value="pct" label="涨跌幅" />
               </SegmentedControl>
             )}

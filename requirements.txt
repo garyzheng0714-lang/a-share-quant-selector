@@ -1,2 +1,5 @@
-# 安装入口；直接依赖见 requirements.in，唯一安装事实源是带 hash 的锁文件。
--r requirements.lock
+flask==3.1.3
+gunicorn==26.0.0
+numpy==2.4.6
+pandas==3.0.3
+requests==2.34.2

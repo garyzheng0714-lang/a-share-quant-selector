@@ -200,11 +200,6 @@ export function Component() {
                         )}
                       </span>
                     }
-                    endContent={
-                      <span className="text-[11px] tabular-nums text-ink-secondary">
-                        {s.close ? s.close.toFixed(2) : ""}
-                      </span>
-                    }
                     onClick={() => {
                       setStockNavIndex(i);
                       navigate(`/stock/${s.code}`, { replace: true });
@@ -456,7 +451,7 @@ export function Component() {
               {/* 信号点图例：金点 = 系统历史上选出过这只票的日子 */}
               {period === "daily" && (klineData.signals?.length ?? 0) > 0 && (
                 <div className="absolute bottom-9 left-3 sm:left-5 z-10 text-[10px] text-ink-muted pointer-events-none">
-                  <span className="text-accent">●</span> 系统历史信号{" "}
+                  <span className="text-accent">●</span> 因子命中{" "}
                   {klineData.signals!.length} 次
                 </div>
               )}

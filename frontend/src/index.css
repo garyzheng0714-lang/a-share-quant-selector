@@ -96,44 +96,6 @@
     background: var(--color-background-body);
   }
 
-  .cloud-decision-page {
-    max-width: 1240px;
-    padding-top: 32px;
-    padding-bottom: 40px;
-  }
-
-  .cloud-decision-hero {
-    display: flex;
-    min-height: 176px;
-    align-items: center;
-    justify-content: space-between;
-    gap: 32px;
-    border: 1px solid var(--color-border);
-    border-left: 3px solid #2563eb;
-    border-radius: 10px;
-    background: var(--color-background-surface);
-    padding: 28px 32px;
-    box-shadow: var(--shadow-card);
-  }
-
-  .cloud-decision-count {
-    display: grid;
-    min-width: 112px;
-    place-items: center;
-    gap: 4px;
-    border-left: 1px solid var(--color-border);
-    padding: 16px 0 16px 32px;
-  }
-
-  .cloud-decision-proof {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 28px;
-    border-block: 1px solid var(--color-border);
-    padding: 20px 4px;
-  }
-
   .strategy-toolbar {
     display: flex;
     min-height: 48px;
@@ -246,27 +208,6 @@
     background: var(--color-background-muted);
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }
 
 @media (max-width: 1365px) and (min-width: 640px) {
@@ -286,30 +227,6 @@
 }
 
 @media (max-width: 639px) {
-  .cloud-decision-page {
-    padding-top: 16px;
-    padding-bottom: 24px;
-  }
-
-  .cloud-decision-hero {
-    min-height: auto;
-    align-items: flex-start;
-    gap: 16px;
-    padding: 20px 18px;
-  }
-
-  .cloud-decision-count {
-    min-width: 64px;
-    border-left: 0;
-    padding: 0;
-  }
-
-  .cloud-decision-proof {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 16px;
-    padding: 18px 2px;
-  }
 
   .strategy-toolbar {
     position: sticky;
@@ -344,8 +261,6 @@
     gap: 2px;
   }
 
-
-
 }
 
 @keyframes reveal-content {
@@ -376,38 +291,4 @@
   }
 }
 
-.shimmer {
-  background: var(--color-background-muted);
-  animation: soft-pulse 1.4s ease-in-out infinite;
-}
-
-.scrollbar-none {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-.scrollbar-none::-webkit-scrollbar {
-  display: none;
-}
-
 /* 复盘票表：纵滚固定表头，横滚配合 useTableStickyColumns 钉住股票列 */
-.review-stock-table {
-  max-height: min(70vh, 720px);
-  overflow: auto;
-  border: 1px solid var(--color-border-default, rgb(15 23 42 / 0.08));
-  border-radius: var(--radius-lg, 8px);
-  background: var(--color-background-primary, #fff);
-}
-
-.review-stock-table .astryx-table-scroll-wrapper {
-  max-height: min(70vh, 720px);
-  overflow: auto;
-}
-
-.review-stock-table .astryx-table-header,
-.review-stock-table .astryx-table-header-cell {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  background: var(--color-elevated, #f4f5f7);
-}

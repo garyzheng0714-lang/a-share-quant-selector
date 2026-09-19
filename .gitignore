@@ -1,66 +1,19 @@
-# Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-/lib/
-/lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual environments
 .venv/
 venv/
-ENV/
-env/
-
-# IDE
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
-
-# Data files (large, should not be committed)
-data/
-!data/.gitkeep
-.runtime/
-
-# Logs
+.DS_Store
 *.log
-
-# Config with sensitive info (user should create their own)
 .env
 .env.*
-!.env.example
-config/config.yaml
-config/config_local.yaml
-config/github.yaml
-secrets/
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# Pytest
-.pytest_cache/
-.hypothesis/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
+# 行情与扫描缓存都是运行时数据
+data/
+!data/.gitkeep
+config/
+.claude/
+autoresearch/
+云阶报表/
+.runtime/

@@ -1,6 +1,0 @@
-# 生产策略参数：Super B1 与分层决策使用代码中受版本控制的规则。
-# 旧 BowlRebound/B1 Pattern 参数已移至 research/legacy/strategy_params.example.yaml。
-
-MarketFilter:
-  # 只保留当前可交易的沪深主板（60/00 开头）。
-  main_board_only: true

@@ -1,94 +1,29 @@
-x-quant-common: &quant-common
-  image: ${QUANT_IMAGE:?QUANT_IMAGE must identify the verified release image}
-  pull_policy: never
-  restart: unless-stopped
-  environment:
-    TZ: Asia/Shanghai
-    PYTHONUNBUFFERED: "1"
-    PYTHONDONTWRITEBYTECODE: "1"
-    GIT_COMMIT_SHA: ${GIT_COMMIT_SHA:?GIT_COMMIT_SHA is required}
-    QUANT_DATA_DIR: /app/data
-    QUANT_STATE_DIR: /app/state
-    QUANT_VIEWS_DB: /app/state/views.db
-    QUANT_OPERATIONS_DB: /app/state/operations.db
-    # 迁移预演要复制整份账本；tmpfs /tmp 只有 256m，预演临时目录必须落磁盘卷（仅 canary 挂载）
-    QUANT_DRY_RUN_DIR: /app/scratch
-    QUANT_MAX_PENDING_TASKS: ${QUANT_MAX_PENDING_TASKS:-1000}
-    QUANT_ADMIN_TOKEN_FILE: /run/secrets/quant_admin_token
-    QUANT_PUBLISHER_TOKEN_FILE: /run/secrets/quant_publisher_token
-    QUANT_VIEWER_TOKEN_FILE: /run/secrets/quant_viewer_token
-    ARK_API_KEY_FILE: /run/secrets/ark_api_key
-  secrets:
-    - quant_admin_token
-    - quant_publisher_token
-    - quant_viewer_token
-    - ark_api_key
-  security_opt:
-    - no-new-privileges:true
-  cap_drop:
-    - ALL
-  read_only: true
-  tmpfs:
-    - /tmp:size=256m,noexec,nosuid,nodev
-
 services:
-  migrate:
-    <<: *quant-common
-    restart: "no"
-    command: ["python", "tools/migrate_databases.py"]
-    volumes:
-      - quant-state:/app/state
-
   web:
-    <<: *quant-common
-    container_name: a-share-quant-web
-    command: ["gunicorn", "--bind=0.0.0.0:5000", "--workers=1", "--threads=8", "--timeout=60", "web_server:create_app()"]
-    volumes:
-      - quant-data:/app/data:ro
-      - quant-state:/app/state
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
+    image: ${QUANT_IMAGE:-a-share-quant:latest}
+    restart: unless-stopped
     ports:
       - "127.0.0.1:18321:5000"
+    volumes:
+      - quant-data:/app/data
+    mem_limit: 256m
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/healthz', timeout=3)"]
-      interval: 30s
+      interval: 60s
       timeout: 5s
       retries: 3
 
-  canary:
-    <<: *quant-common
-    profiles: ["canary"]
-    restart: "no"
-    command: ["gunicorn", "--bind=0.0.0.0:5000", "--workers=1", "--threads=8", "--timeout=60", "web_server:create_app()"]
-    volumes:
-      - quant-data:/app/data:ro
-      - quant-state:/app/state:ro
-      - quant-scratch:/app/scratch
-
-  worker:
-    <<: *quant-common
-    container_name: a-share-quant-worker
-    command: ["python", "worker.py"]
+  updater:
+    image: ${QUANT_IMAGE:-a-share-quant:latest}
+    restart: unless-stopped
+    command: ["python", "updater.py", "--loop"]
     volumes:
       - quant-data:/app/data
-      - quant-state:/app/state
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
+    environment:
+      QUANT_SCAN_WORKERS: "1"
+      QUANT_FETCH_WORKERS: "4"
+      QUANT_RUN_AT: "15:35"
+    mem_limit: 512m
 
 volumes:
   quant-data:
-  quant-state:
-  quant-scratch:
-
-secrets:
-  quant_admin_token:
-    file: ${QUANT_ADMIN_TOKEN_FILE:?set QUANT_ADMIN_TOKEN_FILE}
-  quant_publisher_token:
-    file: ${QUANT_PUBLISHER_TOKEN_FILE:?set QUANT_PUBLISHER_TOKEN_FILE}
-  quant_viewer_token:
-    file: ${QUANT_VIEWER_TOKEN_FILE:?set QUANT_VIEWER_TOKEN_FILE}
-  ark_api_key:
-    file: ${ARK_API_KEY_FILE:?set ARK_API_KEY_FILE}
