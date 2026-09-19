@@ -369,7 +369,7 @@ jobs:
           RUNTIME_IMAGE: ${{ steps.stage.outputs.image }}
           RUNTIME_IMAGE_ID: ${{ steps.stage.outputs.image_id }}
         run: |
-          ssh "$USER@$HOST" \
+          ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=8 "$USER@$HOST" \
             "IMAGE='$IMAGE' DIGEST='$DIGEST' RELEASE_SHA='$RELEASE_SHA' RUNTIME_IMAGE='$RUNTIME_IMAGE' RUNTIME_IMAGE_ID='$RUNTIME_IMAGE_ID' bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/a-share-quant
