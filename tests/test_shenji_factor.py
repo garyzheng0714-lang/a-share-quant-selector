@@ -1,4 +1,5 @@
 """神机·生命线因子：容差与力度两条边界（复原自 26 根标记 K 线的核心口径）."""
+
 import numpy as np
 import pandas as pd
 
@@ -8,11 +9,18 @@ from strategy.factors.shenji_family import compute_shenji_lifeline
 
 def _df(closes):
     closes = np.asarray(closes, dtype=float)
-    return pd.DataFrame({
-        "date": pd.date_range("2026-01-01", periods=len(closes)).strftime("%Y-%m-%d"),
-        "open": closes * 0.99, "high": closes * 1.01, "low": closes * 0.98,
-        "close": closes, "volume": np.full(len(closes), 1e6),
-    })
+    return pd.DataFrame(
+        {
+            "date": pd.date_range("2026-01-01", periods=len(closes)).strftime(
+                "%Y-%m-%d"
+            ),
+            "open": closes * 0.99,
+            "high": closes * 1.01,
+            "low": closes * 0.98,
+            "close": closes,
+            "volume": np.full(len(closes), 1e6),
+        }
+    )
 
 
 def _base():
@@ -21,7 +29,7 @@ def _base():
 
 
 def test_cross_with_margin_and_gain_hits():
-    closes = _base() + [10.30]          # +3.0%，BIAS 约 +2.9%
+    closes = _base() + [10.30]  # +3.0%，BIAS 约 +2.9%
     hit = compute_shenji_lifeline(FactorContext(_df(closes)))
     assert hit is not None
     assert hit["bias_pct"] > 0.5 and hit["prev_bias_pct"] <= 0.5
@@ -37,5 +45,5 @@ def test_within_tolerance_does_not_count_as_above():
 
 
 def test_weak_bar_is_filtered():
-    closes = _base() + [10.15]          # 上穿 1.5% 但涨幅只有 1.5%
+    closes = _base() + [10.15]  # 上穿 1.5% 但涨幅只有 1.5%
     assert compute_shenji_lifeline(FactorContext(_df(closes))) is None

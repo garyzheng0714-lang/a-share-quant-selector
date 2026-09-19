@@ -119,9 +119,11 @@ def api_factor_compose():
         manager = CSVManager("data", writable=False)
         if manager.snapshot_id is None:
             return jsonify({"available": False, "reason": "snapshot_unavailable"}), 503
-        keys = list(dict.fromkeys(
-            k.strip() for k in request.args.get("keys", "").split(",") if k.strip()
-        ))
+        keys = list(
+            dict.fromkeys(
+                k.strip() for k in request.args.get("keys", "").split(",") if k.strip()
+            )
+        )
         join = request.args.get("join", "and").strip()
         date = request.args.get("date", "").strip()
         if not keys or any(k not in FACTOR_REGISTRY for k in keys):
@@ -137,11 +139,13 @@ def api_factor_compose():
         buckets = result["results"]
         if any(k not in buckets for k in keys):
             missing = [k for k in keys if k not in buckets]
-            return jsonify({
-                "available": False,
-                "reason": f"因子 {', '.join(missing)} 当日快照未就绪，已停止计算",
-                "trade_date": result["trade_date"],
-            })
+            return jsonify(
+                {
+                    "available": False,
+                    "reason": f"因子 {', '.join(missing)} 当日快照未就绪，已停止计算",
+                    "trade_date": result["trade_date"],
+                }
+            )
 
         mb_only = main_board_only()
         per_key = {}
@@ -176,30 +180,42 @@ def api_factor_compose():
         for code in codes:
             matched = [k for k in keys if code in per_key[k]]
             industry = ind.get(code, "")
-            hits.append({
-                **per_key[matched[0]][code],
-                "matched": matched,
-                "industry": industry,
-                "cap_yi": _cap_yi(code, manager),
-                "sector": heat.get(industry) or None,
-                "streak": _streak(code),
-                "streak_depth": len(history) + 1,
-                "win_rate": None,
-                "spark": _spark(code, manager),
-            })
-        hits.sort(key=lambda h: (-len(h["matched"]), -h["streak"],
-                                 h.get("J") if h.get("J") is not None else 999, h["code"]))
-        return jsonify({
-            "available": True,
-            "keys": keys,
-            "join": join,
-            "trade_date": trade_date,
-            "hits": hits,
-            "per_key_counts": {k: len(v) for k, v in per_key.items()},
-            "total_scanned": max((buckets[k].get("total_scanned", 0) for k in keys), default=0),
-            "research_only": True,
-            "source": "worker_snapshot",
-        })
+            hits.append(
+                {
+                    **per_key[matched[0]][code],
+                    "matched": matched,
+                    "industry": industry,
+                    "cap_yi": _cap_yi(code, manager),
+                    "sector": heat.get(industry) or None,
+                    "streak": _streak(code),
+                    "streak_depth": len(history) + 1,
+                    "win_rate": None,
+                    "spark": _spark(code, manager),
+                }
+            )
+        hits.sort(
+            key=lambda h: (
+                -len(h["matched"]),
+                -h["streak"],
+                h.get("J") if h.get("J") is not None else 999,
+                h["code"],
+            )
+        )
+        return jsonify(
+            {
+                "available": True,
+                "keys": keys,
+                "join": join,
+                "trade_date": trade_date,
+                "hits": hits,
+                "per_key_counts": {k: len(v) for k, v in per_key.items()},
+                "total_scanned": max(
+                    (buckets[k].get("total_scanned", 0) for k in keys), default=0
+                ),
+                "research_only": True,
+                "source": "worker_snapshot",
+            }
+        )
     except Exception as e:
         logger.error("因子组合查询失败: %s", e, exc_info=True)
         return jsonify({"available": False, "reason": "因子组合选股暂不可用"}), 500

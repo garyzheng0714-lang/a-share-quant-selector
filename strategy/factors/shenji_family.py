@@ -10,6 +10,7 @@
 461 根样本上只剩 2 个分钟级例外（数据源差异范围内）。它是滞后的趋势跟随触发，
 不是预测信号，战绩评级走 factor_track_record 同一套流程，未验证前只作观察。
 """
+
 from strategy.factor_lib import _last, hit_payload
 from strategy.factors.momentum_family import _safe
 
@@ -39,16 +40,22 @@ def compute_shenji_lifeline(ctx, params=None):
     pct = _last(ctx.pct_change())
     if not (pct == pct and pct > float(p["min_gain_pct"])):
         return None
-    return hit_payload(ctx, extra={
-        "ma13": round(_last(ma), 2),
-        "bias_pct": round(b_t, 2),
-        "prev_bias_pct": round(b_p, 2),
-    })
+    return hit_payload(
+        ctx,
+        extra={
+            "ma13": round(_last(ma), 2),
+            "bias_pct": round(b_t, 2),
+            "prev_bias_pct": round(b_p, 2),
+        },
+    )
 
 
 FACTORS = {
     "shenji_lifeline": {
-        "name": "神机·生命线", "group": "生命线系", "min_bars": 20,
-        "params": SHENJI_PARAMS, "fn": compute_shenji_lifeline,
+        "name": "神机·生命线",
+        "group": "生命线系",
+        "min_bars": 20,
+        "params": SHENJI_PARAMS,
+        "fn": compute_shenji_lifeline,
     },
 }

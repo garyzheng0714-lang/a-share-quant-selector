@@ -58,8 +58,28 @@ PLAIN_DESC = {
 # join: "and" = 全部满足（交集），"or" = 任一满足（并集）。改这里即可，前端不写死。
 PRESETS = [
     {"key": "shenji", "name": "神机上穿", "keys": ["shenji_lifeline"], "join": "and"},
-    {"key": "oversold_bounce", "name": "超卖反弹", "keys": ["oversold_b1", "kdj_cross"], "join": "or"},
-    {"key": "zx_white", "name": "知行白线", "keys": ["zx_white_b1", "zx_brick"], "join": "and"},
-    {"key": "breakout", "name": "强势突破", "keys": ["trend_strengthen", "bottom_violent_k", "cloud_stair"], "join": "or"},
-    {"key": "washout_end", "name": "洗盘结束", "keys": ["nana_chart", "sandu_washout"], "join": "or"},
+    {
+        "key": "oversold_bounce",
+        "name": "超卖反弹",
+        "keys": ["oversold_b1", "kdj_cross"],
+        "join": "or",
+    },
+    {
+        "key": "zx_white",
+        "name": "知行白线",
+        "keys": ["zx_white_b1", "zx_brick"],
+        "join": "and",
+    },
+    {
+        "key": "breakout",
+        "name": "强势突破",
+        "keys": ["trend_strengthen", "bottom_violent_k", "cloud_stair"],
+        "join": "or",
+    },
+    {
+        "key": "washout_end",
+        "name": "洗盘结束",
+        "keys": ["nana_chart", "sandu_washout"],
+        "join": "or",
+    },
 ]
