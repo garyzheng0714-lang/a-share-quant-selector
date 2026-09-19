@@ -40,7 +40,7 @@ def _run_checked(name: str, command: list[str], env: dict[str, str]) -> str:
         check=False,
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=int(os.environ.get("QUANT_DRY_RUN_TIMEOUT", "3600")),
     )
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()[-2000:]
@@ -79,7 +79,11 @@ def migration_dry_run(
     if live_views.resolve() == live_operations.resolve():
         raise ValueError("runtime_database_paths_must_be_distinct")
 
-    with tempfile.TemporaryDirectory(prefix="quant-migration-dry-run-") as temporary:
+    # 账本已达 GB 级：临时副本不能落在容器 256m 的 tmpfs /tmp，改由 QUANT_DRY_RUN_DIR 指向磁盘卷
+    scratch = os.environ.get("QUANT_DRY_RUN_DIR") or None
+    with tempfile.TemporaryDirectory(
+        prefix="quant-migration-dry-run-", dir=scratch
+    ) as temporary:
         dry_state = Path(temporary)
         dry_views = dry_state / "views.db"
         dry_operations = dry_state / "operations.db"

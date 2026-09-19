@@ -11,6 +11,8 @@ x-quant-common: &quant-common
     QUANT_STATE_DIR: /app/state
     QUANT_VIEWS_DB: /app/state/views.db
     QUANT_OPERATIONS_DB: /app/state/operations.db
+    # 迁移预演要复制整份账本；tmpfs /tmp 只有 256m，预演临时目录必须落磁盘卷（仅 canary 挂载）
+    QUANT_DRY_RUN_DIR: /app/scratch
     QUANT_MAX_PENDING_TASKS: ${QUANT_MAX_PENDING_TASKS:-1000}
     QUANT_ADMIN_TOKEN_FILE: /run/secrets/quant_admin_token
     QUANT_PUBLISHER_TOKEN_FILE: /run/secrets/quant_publisher_token
@@ -63,6 +65,7 @@ services:
     volumes:
       - quant-data:/app/data:ro
       - quant-state:/app/state:ro
+      - quant-scratch:/app/scratch
 
   worker:
     <<: *quant-common
@@ -78,6 +81,7 @@ services:
 volumes:
   quant-data:
   quant-state:
+  quant-scratch:
 
 secrets:
   quant_admin_token:

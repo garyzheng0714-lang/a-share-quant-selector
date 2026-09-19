@@ -20,7 +20,13 @@ def test_production_canary_has_no_port_and_only_read_only_data_mounts() -> None:
     assert canary["volumes"] == [
         "quant-data:/app/data:ro",
         "quant-state:/app/state:ro",
+        "quant-scratch:/app/scratch",
     ]
+    # 预演临时目录只能落在独立 scratch 卷，生产 data/state 对 canary 保持只读
+    assert (
+        compose["x-quant-common"]["environment"]["QUANT_DRY_RUN_DIR"] == "/app/scratch"
+    )
+    assert "quant-scratch" in compose["volumes"]
 
 
 def test_release_quiesces_writers_and_validates_canary_before_switch() -> None:

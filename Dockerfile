@@ -44,7 +44,7 @@ WORKDIR /app
 COPY --from=python-dependencies /install /usr/local
 COPY --chown=quant:quant . .
 COPY --from=frontend-builder --chown=quant:quant /frontend/dist ./frontend/dist
-RUN mkdir -p data state && chown -R quant:quant data state
+RUN mkdir -p data state scratch && chown -R quant:quant data state scratch
 
 USER 10001:10001
 EXPOSE 5000
