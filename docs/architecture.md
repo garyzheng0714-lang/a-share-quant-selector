@@ -4,7 +4,7 @@
 updater.py（GitHub Actions，工作日 15:40）
   腾讯 qt.gtimg.cn  ──股票池/名称/市值──▶ stock_names.json / stock_market_cap.json
   腾讯 fqkline      ──前复权日线────────▶ data/{前两位}/{code}.csv（最新在前）
-  新浪行业          ──行业（每周）──────▶ stock_industry.json
+  新浪申万一级      ──行业（每周）──────▶ stock_industry.json
   strategy/factors  ──全因子扫描───────▶ data/factor_cache/{date}.json（保留 40 天）
 
 export_static.py（同一次 Actions，导出到网页的 d/ 目录）
