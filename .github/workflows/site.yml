@@ -1,0 +1,107 @@
+name: Site
+
+# 没有服务器：每个工作日收盘后在 GitHub 的机器上抓行情、扫因子，导出静态数据，连同网页发布到 GitHub Pages。
+# 公开仓库，Actions 和 Pages 都免费；不用任何密钥（只用 GitHub 自带的临时令牌）。
+# 行情数据（data/）存在 Actions 缓存里，下次接着增量更新；缓存丢了就自动从头抓 3 年（约 40 分钟）。
+on:
+  schedule:
+    - cron: "40 7 * * 1-5" # 北京时间 15:40，收盘后
+  workflow_run: # 代码改动：CI 通过后只重新扫描、发布，不抓行情
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: write # 清旧缓存、保持定时任务不被 GitHub 停掉
+
+# 一次只跑一个，不取消：两次同时写缓存、发布会互相覆盖。
+concurrency:
+  group: site
+  cancel-in-progress: false
+
+jobs:
+  site:
+    # 代码改动只认本仓库 main 上 push 触发、通过了的 CI；别人 PR 里的代码不发布。
+    if: >-
+      github.event_name != 'workflow_run' || (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      QUANT_DATA_DIR: data
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Restore market data
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: quant-data-${{ github.run_id }}
+          restore-keys: quant-data-
+
+      # 从美国抓腾讯、新浪接口每只约 1 秒，开 8 路并发；行情源失败的票保留旧数据，不造数。
+      - name: Update market data and scan
+        env:
+          QUANT_FETCH_WORKERS: "8"
+          QUANT_SCAN_WORKERS: "4"
+        run: |
+          if [ "${{ github.event_name }}" = workflow_run ] && [ -n "${{ steps.restore.outputs.cache-matched-key }}" ]; then
+            python updater.py --scan-only
+          else
+            python updater.py
+          fi
+
+      - name: Save market data
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: quant-data-${{ github.run_id }}
+      - name: Drop older market data caches
+        run: |
+          gh cache list -R "$GITHUB_REPOSITORY" --key quant-data- --limit 100 --json id,key \
+            --jq '.[] | select(.key != "quant-data-${{ github.run_id }}") | .id' \
+            | xargs -r -n1 gh cache delete -R "$GITHUB_REPOSITORY"
+
+      - id: pages
+        uses: actions/configure-pages@v5
+      - name: Build site
+        working-directory: frontend
+        env:
+          VITE_BASE: ${{ steps.pages.outputs.base_path }}/
+        run: |
+          npm ci
+          npm run build
+          cp dist/index.html dist/404.html # 直接打开 /stock/xxx 这类地址时也由网页自己处理
+      - run: python export_static.py --out frontend/dist/d
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+      # 公开仓库 60 天没有提交，GitHub 会停掉定时任务；每次跑完重新启用一次。
+      - name: Keep schedule enabled
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/site.yml/enable"

@@ -4,7 +4,8 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
 export default defineConfig(() => ({
-  base: "/",
+  // GitHub Pages 项目站点在子路径下（如 /a-share-quant-selector/），由发布流程传入。
+  base: process.env.VITE_BASE || "/",
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
@@ -13,12 +14,6 @@ export default defineConfig(() => ({
   },
   server: {
     port: 3000,
-    proxy: {
-      "/api": {
-        target: "http://127.0.0.1:18321",
-        changeOrigin: true,
-      },
-    },
   },
   build: {
     outDir: "dist",

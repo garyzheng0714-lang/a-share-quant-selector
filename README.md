@@ -4,14 +4,14 @@
 
 研究工具，不构成投资建议。
 
-线上：`https://zxhy.garyzheng.com:8443`（Caddy 反代到容器 18321；443 被同机其他服务占用，故走 8443）。
+线上：https://garyzheng0714-lang.github.io/a-share-quant-selector/ （GitHub Pages，没有服务器）。
 
 ## 组成
 
 | 文件 | 作用 |
 |---|---|
 | `updater.py` | 盘后更新：腾讯接口抓日线（前复权）、股票池与市值，新浪行业；然后全因子扫描写缓存 |
-| `app.py` | 只读 Flask：因子清单、且/或组合结果、K 线、个股简介；托管前端 |
+| `export_static.py` | 把 `data/` 导出成网页直接读的静态 JSON（因子清单、每日命中、个股 K 线） |
 | `strategy/factors/` | 29 个因子（B1 系 / 知行系 / 动量系 / 三度系 / 生命线系）与常用组合 `PRESETS` |
 | `strategy/factor_lib.py`, `strategy/tdx.py` | 单股指标缓存与通达信基础函数 |
 | `utils/store.py` | CSV + JSON 存储；`utils/fetch.py` 抓取；`utils/scan.py` 扫描；`utils/kline.py` K 线 |
@@ -27,15 +27,18 @@
 pip install -r requirements.txt
 python updater.py --init --years 3   # 首次入库，约 6000 只，十几分钟
 python updater.py                    # 之后每次：增量更新 + 扫描
-python app.py                        # http://127.0.0.1:18321
-cd frontend && npm ci && npm run dev # 开发前端，代理到 18321
+python export_static.py --out frontend/public/d
+cd frontend && npm ci && npm run dev # http://localhost:3000
 ```
 
 ## 部署
 
-`docker compose up -d` 起两个容器：`web`（gunicorn，读缓存）和 `updater`（常驻，工作日 15:35 跑一轮；启动时若落后也补一轮）。数据在卷 `quant-data`。
+`.github/workflows/site.yml`，全在 GitHub 上跑，公开仓库免费、不用任何密钥：
 
-GitHub Actions：推 `main` → CI（ruff + pytest + 前端 lint/build）→ Deploy（在 runner 构建镜像，`docker save | ssh docker load`，`docker compose up -d`，健康检查）。仓库 secrets：`SERVER_HOST`、`SERVER_USER`、`SERVER_SSH_KEY`。
+- 每个工作日北京时间 15:40：抓行情 → 扫描 → 导出 → 连同网页发布到 GitHub Pages（约 20 分钟）。
+- 推 `main`：CI（ruff + pytest + 前端 lint/build）通过后只重新扫描、发布，不抓行情。
+- 行情数据存在 Actions 缓存（`quant-data-*`，只留最新一份）；缓存丢了会自动从头抓 3 年，约 40 分钟。
+- 「且 / 或」组合和连命中天数在浏览器里算（`frontend/src/lib/compose.ts`），口径与扫描缓存一致。
 
 ## 验证
 

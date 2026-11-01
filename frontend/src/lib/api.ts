@@ -1,14 +1,26 @@
-const API_BASE = import.meta.env.VITE_API_BASE || "";
+import { composeFactors, type HitIndex, type ScanDay } from "./compose";
 
-export async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
-    ...options,
-  });
+/** 数据是盘后导出的静态 JSON（export_static.py），和网页放在一起，没有后端。 */
+const DATA = `${import.meta.env.BASE_URL}d`;
+
+export async function request<T>(path: string): Promise<T> {
+  const res = await fetch(`${DATA}${path}`);
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
+    throw new Error(`数据读取失败：${res.status} ${res.statusText}`);
   }
   return res.json();
+}
+
+/** 个股文件一次带简介、日 K、周 K；简介和 K 线两个请求共用一份 */
+const stockFiles = new Map<string, Promise<StockFile>>();
+function stockFile(code: string) {
+  let file = stockFiles.get(code);
+  if (!file) {
+    file = request<StockFile>(`/stock/${code}.json`);
+    file.catch(() => stockFiles.delete(code));
+    stockFiles.set(code, file);
+  }
+  return file;
 }
 
 export interface StatsData {
@@ -123,14 +135,24 @@ export interface FactorComposeResponse {
   total_scanned?: number;
 }
 
+interface StockFile {
+  profile: StockProfile;
+  daily: KlineResponse;
+  weekly: KlineResponse;
+}
+
+async function getFactorCompose(keys: string[], join: ComposeJoin, date?: string) {
+  const index = await request<HitIndex>("/hits.json");
+  const tradeDate = date || index.dates[0] || "";
+  const day = index.dates.includes(tradeDate) ? await request<ScanDay>(`/scan/${tradeDate}.json`) : null;
+  return composeFactors(keys, join, tradeDate, index, day);
+}
+
 export const api = {
-  getStats: () => request<StatsData>("/api/stats"),
-  getStockProfile: (code: string) => request<StockProfile>(`/api/stock/${code}/profile`),
-  getKline: (code: string, period: string = "daily", days?: number) =>
-    request<KlineResponse>(`/api/stock/${code}/kline?period=${period}${days ? `&days=${days}` : ""}`),
-  getFactors: () => request<FactorsResponse>("/api/factors"),
-  getFactorCompose: (keys: string[], join: ComposeJoin, date?: string) =>
-    request<FactorComposeResponse>(
-      `/api/factor-compose?keys=${encodeURIComponent(keys.join(","))}&join=${join}${date ? `&date=${date}` : ""}`,
-    ),
+  getStats: () => request<StatsData>("/stats.json"),
+  getStockProfile: async (code: string) => (await stockFile(code)).profile,
+  getKline: async (code: string, period: string = "daily") =>
+    (await stockFile(code))[period === "weekly" ? "weekly" : "daily"],
+  getFactors: () => request<FactorsResponse>("/factors.json"),
+  getFactorCompose,
 };

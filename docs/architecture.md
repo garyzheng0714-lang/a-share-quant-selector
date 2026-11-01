@@ -1,26 +1,26 @@
 # 架构
 
 ```
-updater.py（常驻，工作日 15:35）
+updater.py（GitHub Actions，工作日 15:40）
   腾讯 qt.gtimg.cn  ──股票池/名称/市值──▶ stock_names.json / stock_market_cap.json
   腾讯 fqkline      ──前复权日线────────▶ data/{前两位}/{code}.csv（最新在前）
   新浪行业          ──行业（每周）──────▶ stock_industry.json
   strategy/factors  ──全因子扫描───────▶ data/factor_cache/{date}.json（保留 40 天）
 
-app.py（gunicorn，只读）
-  GET /api/factors                     因子清单 + 常用组合 + 当日命中数 + 可选日期
-  GET /api/factor-compose?keys&join    且/或组合；任一因子缺当日缓存则整体不可用；连命中天数用历史缓存回溯
-  GET /api/factor-scan?strategy&date   单因子结果
-  GET /api/stock/<code>/kline          日 K / 周 K + 该票历史因子命中日
-  GET /api/stock/<code>/profile        名称 / 行业 / 流通市值
-  GET /api/stats, /healthz
-  其余路径                              frontend/dist
+export_static.py（同一次 Actions，导出到网页的 d/ 目录）
+  stats.json / factors.json            最新日期、因子清单 + 常用组合 + 当日命中数 + 可选日期
+  hits.json                            每个扫描日每个因子命中的代码（且/或组合、连命中天数）
+  scan/{date}.json                     当日命中明细（带行业、流通市值）+ 命中股近 20 日收盘
+  stock/{code}.json                    简介 + 日 K（200 根）+ 周 K + 近 60 个扫描日的因子命中
+
+网页（GitHub Pages）
+  只读上面这些文件；「且/或」组合在浏览器里算（frontend/src/lib/compose.ts）
 ```
 
-- 行情抓取只用腾讯/新浪公开接口。腾讯 K 线主域名对海外 IP 连发约 1500 次会被 WAF 拦成 501，所以按 `web.ifzq` → `proxy.finance` → `ifzq` 轮询、每次请求后节流 0.25 秒、2 个线程；全市场增量更新约 25 分钟。
+- 行情抓取只用腾讯/新浪公开接口。腾讯 K 线主域名对海外 IP 连发约 1500 次会被 WAF 拦成 501，所以按 `web.ifzq` → `proxy.finance` → `ifzq` 轮询、每次请求后节流 0.25 秒、2 个线程；全市场增量更新约 25 分钟；GitHub 的美国机器每次请求约 1 秒，开 8 路并发，总速率与原来相当。
 - 扫描一次读一只股票的 CSV，29 个因子共用一个 `FactorContext`（同参指标只算一遍）。全市场 6000 只单线程约 2 分钟（M 系列 Mac），峰值内存约 100 MB。
 - 没有数据库：一切都是 CSV 和 JSON，坏了就重跑 `updater.py`。
-- 部署：`.github/workflows/deploy.yml` 在 CI 通过后构建镜像、`docker save | ssh docker load`、`docker compose up -d`。回滚就是重新部署上一个 commit。
+- 部署：没有服务器。`.github/workflows/site.yml` 抓行情、导出、发布到 GitHub Pages；行情数据放 Actions 缓存。回滚就是重新跑上一个 commit 的 Site。
 
 ## 神机信号的口径来源
 
