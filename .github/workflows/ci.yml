@@ -1,12 +1,20 @@
 name: CI
 
+# 只改说明文档不跑：代码、测试、镜像都不读 .md 和 docs/。main 上 CI 不跑就不会触发 Deploy。
 on:
   pull_request:
+    paths-ignore: ['**/*.md', 'docs/**']
   push:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**']
 
 permissions:
   contents: read
+
+# 同一个 PR 连推只跑最新一次；main 的每个提交都跑完（Deploy 靠它的结果上线）。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   backend:
