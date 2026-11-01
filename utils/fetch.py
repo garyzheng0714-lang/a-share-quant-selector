@@ -199,9 +199,14 @@ def fetch_industries(sleep: float = 0.05) -> dict:
                 "http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
                 f"Market_Center.getHQNodeData?page={page}&num=100&sort=symbol&asc=1&node={node}"
             )
-            try:
-                rows = requests.get(url, headers=headers, timeout=20).json() or []
-            except Exception:
+            rows = None
+            for attempt in range(3):  # 海外机器偶尔被限流，失败的页重试，别整类丢掉
+                try:
+                    rows = requests.get(url, headers=headers, timeout=20).json() or []
+                    break
+                except Exception:
+                    time.sleep(1 + attempt * 2)
+            if rows is None:
                 break
             if not rows:
                 break

@@ -38,14 +38,17 @@ def refresh_universe(store: Store) -> int:
 
 
 def refresh_industries(store: Store, max_age_days: float = 7) -> None:
-    if store.json_age_days("stock_industry.json") < max_age_days:
+    old = store.industries()
+    # 覆盖不到九成股票时不等 7 天，下一轮接着补
+    if store.json_age_days("stock_industry.json") < max_age_days and len(old) >= 0.9 * len(store.names()):
         return
     mapping = fetch.fetch_industries()
     if len(mapping) < 1000:
         logger.warning("行业映射只得到 %d 条，保留旧数据", len(mapping))
         return
-    store.save_json("stock_industry.json", mapping)
-    logger.info("行业映射 %d 条", len(mapping))
+    merged = {**old, **mapping}  # 这次没抓到的票沿用上次的行业
+    store.save_json("stock_industry.json", merged)
+    logger.info("行业映射 %d 条（本次抓到 %d 条）", len(merged), len(mapping))
 
 
 def update_bars(store: Store, codes: list[str], *, init: bool, years: int, workers: int) -> dict:
