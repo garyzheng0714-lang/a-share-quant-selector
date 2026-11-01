@@ -8,10 +8,8 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import re
 import time
 from datetime import datetime, timedelta
 
@@ -174,41 +172,59 @@ def fetch_history(code: str, years: int = 3) -> pd.DataFrame:
     return df[df["date"] >= pd.Timestamp(start)].sort_values("date", ascending=False)
 
 
+_SINA_HQ = "http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center."
+
+
+def _sina_get(method: str, headers: dict, **params) -> object:
+    """新浪行情中心接口；海外机器偶尔被限流，重试两次，仍失败抛出。"""
+    for attempt in range(3):
+        try:
+            return requests.get(
+                _SINA_HQ + method, params=params, headers=headers, timeout=20
+            ).json()
+        except Exception:
+            if attempt == 2:
+                raise
+            time.sleep(1 + attempt * 2)
+
+
+def _sw1_nodes(tree: object) -> dict[str, str]:
+    """从新浪节点树里找出申万一级行业：{sw1_xxxxxx: 行业名}。"""
+    found: dict[str, str] = {}
+    if isinstance(tree, list):
+        if len(tree) >= 3 and isinstance(tree[0], str) and str(tree[2]).startswith("sw1_"):
+            found[tree[2]] = tree[0]
+        for child in tree:
+            found.update(_sw1_nodes(child))
+    return found
+
+
 def fetch_industries(sleep: float = 0.05) -> dict:
-    """新浪行业板块 → {code: 行业}。失败返回空 dict."""
+    """申万一级行业 → {code: 行业}（含科创板、创业板、北交所），约 75 次请求。失败返回空 dict."""
     headers = {**_UA, "Referer": "https://finance.sina.com.cn/"}
     try:
-        resp = requests.get(
-            "http://vip.stock.finance.sina.com.cn/q/view/newSinaHy.php",
-            headers=headers,
-            timeout=20,
-        )
-        resp.encoding = "gbk"
-        match = re.search(r"=\s*(\{.*\})\s*;?\s*$", resp.text, re.S)
-        sectors = json.loads(match.group(1)) if match else {}
+        nodes = _sw1_nodes(_sina_get("getHQNodes", headers))
     except Exception as exc:
         logger.warning("新浪行业列表失败: %s", exc)
         return {}
     mapping: dict[str, str] = {}
-    for node, info in sectors.items():
-        industry = str(info).split(",")[1] if "," in str(info) else ""
-        if not industry:
-            continue
-        for page in range(1, 20):
-            url = (
-                "http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
-                f"Market_Center.getHQNodeData?page={page}&num=100&sort=symbol&asc=1&node={node}"
-            )
-            rows = None
-            for attempt in range(3):  # 海外机器偶尔被限流，失败的页重试，别整类丢掉
-                try:
-                    rows = requests.get(url, headers=headers, timeout=20).json() or []
-                    break
-                except Exception:
-                    time.sleep(1 + attempt * 2)
-            if rows is None:
-                break
-            if not rows:
+    for node, industry in nodes.items():
+        for page in range(1, 50):
+            try:
+                rows = (
+                    _sina_get(
+                        "getHQNodeData",
+                        headers,
+                        page=page,
+                        num=100,
+                        sort="symbol",
+                        asc=1,
+                        node=node,
+                    )
+                    or []
+                )
+            except Exception as exc:
+                logger.warning("申万行业 %s 第 %d 页失败: %s", industry, page, exc)
                 break
             for row in rows:
                 code = str(row.get("code", "")).zfill(6)

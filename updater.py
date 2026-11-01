@@ -40,7 +40,9 @@ def refresh_universe(store: Store) -> int:
 def refresh_industries(store: Store, max_age_days: float = 7) -> None:
     old = store.industries()
     # 覆盖不到九成股票时不等 7 天，下一轮接着补
-    if store.json_age_days("stock_industry.json") < max_age_days and len(old) >= 0.9 * len(store.names()):
+    if store.json_age_days("stock_industry.json") < max_age_days and len(old) >= 0.9 * len(
+        store.names()
+    ):
         return
     mapping = fetch.fetch_industries()
     if len(mapping) < 1000:
